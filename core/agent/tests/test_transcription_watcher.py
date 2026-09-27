@@ -80,6 +80,8 @@ def _fresh_state():
 def _reset_module_caches():
     w._native.clear()
     w._resolve_miss_at.clear()
+    w._workspace_subject.clear()
+    w._workspace_miss_at.clear()
 
 
 def _native_streams(r):
@@ -433,3 +435,73 @@ def test_arm_omits_numeric_meeting_id_when_key_is_not_numeric(monkeypatch):
     assert meeting["meeting_id"] == "sess-uid-fallback"    # keyed on the (non-numeric) uid fallback
     assert "numeric_meeting_id" not in meeting            # no row id → the durable-proc hint is omitted
     assert live.by_uid["sess-uid-fallback"]["numeric_meeting_id"] is None
+
+
+# ── sales-cycle: optional per-meeting subject resolution (off by default) ────────────────────────────
+
+def test_workspace_resolve_disabled_by_default_returns_placeholder(monkeypatch):
+    """The flag is unset in a normal test/deploy env — must be a no-op, zero network calls."""
+    _reset_module_caches()
+    monkeypatch.delenv("SALES_CYCLE_WORKSPACE_RESOLVE", raising=False)
+
+    def _boom(req, timeout=5):
+        raise AssertionError("must not call the network when the flag is off")
+
+    monkeypatch.setattr(w.urllib.request, "urlopen", _boom)
+    assert w._resolve_workspace_subject("42", "u_live") == "u_live"
+
+
+def test_workspace_resolve_enabled_returns_bound_workspace(monkeypatch):
+    _reset_module_caches()
+    monkeypatch.setenv("SALES_CYCLE_WORKSPACE_RESOLVE", "true")
+    monkeypatch.setenv("VEXA_BOT_API_KEY", "k")
+
+    class _Resp:
+        def read(self): return json.dumps({"id": 42, "data": {"workspace_id": "cust-42"}}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
+    assert w._resolve_workspace_subject("42", "u_live") == "cust-42"
+    # Cached — a second call must not need the network again (mirrors _resolve_native's cache-on-hit).
+    monkeypatch.setattr(w.urllib.request, "urlopen",
+                        lambda req, timeout=5: (_ for _ in ()).throw(AssertionError("should be cached")))
+    assert w._resolve_workspace_subject("42", "u_live") == "cust-42"
+
+
+def test_workspace_resolve_no_binding_yet_falls_back_and_retries_later(monkeypatch):
+    """Not tagged yet → falls back to the placeholder, and the miss is NOT cached permanently (a late
+    tag must still be picked up on a subsequent re-arm) — mirrors _resolve_native's miss semantics."""
+    _reset_module_caches()
+    monkeypatch.setenv("SALES_CYCLE_WORKSPACE_RESOLVE", "true")
+    monkeypatch.setenv("VEXA_BOT_API_KEY", "k")
+
+    class _Resp:
+        def read(self): return json.dumps({"id": 42, "data": {}}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
+    assert w._resolve_workspace_subject("42", "u_live") == "u_live"
+    assert "42" not in w._workspace_subject  # no permanent cache on a miss
+
+
+def test_workspace_resolve_failure_is_fail_soft_never_raises(monkeypatch):
+    _reset_module_caches()
+    monkeypatch.setenv("SALES_CYCLE_WORKSPACE_RESOLVE", "true")
+    monkeypatch.delenv("VEXA_BOT_API_KEY", raising=False)  # no key → can't call out at all
+    assert w._resolve_workspace_subject("42", "u_live") == "u_live"
+
+
+def test_handle_arms_with_resolved_workspace_subject_when_enabled(monkeypatch):
+    """End-to-end through _handle: the dispatch's subject is the resolved workspace, not the placeholder."""
+    _reset_module_caches()
+    monkeypatch.setenv("SALES_CYCLE_WORKSPACE_RESOLVE", "true")
+    monkeypatch.setattr(w, "_resolve_native", lambda mid: ("aaa-aaaa-aaa", "google_meet"))
+    monkeypatch.setattr(w, "_resolve_workspace_subject", lambda mid, default: "cust-42")
+
+    r, disp, live = _FakeRedis(), _FakeDispatcher(), _FakeLive()
+    r.set("proc:meeting:42:on", "1")
+    w._handle(r, disp, live, "u_live", _payload("42"), *_fresh_state())
+
+    assert disp.dispatched[0]["identity"]["subject"] == "cust-42"

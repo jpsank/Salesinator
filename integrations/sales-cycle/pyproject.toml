@@ -1,0 +1,22 @@
+[project]
+name = "vexa-sales-cycle"
+version = "0.1.0"
+description = "Sales-cycle integration: HubSpot-mapped meetings, feature-request capture, product-repo branch automation."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.29,<1",
+    "httpx>=0.27,<1",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.0.3", "respx>=0.21,<1"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,68 @@
+"""Plain-HTTP HubSpot client — no SDK (this repo's Category-A licensing stance, ADR-0004: prefer a
+thin client over a dependency whose license terms aren't worth auditing for two REST calls).
+
+Only what this package needs: find the company a customer_tag or an attendee's email domain refers
+to. Adapts HubSpot's vocabulary at this one boundary (P5) — nothing downstream of `resolver/` ever
+sees a raw HubSpot response shape.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import httpx
+
+
+@dataclass(frozen=True)
+class Company:
+    id: str
+    name: str
+    domain: str | None
+
+
+class HubSpotError(RuntimeError):
+    """A HubSpot call failed — the caller decides whether that's fatal or falls back to unmapped."""
+
+
+class HubSpotClient:
+    def __init__(self, *, token: str, base_url: str = "https://api.hubapi.com", timeout: float = 5.0):
+        self._token = token
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+
+    def _search(self, *, property_name: str, operator: str, value: str) -> Company | None:
+        if not self._token:
+            raise HubSpotError("HUBSPOT_TOKEN not configured")
+        body = {
+            "filterGroups": [{"filters": [
+                {"propertyName": property_name, "operator": operator, "value": value},
+            ]}],
+            "properties": ["name", "domain"],
+            "limit": 1,
+        }
+        try:
+            resp = httpx.post(
+                f"{self._base_url}/crm/v3/objects/companies/search",
+                json=body,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise HubSpotError(f"HubSpot search failed: HTTP {e.response.status_code}") from e
+        except httpx.HTTPError as e:
+            raise HubSpotError(f"HubSpot search failed: {type(e).__name__}: {e}") from e
+        results = resp.json().get("results") or []
+        if not results:
+            return None
+        hit = results[0]
+        props = hit.get("properties") or {}
+        return Company(id=str(hit["id"]), name=props.get("name") or "", domain=props.get("domain"))
+
+    def find_by_name(self, name: str) -> Company | None:
+        """Fuzzy match — used for the manual `customer_tag` path (a rep typing a company name)."""
+        return self._search(property_name="name", operator="CONTAINS_TOKEN", value=name)
+
+    def find_by_domain(self, domain: str) -> Company | None:
+        """Exact match — used for the calendar-attendee-email path."""
+        return self._search(property_name="domain", operator="EQ", value=domain)

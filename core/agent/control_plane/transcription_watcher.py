@@ -173,6 +173,65 @@ def _resolve_native(meeting_id: str) -> "tuple[str, str] | None":
     return hit
 
 
+# ── sales-cycle: optional per-meeting subject resolution (off by default) ────────────────────────────
+# PRE-M2 (see start()'s docstring), every copilot is attributed to one placeholder subject. This resolves
+# the REAL owner from the meeting's own `data.workspace_id` — a field the meetings domain already exposes
+# via the EXISTING, first-class `POST /meetings/{platform}/{native}/workspace` endpoint (docs/docs/api/
+# meetings.mdx:164-174) — rather than inventing a parallel notion of "which workspace" (P23: one writer).
+# Mirrors `_resolve_native`'s exact idiom (module-dict cache on hit, throttled retry on miss, same
+# gateway/API-key env vars) so a late tag (a rep tagging the call a few seconds after it starts) is
+# picked up on the next re-arm rather than being permanently missed.
+_workspace_subject: dict[str, str] = {}       # numeric meeting_id → resolved workspace/subject slug
+_workspace_miss_at: dict[str, float] = {}     # numeric meeting_id → last failed-resolve (monotonic)
+WORKSPACE_RESOLVE_RETRY_SEC = 5.0
+
+
+def _workspace_resolve_enabled() -> bool:
+    return os.environ.get("SALES_CYCLE_WORKSPACE_RESOLVE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _resolve_workspace_subject(meeting_id: str, default: str) -> str:
+    """Best-effort: the meeting's bound `workspace_id`, else `default` (the pre-M2 placeholder or the
+    sales-cycle unmapped slug, whichever the caller passes). Never raises — a lookup failure degrades to
+    `default`, exactly like a native-id resolve miss degrades to numeric-key display (P18: fail soft, but
+    the fault is still typed and reported so a stuck resolver is observable, not silently wrong forever)."""
+    if not _workspace_resolve_enabled():
+        return default
+    if meeting_id in _workspace_subject:
+        return _workspace_subject[meeting_id]
+    now = time.monotonic()
+    if now - _workspace_miss_at.get(meeting_id, 0.0) < WORKSPACE_RESOLVE_RETRY_SEC:
+        return default
+    key = os.environ.get("VEXA_BOT_API_KEY", "")
+    if not key:
+        _report_fault("workspace_resolve", "unauthorized",
+                      "VEXA_BOT_API_KEY not set — cannot resolve meeting→workspace subject")
+        _workspace_miss_at[meeting_id] = now
+        return default
+    gw = os.environ.get("VEXA_GATEWAY_URL", "http://gateway:8000").rstrip("/")
+    try:
+        req = urllib.request.Request(gw + f"/meetings/{meeting_id}", headers={"X-API-Key": key})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        kind = _classify_http(e.code)
+        _report_fault("workspace_resolve", kind, f"GET {gw}/meetings/{meeting_id} → HTTP {e.code}")
+        _workspace_miss_at[meeting_id] = now
+        return default
+    except Exception as e:  # noqa: BLE001 — network/parse fault: still surface it, never swallow
+        _report_fault("workspace_resolve", "unavailable",
+                      f"GET {gw}/meetings/{meeting_id} failed: {type(e).__name__}: {e}")
+        _workspace_miss_at[meeting_id] = now
+        return default
+    workspace_id = (data.get("data") or {}).get("workspace_id")
+    if not workspace_id:
+        _workspace_miss_at[meeting_id] = now  # not tagged yet — retry shortly, not a fault
+        return default
+    _workspace_subject[meeting_id] = str(workspace_id)
+    _clear_fault("workspace_resolve")
+    return str(workspace_id)
+
+
 def _record_meeting_doc(native: str, platform: str, subject: str) -> None:
     """Best-effort: connect the meeting's own kg doc ref to the meeting on session_end, via the
     gateway (X-API-Key). Recorded from the watcher — NOT the isolated worker — so the user key never
@@ -327,7 +386,7 @@ def _handle(r, dispatcher, live, subject, p, last_arm, keymap, first_seen) -> No
         logger.info("meeting %s ended → reaping copilot", key)
         # Connect this meeting's own kg doc (authored by the §4 worker on session_end) to the
         # meeting — from here, so the user key stays out of the isolated worker container.
-        _record_meeting_doc(native, platform, subject)
+        _record_meeting_doc(native, platform, _resolve_workspace_subject(mid, subject))
         return
     if kind != "transcription":
         return
@@ -361,7 +420,8 @@ def _handle(r, dispatcher, live, subject, p, last_arm, keymap, first_seen) -> No
             r.expire(f"proc:meeting:{key}:on", PROC_FLAG_ROLLING_TTL_SEC)
         except Exception:  # noqa: BLE001 — refresh is hygiene; never block the arm
             pass
-        _arm(dispatcher, subject, key, platform, transcript_start_id=_resume_cursor(r, key),
+        _arm(dispatcher, _resolve_workspace_subject(mid, subject), key, platform,
+             transcript_start_id=_resume_cursor(r, key),
              numeric_meeting_id=mid if mid.isdigit() else None, native_id=native)
 
 
