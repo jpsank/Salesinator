@@ -58,6 +58,33 @@ def build_authorize_url(*, client_id: str, redirect_uri: str, state: str, scopes
     return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
 
 
+def list_repos(*, token: str, timeout: float = 10.0) -> list[dict]:
+    """The connected account's own repos (owned + org-member), newest-active first — what the
+    product-repo picker offers instead of making someone type a URL. Raises GitHubOAuthError on
+    anything but a clean 200 (expired/revoked token, rate limit, network fault)."""
+    params = urllib.parse.urlencode({
+        "per_page": 100, "sort": "updated", "affiliation": "owner,collaborator,organization_member",
+    })
+    req = urllib.request.Request(
+        f"https://api.github.com/user/repos?{params}",
+        headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise GitHubOAuthError(f"GitHub repo list failed: HTTP {e.code}") from e
+    except urllib.error.URLError as e:
+        raise GitHubOAuthError(f"GitHub repo list failed: {e}") from e
+    return [
+        {
+            "full_name": r.get("full_name"), "clone_url": r.get("clone_url"),
+            "default_branch": r.get("default_branch") or "main", "private": bool(r.get("private")),
+        }
+        for r in data
+    ]
+
+
 def exchange_code(
     *, client_id: str, client_secret: str, redirect_uri: str, code: str, timeout: float = 10.0,
 ) -> str:

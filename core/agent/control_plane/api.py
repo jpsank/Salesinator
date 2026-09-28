@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from jsonschema.exceptions import ValidationError
 from pydantic import BaseModel
@@ -341,6 +341,7 @@ class WorkspaceSwapBody(BaseModel):
     slug: Optional[str] = None   # target a parked slot DIRECTLY (e.g. a no-repo backup) — restores, no re-clone
     fresh: bool = False          # swap-to-seed only: rebuild the default from template (start fresh) vs restore the park
     token: Optional[str] = None  # access token for a PRIVATE repo — used for the clone only, never stored (P15)
+    for_subject: Optional[str] = None  # act on the one allowlisted shared identity instead of the caller
 
 
 class WorkspacePublishBody(BaseModel):
@@ -977,6 +978,20 @@ def create_app(
             return fallback
         raise HTTPException(status_code=401, detail="missing X-User-Id (agent-api is fronted by the gateway)")
 
+    def target_subject_of(request: Request, for_: Optional[str]) -> str:
+        """The effective subject for an endpoint that also supports acting on behalf of ONE fixed,
+        pre-configured non-caller identity (``?for=``) — e.g. a "product repo" shared by a whole
+        team, which has no login of its own. ``for_`` must exactly equal the configured
+        ``github_oauth_target_subject`` or this refuses (403): otherwise any authenticated caller
+        could overwrite a DIFFERENT real user's stored git token just by naming their subject."""
+        caller = subject_of(request)
+        if for_ is None:
+            return caller
+        allowed = settings.github_oauth_target_subject if settings is not None else ""
+        if not allowed or for_ != allowed:
+            raise HTTPException(status_code=403, detail="cannot act on behalf of that subject")
+        return for_
+
     @app.get("/health")
     def health():
         ok = dispatcher is not None
@@ -1521,14 +1536,19 @@ def create_app(
     # for init; VEXA_WORKSPACE_REPO/REF in dispatch/spawn for swap, bridge resolves per-meeting) — Phase 6
     # surfaces them here and wires the slim-client init_workspace()/use_workspace().
     @app.post("/api/workspace/init", status_code=201)
-    def ws_init(request: Request):
+    def ws_init(request: Request, for_: Optional[str] = Query(None, alias="for")):
         """EAGERLY provision this subject's workspace tiers — the "on account creation" seam (so the
         Personal baseline + the private `_system` tier exist BEFORE the first dispatch, instead of being
         lazily seeded on first turn). Materializes the baseline from the VALIDATED workspace-seed template
         (shared.seeding.seed_workspace) and ensures `_system` (system_mounts.ensure_system_workspace).
         Idempotent — existing tiers (`.git` present) are returned untouched, so it's safe to call on every
-        login. The same seams the worker uses lazily on first dispatch, surfaced as a control."""
-        subject = subject_of(request)
+        login. The same seams the worker uses lazily on first dispatch, surfaced as a control.
+
+        ``?for=`` provisions the one allowlisted shared identity instead of the caller — a synthetic
+        subject like a "product repo" never logs in to trigger the normal on-login seam itself, so
+        whatever attaches its first repo needs to seed it first (an unseeded subject's swap nests the
+        clone under ``kg/<slug>/`` instead of replacing the workspace root)."""
+        subject = target_subject_of(request, for_)
         ws = wsr.workspace_dir(subject)
         # Select the seed out of the registry root (default template for now; per-request template
         # selection lands with the second seed). VEXA_WORKSPACE_SEED_DIR still overrides.
@@ -1549,12 +1569,13 @@ def create_app(
                 "system_seeded": not system_existed}
 
     @app.get("/api/workspace/attached")
-    def ws_attached(request: Request):
-        """The subject's attachment view: the active slug + the parked workspaces available to swap back
-        to, plus ``published_url`` — where the ACTIVE workspace was published (the ``vexa-publish``
-        remote's token-free URL), or null when it never was. The client renders a published workspace
-        with a link to its GitHub home instead of the publish action."""
-        subject = subject_of(request)
+    def ws_attached(request: Request, for_: Optional[str] = Query(None, alias="for")):
+        """The subject's (or, via ``?for=``, the one allowlisted shared identity's) attachment view:
+        the active slug + the parked workspaces available to swap back to, plus ``published_url`` —
+        where the ACTIVE workspace was published (the ``vexa-publish`` remote's token-free URL), or
+        null when it never was. The client renders a published workspace with a link to its GitHub
+        home instead of the publish action."""
+        subject = target_subject_of(request, for_)
         try:
             state = attached_workspaces(wsr.root, subject)
         except ValueError:
@@ -1569,8 +1590,12 @@ def create_app(
         repo is restored from a prior park or cloned fresh. Omit ``repo`` to swap back to the seed.
 
         Mounting is by-folder (``<root>/<subject>`` is what the next dispatch mounts), so the swapped
-        tree takes effect on the subject's next turn — no dispatch change needed."""
-        subject = subject_of(request)
+        tree takes effect on the subject's next turn — no dispatch change needed.
+
+        ``for_subject`` swaps the one allowlisted shared identity's workspace instead of the
+        caller's own (e.g. a "product repo" a whole team's feature-build pipeline runs against) —
+        refused (403) for anything but the exact configured value."""
+        subject = target_subject_of(request, body.for_subject)
         # The repository is a caller-supplied instruction to THIS SERVER to go and fetch something, so
         # the transport and the host are settled before anything reaches git (see control_plane/repo_ref).
         try:
@@ -1719,11 +1744,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown workspace")
 
     @app.get("/api/workspace/git-token")
-    def ws_git_token_get(request: Request):
-        """Whether the caller has a SAVED reusable GitHub token, and a masked (last-4) preview of it. The
-        clear value is NEVER returned — server-side only (git_credentials). `oauth_configured` lets the
-        Settings UI show "OAuth not registered" instead of sending the rep into /authorize's raw 503."""
-        subject = subject_of(request)
+    def ws_git_token_get(request: Request, for_: Optional[str] = Query(None, alias="for")):
+        """Whether the caller (or, via ``?for=``, the one allowlisted shared identity) has a SAVED
+        reusable GitHub token, and a masked (last-4) preview of it. The clear value is NEVER returned
+        — server-side only (git_credentials). `oauth_configured` lets the Settings UI show "OAuth not
+        registered" instead of sending the rep into /authorize's raw 503."""
+        subject = target_subject_of(request, for_)
         oauth_configured = bool(
             settings is not None and settings.github_oauth_client_id and settings.github_oauth_redirect_uri
         )
@@ -1744,13 +1770,16 @@ def create_app(
         return {"set": stored, "masked": git_creds.masked_github_token(wsr.root, subject)}
 
     @app.get("/api/workspace/git-token/oauth/authorize")
-    def ws_git_token_oauth_authorize(request: Request):
+    def ws_git_token_oauth_authorize(request: Request, for_: Optional[str] = Query(None, alias="for")):
         """"Connect GitHub" — an OAuth alternative to POSTing a pasted PAT above. Needs the caller's
         Vexa identity NOW (github_oauth.py's callback has no session to read it from), so it's
-        folded into a signed `state` param GitHub echoes back verbatim."""
+        folded into a signed `state` param GitHub echoes back verbatim.
+
+        ``?for=`` authorizes on behalf of the one allowlisted shared identity instead of the caller
+        (e.g. a "product repo" a whole team builds against) — refused (403) for anything else."""
         if settings is None or not settings.github_oauth_client_id or not settings.github_oauth_redirect_uri:
             raise HTTPException(status_code=503, detail="GitHub OAuth is not configured on this deployment")
-        subject = subject_of(request)
+        subject = target_subject_of(request, for_)
         state = github_oauth.sign_state(subject=subject, secret=settings.dispatch_signing_key.get_secret_value())
         return RedirectResponse(github_oauth.build_authorize_url(
             client_id=settings.github_oauth_client_id, redirect_uri=settings.github_oauth_redirect_uri,
@@ -1760,15 +1789,27 @@ def create_app(
     @app.get("/api/workspace/git-token/oauth/callback")
     def ws_git_token_oauth_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
         """GitHub redirects the browser HERE directly (not through the gateway) — no cookie, no
-        X-User-Id; `state` (signed at /authorize) is the only way back to who asked."""
+        X-User-Id; `state` (signed at /authorize) is the only way back to who asked. The redirect's
+        query flag name depends on WHICH subject the state names — the shared target identity's
+        connect flow gets its own flag so it never lights up a different rep's personal GitHub card.
+        A state that's missing, forged, or expired can't be attributed to either flow, so it falls
+        back to the personal-card flag (the common case, and the pre-existing behavior)."""
         terminal_url = (settings.terminal_url if settings is not None else "http://localhost:13000").rstrip("/")
         settings_url = f"{terminal_url}/?settings=integrations"
+        target = settings.github_oauth_target_subject if settings is not None else ""
+        subject: Optional[str] = None
+        verify_error: Optional[str] = None
+        if state and settings is not None:
+            try:
+                subject = github_oauth.verify_state(state=state, secret=settings.dispatch_signing_key.get_secret_value())
+            except github_oauth.GitHubOAuthError as e:
+                verify_error = str(e)
+        flag = "product_repo_github" if subject and subject == target else "github"
+
         if error or not code or not state:
-            return RedirectResponse(f"{settings_url}&github_error={error or 'no_code'}")
-        try:
-            subject = github_oauth.verify_state(state=state, secret=settings.dispatch_signing_key.get_secret_value())
-        except github_oauth.GitHubOAuthError as e:
-            return RedirectResponse(f"{settings_url}&github_error={e}")
+            return RedirectResponse(f"{settings_url}&{flag}_error={error or 'no_code'}")
+        if subject is None:
+            return RedirectResponse(f"{settings_url}&{flag}_error={verify_error}")
         try:
             token = github_oauth.exchange_code(
                 client_id=settings.github_oauth_client_id, client_secret=settings.github_oauth_client_secret.get_secret_value(),
@@ -1777,8 +1818,23 @@ def create_app(
             git_creds.set_github_token(wsr.root, subject, token)
         except github_oauth.GitHubOAuthError as e:
             logger.error("GitHub OAuth code exchange failed for subject=%s: %s", subject, e)
-            return RedirectResponse(f"{settings_url}&github_error=exchange_failed")
-        return RedirectResponse(f"{settings_url}&github_connected=1")
+            return RedirectResponse(f"{settings_url}&{flag}_error=exchange_failed")
+        return RedirectResponse(f"{settings_url}&{flag}_connected=1")
+
+    @app.get("/api/workspace/git-token/oauth/repos")
+    def ws_git_token_oauth_repos(request: Request, for_: Optional[str] = Query(None, alias="for")):
+        """The connected account's own GitHub repos — what the "pick your product repo" dropdown
+        offers instead of making someone type a clone URL. Needs a token already saved for the
+        target subject (via the OAuth connect above); 409 if there isn't one yet."""
+        subject = target_subject_of(request, for_)
+        token = git_creds.read_github_token(wsr.root, subject)
+        if not token:
+            raise HTTPException(status_code=409, detail="connect GitHub for this subject first")
+        try:
+            repos = github_oauth.list_repos(token=token)
+        except github_oauth.GitHubOAuthError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        return {"repos": repos}
 
     @app.get("/api/workspace/git-remote-status")
     def ws_git_remote_status(request: Request, slug: Optional[str] = None):

@@ -6,6 +6,7 @@
  */
 import { cardMeta, OAuthConnectionCard } from "./integrationCard";
 import { disconnectOAuth, getOAuthStatus, oauthConnectUrl } from "./salesCycleApi";
+import { ProductRepoCard } from "./productRepoConnection";
 
 export function SalesCycleSection() {
   return (
@@ -32,6 +33,7 @@ export function SalesCycleSection() {
             &ldquo;Subscribe to bot events&rdquo; add <code style={{ fontFamily: "var(--mono)" }}>reaction_added</code> and save.
           </div>
         )} />
+      <ProductRepoCard />
     </div>
   );
 }

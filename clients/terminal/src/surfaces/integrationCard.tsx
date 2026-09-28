@@ -29,7 +29,7 @@ export interface OAuthStatus {
 /** The one-time banner from an OAuth redirect landing back on this page
  *  (?{provider}_connected=1 / ?{provider}_error=...) — read once, then dropped from the URL; a
  *  refresh shows the real polled status instead of a flag stuck in the address bar. */
-function useOAuthRedirectFeedback(provider: string): { connected: boolean; error: string | null } {
+export function useOAuthRedirectFeedback(provider: string): { connected: boolean; error: string | null } {
   const [state] = useState(() => {
     if (typeof window === "undefined") return { connected: false, error: null };
     const params = new URLSearchParams(window.location.search);

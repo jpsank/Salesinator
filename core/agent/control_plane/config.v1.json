@@ -363,6 +363,15 @@
       ]
     },
     {
+      "key": "VEXA_GITHUB_OAUTH_TARGET_SUBJECT",
+      "class": "defaulted",
+      "default": "product-repo",
+      "description": "the one non-caller subject \"Connect GitHub\" may authorize on behalf of (e.g. the sales-cycle add-on's shared product-repo identity) — an ?for= request must match this exactly or is refused (403)",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
       "key": "VEXA_REQUIRE_GATEWAY_IDENTITY",
       "class": "defaulted",
       "default": "false",

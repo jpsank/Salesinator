@@ -134,3 +134,149 @@ def test_callback_state_for_a_different_subject_stores_under_that_subject_not_th
     c.get(f"/api/workspace/git-token/oauth/callback?code=x&state={state}", follow_redirects=False)
     assert git_creds.read_github_token(tmp_path, "u_bob") == "ghu_bob"
     assert git_creds.read_github_token(tmp_path, "u_jane") is None
+
+
+# ── the shared "product repo" identity (?for=) — a Lovable-style repo picker for a non-technical
+# admin, without ever handing the whole team's OAuth connection to one rep's personal card ──────────
+
+def test_authorize_for_disallowed_subject_is_refused(tmp_path):
+    (tmp_path / "u_jane").mkdir(parents=True)
+    c = _client(
+        tmp_path, github_oauth_client_id="cid",
+        github_oauth_redirect_uri="http://localhost:18100/api/workspace/git-token/oauth/callback",
+        github_oauth_target_subject="product-repo",
+    )
+    r = c.get("/api/workspace/git-token/oauth/authorize?for=some-other-users-subject", headers=H, follow_redirects=False)
+    assert r.status_code == 403
+
+
+def test_authorize_for_allowed_subject_signs_state_for_it_not_the_caller(tmp_path):
+    (tmp_path / "u_jane").mkdir(parents=True)
+    c = _client(
+        tmp_path, github_oauth_client_id="cid",
+        github_oauth_redirect_uri="http://localhost:18100/api/workspace/git-token/oauth/callback",
+        github_oauth_target_subject="product-repo",
+    )
+    r = c.get("/api/workspace/git-token/oauth/authorize?for=product-repo", headers=H, follow_redirects=False)
+    assert r.status_code in (302, 307)
+    import urllib.parse
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(r.headers["location"]).query)["state"][0]
+    assert github_oauth.verify_state(state=state, secret="dev-dispatch-signing-key") == "product-repo"
+
+
+def test_callback_for_the_shared_subject_uses_its_own_redirect_flag(tmp_path, monkeypatch):
+    """So "Connect GitHub" succeeding for the shared product-repo identity never lights up a
+    DIFFERENT rep's own personal GitHub card with a false "connected" banner."""
+    c = _client(
+        tmp_path, github_oauth_client_id="cid", github_oauth_client_secret="csecret",
+        github_oauth_redirect_uri="http://x/cb", terminal_url="http://localhost:13000",
+        github_oauth_target_subject="product-repo",
+    )
+
+    class _Resp:
+        def read(self): return json.dumps({"access_token": "ghu_shared"}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", lambda req, timeout=10: _Resp())
+    state = github_oauth.sign_state(subject="product-repo", secret="dev-dispatch-signing-key")
+    r = c.get(f"/api/workspace/git-token/oauth/callback?code=x&state={state}", follow_redirects=False)
+    assert r.headers["location"] == "http://localhost:13000/?settings=integrations&product_repo_github_connected=1"
+    assert git_creds.read_github_token(tmp_path, "product-repo") == "ghu_shared"
+
+
+def test_repos_requires_a_connected_token_first(tmp_path):
+    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    r = c.get("/api/workspace/git-token/oauth/repos?for=product-repo", headers=H)
+    assert r.status_code == 409
+
+
+def test_repos_lists_the_connected_accounts_repos(tmp_path, monkeypatch):
+    git_creds.set_github_token(tmp_path, "product-repo", "ghu_shared")
+    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+
+    class _Resp:
+        def read(self):
+            return json.dumps([
+                {"full_name": "acme/api", "clone_url": "https://github.com/acme/api.git",
+                 "default_branch": "main", "private": True},
+            ]).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", lambda req, timeout=10: _Resp())
+    r = c.get("/api/workspace/git-token/oauth/repos?for=product-repo", headers=H)
+    assert r.status_code == 200
+    assert r.json() == {"repos": [
+        {"full_name": "acme/api", "clone_url": "https://github.com/acme/api.git",
+         "default_branch": "main", "private": True},
+    ]}
+
+
+def test_repos_for_disallowed_subject_is_refused(tmp_path):
+    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    r = c.get("/api/workspace/git-token/oauth/repos?for=someone-else", headers=H)
+    assert r.status_code == 403
+
+
+def test_swap_for_the_shared_subject_mounts_under_that_subject_not_the_caller(tmp_path, monkeypatch):
+    """Real git over a local repo — no network (same pattern as test_api.py's swap coverage). The
+    point: ?for=/for_subject must redirect WHICH workspace gets swapped, not just be accepted."""
+    import subprocess
+
+    monkeypatch.setenv("VEXA_ALLOW_LOCAL_REPO_ROOT", str(tmp_path))
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    run = lambda *a: subprocess.run(["git", *a], cwd=origin, check=True, capture_output=True)
+    run("init", "-q", "-b", "main"); run("config", "user.email", "t@t"); run("config", "user.name", "t")
+    # A clone needs its OWN CLAUDE.md to be treated as a "compliant" workspace (validate_seed) — else
+    # workspace_attach nests it under kg/<slug>/ instead of using it as the workspace root directly.
+    (origin / "MARK").write_text("CUSTOM\n"); (origin / "CLAUDE.md").write_text("CUSTOM ROOT\n")
+    run("add", "-A"); run("commit", "-q", "-m", "x")
+
+    workspaces = tmp_path / "ws"
+    c = TestClient(create_app(
+        Dispatcher(load_settings(workspaces_dir=str(workspaces), github_oauth_target_subject="product-repo"),
+                   _FakeRuntime(), _FakeIdentity()),
+        reader=WorkspaceReader(str(workspaces)),
+    ))
+    r = c.post("/api/workspace/swap", headers=H,
+               json={"repo": str(origin), "ref": "main", "for_subject": "product-repo"})
+    assert r.status_code == 200
+    assert r.json()["subject"] == "product-repo"
+    assert (workspaces / "product-repo" / "MARK").read_text() == "CUSTOM\n"
+    assert not (workspaces / "u_jane").exists()  # the caller's own workspace was never touched
+
+
+def test_swap_for_disallowed_subject_is_refused(tmp_path):
+    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    r = c.post("/api/workspace/swap", headers=H, json={"repo": "https://github.com/acme/api.git", "for_subject": "someone-else"})
+    assert r.status_code == 403
+
+
+def test_init_for_the_shared_subject_seeds_it_not_the_caller(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "CLAUDE.md").write_text("SEED\n")
+    monkeypatch.setenv("VEXA_WORKSPACE_SEED_DIR", str(seed))
+    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    r = c.post("/api/workspace/init?for=product-repo", headers=H)
+    assert r.status_code == 201
+    assert r.json()["seeded"] is True
+    assert (tmp_path / "product-repo" / "CLAUDE.md").read_text() == "SEED\n"
+    assert not (tmp_path / "u_jane").exists()
+
+
+def test_init_for_disallowed_subject_is_refused(tmp_path):
+    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    r = c.post("/api/workspace/init?for=someone-else", headers=H)
+    assert r.status_code == 403
+
+
+def test_attached_for_the_shared_subject_reports_its_own_empty_shape(tmp_path):
+    """Safe to call before any attach — same "empty shape" guarantee attached_workspaces() gives
+    any brand-new subject, proving ?for= reaches this endpoint rather than erroring or 403ing."""
+    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    r = c.get("/api/workspace/attached?for=product-repo", headers=H)
+    assert r.status_code == 200
+    assert "slots" in r.json() and "active_set" in r.json()

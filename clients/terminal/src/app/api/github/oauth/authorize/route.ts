@@ -8,19 +8,24 @@
  *  redirect:"manual", read the Location it hands back (GitHub's real consent URL, already carrying
  *  the signed state), and 302 the ACTUAL browser there. Two hops, one real navigation from the
  *  user's point of view.
+ *
+ *  `?for=` passes through unchanged to agent-api, which allowlists it against ONE configured
+ *  shared subject (e.g. sales-cycle's product-repo identity) — see target_subject_of in api.py.
  */
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { resolveApiKey } from "../../../proxyAuth";
 
 export const dynamic = "force-dynamic";
 
 const GATEWAY_URL = (process.env.GATEWAY_URL || "http://127.0.0.1:18056").replace(/\/$/, "");
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const apiKey = await resolveApiKey();
+  const forParam = req.nextUrl.searchParams.get("for");
+  const qs = forParam ? `?for=${encodeURIComponent(forParam)}` : "";
   let upstream: Response;
   try {
-    upstream = await fetch(`${GATEWAY_URL}/agent/api/workspace/git-token/oauth/authorize`, {
+    upstream = await fetch(`${GATEWAY_URL}/agent/api/workspace/git-token/oauth/authorize${qs}`, {
       headers: { "X-API-Key": apiKey }, redirect: "manual", cache: "no-store",
     });
   } catch (err) {

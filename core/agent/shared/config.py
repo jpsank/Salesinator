@@ -119,6 +119,11 @@ class Settings(BaseSettings):
     github_oauth_redirect_uri: str = ""
     # Where to send the browser back to once "Connect GitHub" finishes — the Terminal's own origin.
     terminal_url: str = "http://localhost:13000"
+    # The ONE non-caller subject "Connect GitHub" is allowed to authorize on behalf of — e.g. a
+    # sales-cycle add-on's shared "product repo" identity, which has no login/session of its own.
+    # Never an arbitrary caller-supplied subject (that would let anyone overwrite anyone else's
+    # stored git token) — an `?for=` request must match this exact value or it's refused (403).
+    github_oauth_target_subject: str = "product-repo"
 
     def is_secret_present(self) -> bool:
         """True when a scoped identity token has been provided (without revealing it)."""
