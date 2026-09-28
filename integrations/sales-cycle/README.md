@@ -42,27 +42,106 @@ ourselves (details below).
 
 ## Where things stand
 
-All five stages described above are built and covered by tests (95 tests total as of this writing).
-One piece needs a one-time setup step before it works for real: telling it where your actual
-product codebase lives.
+All five stages described above are built and covered by tests (100+ tests as of this writing).
+Every credential below is empty by default (the stack runs fine with none of it set — the add-on
+just won't have anything to look up yet); here's how to get each one for real.
 
-### One-time setup: the product repo
+## One-time setup: connecting HubSpot, Slack, and GitHub
 
-The "build it and push a branch" step (step 4) runs as one dedicated Vexa **subject** — just a
-slug, e.g. `product-repo`, not a real login — whose own workspace is your actual product repo.
-Attach it the exact same way any Vexa workspace attaches a custom git repo (the same mechanism
-behind Settings → Workspaces → "attach a custom git repo" in the Terminal UI), just called
-directly instead of through a browser session, since this subject has no login of its own:
+Every step below is also reachable interactively from Settings → Integrations in the Terminal
+UI ("Connect HubSpot" / "Connect Slack" / the Product repo card) once the corresponding env vars
+are set — this section is what to put IN those env vars, and the couple of steps ("Event
+Subscriptions", the product repo's GitHub App) that can only be done on the provider's own site.
 
+### HubSpot
+
+Two ways to authenticate — pick one, don't set both:
+
+- **Service Key** (recommended — HubSpot is retiring legacy private-app creation as of late
+  September 2026): HubSpot account → **Settings → Integrations → Service Keys** (or
+  **Development → Keys → Service keys**) → create one, name it, grant it the
+  `crm.objects.companies.read` scope (a Service Key can only be granted scopes YOU already have).
+  Copy the generated token into:
+  ```
+  SALES_CYCLE_HUBSPOT_TOKEN=pat-...
+  ```
+- **Private app token** (if your account still allows creating one): **Settings → Integrations →
+  Private Apps → Create a private app** → under **Scopes** add `crm.objects.companies.read` →
+  create → copy the token into the same `SALES_CYCLE_HUBSPOT_TOKEN`.
+- **OAuth** (if you'd rather a rep click "Connect HubSpot" than paste a static token): create a
+  **public app** at HubSpot's developer portal, set scope `crm.objects.companies.read`, set the
+  redirect URL to `http://localhost:18300/oauth/hubspot/callback` (swap the host for your real
+  domain if not running locally), then set:
+  ```
+  SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID=...
+  SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_SECRET=...
+  SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI=http://localhost:18300/oauth/hubspot/callback
+  ```
+
+### Slack
+
+1. `api.slack.com/apps` → **Create New App** → **From scratch**.
+2. **OAuth & Permissions** → **Bot Token Scopes** → add `chat:write`, `channels:read`,
+   `groups:read`, and **`reactions:read`** (required for the ✓-approval flow's `reaction_added`
+   event to be delivered at all — Slack silently drops an event subscription the bot token
+   doesn't hold the matching scope for).
+3. **OAuth & Permissions** → **Redirect URLs** → add `http://localhost:18300/oauth/slack/callback`.
+4. **Event Subscriptions** → toggle on → **Request URL** `http://localhost:18300/slack/events`
+   (sales-cycle answers Slack's verification handshake automatically) → under **Subscribe to bot
+   events** add `reaction_added` → save. **This step has no API — it can only be done here, by
+   hand, once.**
+5. **Basic Information → App Credentials**: copy Client ID, Client Secret, and Signing Secret
+   (three separate values — the signing secret verifies incoming Slack requests, unrelated to the
+   OAuth pair).
+6. Right-click the channel feature requests should post to → **View channel details** → copy its
+   ID.
+7. **Install to Workspace** (top of the app config) — required any time scopes change.
+8. Set:
+   ```
+   SALES_CYCLE_SLACK_OAUTH_CLIENT_ID=...
+   SALES_CYCLE_SLACK_OAUTH_CLIENT_SECRET=...
+   SALES_CYCLE_SLACK_SIGNING_SECRET=...
+   SALES_CYCLE_SLACK_CHANNEL_ID=...
+   ```
+
+### GitHub (personal tokens AND the product repo — one shared OAuth App)
+
+This is a Vexa-wide setting (`VEXA_GITHUB_OAUTH_*`), not sales-cycle-specific — it also powers
+every rep's own "Connect GitHub" token card.
+
+1. GitHub → **Settings → Developer settings → OAuth Apps → New OAuth App**.
+2. Homepage URL: your Terminal's URL (`http://localhost:13000` locally).
+3. **Authorization callback URL** (must match exactly):
+   `http://localhost:18100/api/workspace/git-token/oauth/callback`
+4. Generate a client secret, copy both it and the Client ID.
+5. Set:
+   ```
+   VEXA_GITHUB_OAUTH_CLIENT_ID=...
+   VEXA_GITHUB_OAUTH_CLIENT_SECRET=...
+   ```
+   (`VEXA_GITHUB_OAUTH_REDIRECT_URI` / `VEXA_TERMINAL_URL` already default correctly for local dev.)
+
+### The product repo
+
+The "build it and push a branch" step runs as one dedicated Vexa **subject** — just a slug
+(default `product-repo`), not a real login — whose own workspace is your actual product repo.
+
+**Preferred: the UI.** Once the GitHub OAuth App above is set up, open Settings → Integrations →
+Sales Cycle → **Product repo** → **Connect GitHub** → pick your repo from the dropdown. No clone
+URL typed, no token pasted — same "OAuth then pick from your own repos" flow as any Lovable-style
+GitHub connect.
+
+**Fallback: curl**, for a scripted/headless setup (attaches the repo the exact same way the UI's
+"attach a custom git repo" flow does, just called directly since this subject has no login of its
+own to click through):
 ```bash
 curl -X POST "$AGENT_API_URL/api/workspace/swap" \
   -H "X-User-Id: product-repo" -H "Content-Type: application/json" \
   -d '{"repo": "https://github.com/your-org/your-product.git", "ref": "main", "token": "<a push-capable GitHub token>"}'
 ```
 
-Then set `SALES_CYCLE_PRODUCT_REPO_SUBJECT=product-repo` (matching whatever subject you used
-above). Nothing else is bespoke to sales-cycle here — it's the platform's own workspace-attach
-primitive, reused for a non-human subject.
+`SALES_CYCLE_PRODUCT_REPO_SUBJECT` already defaults to `product-repo` — only change it if you used
+a different subject above.
 
 ## The one small addition inside Vexa itself
 
