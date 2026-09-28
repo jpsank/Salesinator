@@ -24,6 +24,12 @@ POST /internal/process-approved
 POST /webhooks/meeting-started
     Vexa calls this the moment a bot joins a call. Used for the automatic version of customer
     tagging — see calendar_resolver.py.
+
+GET /oauth/{hubspot,slack}/authorize, .../callback, .../status, POST .../disconnect
+    Each provider's whole "Connect X" flow — see oauth_routes.py (the shared 4-route shape),
+    hubspot_oauth.py and slack_oauth.py (what's actually provider-specific). `authorize` sends the
+    browser to the provider's consent screen; `callback` is where it sends the browser back with a
+    code; `status`/`disconnect` back the Settings page's "Connected as ___ / Disconnect" display.
 """
 
 from __future__ import annotations
@@ -35,8 +41,10 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from sales_cycle import hubspot_oauth, slack_oauth
 from sales_cycle.calendar_resolver import resolve_meeting_started
 from sales_cycle.hubspot_client import HubSpotClient
+from sales_cycle.oauth_routes import OAuthProviderConfig, register_oauth_routes
 from sales_cycle.orchestrator import DispatchError, PushError, check_and_push, submit_implementation
 from sales_cycle.poller import poll_once
 from sales_cycle.resolver import WorkspaceBindError, bind_meeting_workspace, resolve_by_tag, slug_for_company
@@ -85,8 +93,21 @@ class TagResponse(BaseModel):
 
 
 def _hubspot() -> HubSpotClient:
+    """Prefers a real "Connect HubSpot" OAuth connection; falls back to a hand-set static token
+    (`SALES_CYCLE_HUBSPOT_TOKEN`) if HubSpot was never connected that way — so an operator who just
+    wants to test this with their own private-app token doesn't need to go through OAuth at all."""
     s = get_settings()
-    return HubSpotClient(token=s.hubspot_token, base_url=s.hubspot_base_url)
+    oauth_token = hubspot_oauth.get_valid_access_token(
+        store=get_store(), client_id=s.hubspot_oauth_client_id, client_secret=s.hubspot_oauth_client_secret,
+    )
+    return HubSpotClient(token=oauth_token or s.hubspot_token, base_url=s.hubspot_base_url)
+
+
+def _slack() -> SlackClient:
+    """Same pick-one as HubSpot: prefers "Connect Slack", falls back to a hand-set bot token."""
+    s = get_settings()
+    oauth_token = slack_oauth.get_access_token(store=get_store())
+    return SlackClient(bot_token=oauth_token or s.slack_bot_token)
 
 
 def _resolve_and_bind(*, api_key: str, platform: str, native_meeting_id: str, customer_tag: str) -> TagResponse:
@@ -158,9 +179,8 @@ def dispatch(body: DispatchRequest, x_api_key: str = Header(..., alias="X-API-Ke
 @app.post("/internal/poll-feature-requests")
 def poll_feature_requests() -> dict:
     settings = get_settings()
-    slack = SlackClient(bot_token=settings.slack_bot_token)
     notified = poll_once(
-        store=get_store(), slack=slack, workspaces_root=Path(settings.workspaces_root),
+        store=get_store(), slack=_slack(), workspaces_root=Path(settings.workspaces_root),
         channel=settings.slack_channel_id,
     )
     return {"notified": notified, "count": len(notified)}
@@ -265,6 +285,33 @@ async def webhook_meeting_started(request: Request) -> dict:
     if not result["resolved"]:
         logger.info("calendar-path resolution miss: %s", result.get("reason"))
     return result
+
+
+register_oauth_routes(
+    app, provider="hubspot",
+    build_authorize_url=hubspot_oauth.build_authorize_url, exchange_code=hubspot_oauth.exchange_code,
+    error_cls=hubspot_oauth.HubSpotOAuthError, get_store=get_store,
+    get_terminal_url=lambda: get_settings().terminal_url,
+    get_config=lambda: OAuthProviderConfig(
+        client_id=get_settings().hubspot_oauth_client_id,
+        client_secret=get_settings().hubspot_oauth_client_secret,
+        redirect_uri=get_settings().hubspot_oauth_redirect_uri,
+        scopes=get_settings().hubspot_oauth_scopes,
+    ),
+)
+
+register_oauth_routes(
+    app, provider="slack",
+    build_authorize_url=slack_oauth.build_authorize_url, exchange_code=slack_oauth.exchange_code,
+    error_cls=slack_oauth.SlackOAuthError, get_store=get_store,
+    get_terminal_url=lambda: get_settings().terminal_url,
+    get_config=lambda: OAuthProviderConfig(
+        client_id=get_settings().slack_oauth_client_id,
+        client_secret=get_settings().slack_oauth_client_secret,
+        redirect_uri=get_settings().slack_oauth_redirect_uri,
+        scopes=get_settings().slack_oauth_scopes,
+    ),
+)
 
 
 @app.get("/health")

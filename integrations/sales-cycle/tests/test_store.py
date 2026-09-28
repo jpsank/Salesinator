@@ -62,3 +62,42 @@ def test_mark_done_removes_from_unprocessed_queue():
     approved = s.approve(slack_channel="C1", slack_ts="1")
     s.mark_done(approved.id)
     assert s.list_approved_unprocessed() == []
+
+
+def test_oauth_connection_roundtrip():
+    s = _store()
+    assert s.get_oauth_connection("hubspot") is None
+    s.save_oauth_connection(
+        provider="hubspot", access_token="at-1", refresh_token="rt-1",
+        expires_at=1000.0, account_label="acme.hubspot.com",
+    )
+    conn = s.get_oauth_connection("hubspot")
+    assert conn is not None
+    assert conn.access_token == "at-1"
+    assert conn.account_label == "acme.hubspot.com"
+
+
+def test_oauth_connection_reconnect_replaces_but_keeps_original_connected_at():
+    s = _store()
+    s.save_oauth_connection(
+        provider="hubspot", access_token="at-1", refresh_token="rt-1",
+        expires_at=1000.0, account_label="acme.hubspot.com",
+    )
+    first = s.get_oauth_connection("hubspot")
+    s.save_oauth_connection(
+        provider="hubspot", access_token="at-2", refresh_token="rt-2",
+        expires_at=2000.0, account_label="acme.hubspot.com",
+    )
+    second = s.get_oauth_connection("hubspot")
+    assert second.access_token == "at-2"
+    assert second.connected_at == first.connected_at  # a refresh/reconnect isn't a NEW connection
+
+
+def test_disconnect_oauth_removes_connection():
+    s = _store()
+    s.save_oauth_connection(
+        provider="hubspot", access_token="at-1", refresh_token="rt-1",
+        expires_at=1000.0, account_label=None,
+    )
+    s.disconnect_oauth("hubspot")
+    assert s.get_oauth_connection("hubspot") is None

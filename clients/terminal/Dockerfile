@@ -38,6 +38,11 @@ ENV NEXT_PUBLIC_TERMINAL_MODE=$NEXT_PUBLIC_TERMINAL_MODE
 # deployment's DEFAULT_BOT_NAME and a rename costs a rebuild.
 ARG NEXT_PUBLIC_DEFAULT_BOT_NAME=""
 ENV NEXT_PUBLIC_DEFAULT_BOT_NAME=$NEXT_PUBLIC_DEFAULT_BOT_NAME
+# The sales-cycle add-on's own public URL (integrations/sales-cycle/) — baked into the client bundle
+# because "Connect HubSpot" is a real browser redirect the client links to directly, not a fetch
+# through the server-side proxy (see salesCycleApi.ts's hubspotConnectUrl()).
+ARG NEXT_PUBLIC_SALES_CYCLE_URL="http://localhost:18300"
+ENV NEXT_PUBLIC_SALES_CYCLE_URL=$NEXT_PUBLIC_SALES_CYCLE_URL
 # Regular build (not standalone): produces .next served by the custom server in production.
 RUN npm run build
 

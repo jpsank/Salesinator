@@ -6,6 +6,9 @@ external to install. It tracks two things:
 - `pending_approvals`: each feature request's progress. Starts as "pending", becomes "approved" once
   someone reacts ✅ in Slack, "dispatched" once the AI agent starts building it, and "done" once
   the finished branch is pushed to GitHub.
+- `oauth_connections`: one row per external service (HubSpot, Slack, ...) connected via the
+  "Connect X" button in Vexa's Settings page — one shared connection for the whole team, not
+  per-rep, so this is keyed by `provider` name alone.
 """
 
 from __future__ import annotations
@@ -15,6 +18,16 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class OAuthConnection:
+    provider: str
+    access_token: str
+    refresh_token: str | None
+    expires_at: float | None  # unix seconds; None = doesn't expire
+    account_label: str | None  # e.g. the connected HubSpot account's domain, for display
+    connected_at: float
 
 
 @dataclass(frozen=True)
@@ -70,6 +83,14 @@ class Store:
                     branch TEXT, workload_id TEXT,
                     created_at REAL NOT NULL,
                     UNIQUE(slack_channel, slack_ts)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_connections (
+                    provider TEXT PRIMARY KEY,
+                    access_token TEXT NOT NULL, refresh_token TEXT,
+                    expires_at REAL, account_label TEXT,
+                    connected_at REAL NOT NULL
                 )
             """)
 
@@ -128,3 +149,31 @@ class Store:
     def mark_done(self, approval_id: int) -> None:
         with self._conn() as conn:
             conn.execute("UPDATE pending_approvals SET status = 'done' WHERE id = ?", (approval_id,))
+
+    def get_oauth_connection(self, provider: str) -> OAuthConnection | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM oauth_connections WHERE provider = ?", (provider,)
+            ).fetchone()
+        return OAuthConnection(**dict(row)) if row is not None else None
+
+    def save_oauth_connection(
+        self, *, provider: str, access_token: str, refresh_token: str | None,
+        expires_at: float | None, account_label: str | None,
+    ) -> None:
+        """Replaces any existing connection for this provider — reconnecting (or a token refresh)
+        always wins over whatever was there before."""
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO oauth_connections "
+                "(provider, access_token, refresh_token, expires_at, account_label, connected_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(provider) DO UPDATE SET "
+                "access_token = excluded.access_token, refresh_token = excluded.refresh_token, "
+                "expires_at = excluded.expires_at, account_label = excluded.account_label",
+                (provider, access_token, refresh_token, expires_at, account_label, time.time()),
+            )
+
+    def disconnect_oauth(self, provider: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM oauth_connections WHERE provider = ?", (provider,))

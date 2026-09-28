@@ -1,0 +1,112 @@
+"use client";
+/** Shared visual language + machinery for every "connect an external service" card in
+ *  Settings → Integrations (Calendar, GitHub, HubSpot, Slack). These used to each define their own
+ *  near-identical copy of the style constants and the connect/disconnect card shape
+ *  (calendarConnections.tsx, tokens.tsx, salesCycleConnection.tsx) — independently, so small
+ *  differences crept in (padding, font-size, spacing). One definition now; every card imports these
+ *  instead of rolling its own.
+ */
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { presentError } from "./apiClient";
+
+export const cardField: CSSProperties = { width: "100%", boxSizing: "border-box", fontSize: 12, padding: "6px 9px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)" };
+export const cardBtn: CSSProperties = { fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)", cursor: "pointer" };
+export const cardPrimaryBtn: CSSProperties = { ...cardBtn, background: "var(--accent)", color: "var(--on-accent)", border: "none" };
+export const cardRow: CSSProperties = { border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 };
+export const cardMeta: CSSProperties = { fontSize: 11, color: "var(--t3)", lineHeight: 1.5 };
+export const cardLabelled: CSSProperties = { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--t2)" };
+export const cardLabelCol: CSSProperties = { width: 96, flex: "none", color: "var(--t3)" };
+export const cardCheckRow: CSSProperties = { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--t2)", cursor: "pointer" };
+
+export interface OAuthStatus {
+  connected: boolean;
+  account_label?: string | null;
+}
+
+/** The one-time banner from an OAuth redirect landing back on this page
+ *  (?{provider}_connected=1 / ?{provider}_error=...) — read once, then dropped from the URL; a
+ *  refresh shows the real polled status instead of a flag stuck in the address bar. */
+function useOAuthRedirectFeedback(provider: string): { connected: boolean; error: string | null } {
+  const [state] = useState(() => {
+    if (typeof window === "undefined") return { connected: false, error: null };
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get(`${provider}_connected`) === "1";
+    const error = params.get(`${provider}_error`);
+    if (connected || error) {
+      params.delete(`${provider}_connected`); params.delete(`${provider}_error`);
+      const q = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (q ? `?${q}` : ""));
+    }
+    return { connected, error };
+  });
+  return state;
+}
+
+/** The one card shape every OAuth-style connection uses: a status line, a Connect (link, real
+ *  navigation) or Disconnect button, a description, and the redirect-feedback banner. `fallback` is
+ *  an optional extra control shown only while NOT connected — GitHub's paste-a-PAT option, so OAuth
+ *  is the default path but never the only one. */
+export function OAuthConnectionCard({
+  provider, label, description, connectUrl, getStatus, disconnect, fallback,
+}: {
+  provider: string;
+  label: string;
+  description: string;
+  connectUrl: string;
+  getStatus: () => Promise<OAuthStatus>;
+  disconnect: () => Promise<OAuthStatus>;
+  /** Rendered only while NOT connected — e.g. GitHub's paste-a-PAT option, so OAuth is the default
+   *  path but never the only one. Call `onConnected` with the fresh status once the fallback path
+   *  succeeds, so the card updates immediately instead of waiting on its own next status poll. */
+  fallback?: (onConnected: (status: OAuthStatus) => void) => ReactNode;
+}) {
+  const [status, setStatus] = useState<OAuthStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const redirectFeedback = useOAuthRedirectFeedback(provider);
+
+  useEffect(() => {
+    let on = true;
+    getStatus().then((s) => on && setStatus(s)).catch((e: unknown) => on && setErr(presentError(e).headline));
+    return () => { on = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
+
+  const doDisconnect = async () => {
+    setBusy(true); setErr(null);
+    try { setStatus(await disconnect()); }
+    catch (e: unknown) { setErr(presentError(e).headline); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={cardRow}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--t1)" }}>{label}</span>
+        <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)" }}>
+          {status === null ? "Checking…"
+            : status.connected ? `Connected${status.account_label ? ` · ${status.account_label}` : ""}`
+            : "Not connected"}
+        </span>
+        {status?.connected ? (
+          <button disabled={busy} onClick={() => void doDisconnect()} style={{ ...cardBtn, color: "var(--danger)" }}>
+            {busy ? "Disconnecting…" : "Disconnect"}
+          </button>
+        ) : (
+          <a href={connectUrl} style={{ ...cardPrimaryBtn, textDecoration: "none", display: "inline-block" }}>
+            Connect
+          </a>
+        )}
+      </div>
+      <div style={cardMeta}>{description}</div>
+      {status !== null && !status.connected && fallback?.(setStatus)}
+      {redirectFeedback.connected && (
+        <div role="status" style={{ fontSize: 11.5, color: "var(--green)" }}>✓ {label} connected.</div>
+      )}
+      {redirectFeedback.error && (
+        <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ Connecting {label} failed: {redirectFeedback.error}</div>
+      )}
+      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+    </div>
+  );
+}

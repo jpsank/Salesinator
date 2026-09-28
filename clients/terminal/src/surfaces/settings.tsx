@@ -10,14 +10,14 @@ import { Icon } from "../ui-kit";
 import { GitHubTokenCard, TokensPanel } from "./tokens";
 import { presentError } from "./apiClient";
 import { CalendarConnectionsPanel } from "./calendarConnections";
+import { SalesCycleSection } from "./salesCycleConnection";
 import { getModelPrefs, setModelPrefs, getTranscriptionPrefs, setTranscriptionPrefs, getGlobalSetting, setGlobalSetting, testModels, testTranscription, type ConfigTestResult } from "./settingsApi";
 
-type SectionId = "calendar" | "models" | "tokens" | "github" | "account";
+type SectionId = "integrations" | "models" | "tokens" | "account";
 const SECTIONS: Array<{ id: SectionId; label: string; icon: string }> = [
-  { id: "calendar", label: "Calendar", icon: "cal" },
+  { id: "integrations", label: "Integrations", icon: "link" },
   { id: "models", label: "Models", icon: "spark" },
   { id: "tokens", label: "API tokens", icon: "key" },
-  { id: "github", label: "GitHub", icon: "github" },
   { id: "account", label: "Account", icon: "user" },
 ];
 
@@ -195,6 +195,25 @@ function ModelsSection() {
   );
 }
 
+/** Every external connection in one place — calendar, GitHub, and the sales-cycle add-on's HubSpot/
+ *  Slack — instead of scattered across separate tabs. Calendar and GitHub are per-person (your own
+ *  connection); HubSpot and Slack are one shared connection for the whole deployment (see
+ *  salesCycleConnection.tsx). Grouped because a rep setting this up thinks "connect my tools," not
+ *  "which of these four unrelated tabs do I need." */
+function IntegrationsSection() {
+  const head: CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--t1)", margin: "14px 0 6px" };
+  return (
+    <div>
+      <div style={head}>Calendar</div>
+      <CalendarConnectionsPanel />
+      <div style={{ ...head, marginTop: 22 }}>GitHub</div>
+      <GitHubTokenCard />
+      <div style={{ ...head, marginTop: 22 }}>Sales Cycle (HubSpot &amp; Slack)</div>
+      <SalesCycleSection />
+    </div>
+  );
+}
+
 function AccountSection() {
   const [user, setUser] = useState<{ email?: string | null; name?: string | null } | null>(null);
   useEffect(() => {
@@ -215,12 +234,11 @@ function AccountSection() {
 }
 
 function SettingsView() {
-  const [section, setSection] = useState<SectionId>("calendar");
+  const [section, setSection] = useState<SectionId>("integrations");
   const bodies: Record<SectionId, ReactNode> = {
-    calendar: <CalendarConnectionsPanel />,
+    integrations: <IntegrationsSection />,
     models: <ModelsSection />,
     tokens: <TokensPanel />,
-    github: <GitHubTokenCard />,
     account: <AccountSection />,
   };
   return (

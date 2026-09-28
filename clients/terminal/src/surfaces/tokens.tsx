@@ -9,9 +9,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../ui-kit";
 import { copyText } from "../ui-kit/ContextMenu";
+import { cardBtn, cardField, OAuthConnectionCard, type OAuthStatus } from "./integrationCard";
 import { listTokens, createToken, revokeToken, TOKEN_SCOPES, type TokenInfo, type TokenScope, type MintedToken } from "./tokensApi";
-import { getGitToken, setGitToken, type SavedGitToken } from "./workspaceApi";
+import { getGitToken, setGitToken } from "./workspaceApi";
 import { presentError } from "./apiClient";
+
+const toOAuthStatus = (s: { set: boolean; masked: string | null }): OAuthStatus => ({ connected: s.set, account_label: s.masked ?? undefined });
 
 const EXPIRIES: Array<{ label: string; seconds?: number }> = [
   { label: "never expires" },
@@ -124,66 +127,49 @@ function CreateTokenForm({ onCreated }: { onCreated: (t: MintedToken) => void })
   );
 }
 
-/** The SAVE-ONCE reusable GitHub token (git_credentials). Stored server-side; the clear value is never
- *  shown again (only a ••••abcd mask). Applied as the fallback credential for push / pull / publish /
- *  attach across ALL of the user's repos, so they don't re-enter it per repo. */
-export function GitHubTokenCard() {
-  const [state, setState] = useState<SavedGitToken | null>(null);
-  const [editing, setEditing] = useState(false);
+/** Paste-a-PAT fallback, shown only while GitHub isn't connected — kept alongside "Connect GitHub"
+ *  (OAuth) rather than replaced by it, for anyone who'd rather use their own scoped token. Both
+ *  paths write to the exact same per-user store (git_credentials) — there's no separate "which
+ *  method did I use" state to track. */
+function GitHubPatFallback({ onConnected }: { onConnected: (status: OAuthStatus) => void }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(() => {
-    void getGitToken().then((s) => { setState(s); setError(null); }).catch((e: unknown) => setError(presentError(e).headline));
-  }, []);
-  useEffect(() => refresh(), [refresh]);
-
   const save = async () => {
     if (!value.trim() || busy) return;
     setBusy(true); setError(null);
-    try { const s = await setGitToken(value.trim()); setState(s); setValue(""); setEditing(false); }
+    try { onConnected(toOAuthStatus(await setGitToken(value.trim()))); setValue(""); }
     catch (e: unknown) { setError(presentError(e).headline); }
     finally { setBusy(false); }
   };
-  const clear = async () => {
-    setBusy(true); setError(null);
-    try { const s = await setGitToken(null); setState(s); setValue(""); setEditing(false); }
-    catch (e: unknown) { setError(presentError(e).headline); }
-    finally { setBusy(false); }
-  };
-
-  const field = { width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)" } as const;
-  const btn = { fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)", cursor: "pointer" } as const;
-  const showForm = editing || (state !== null && !state.set);
 
   return (
-    <div style={{ margin: "4px 4px 14px", padding: 10, borderRadius: 8, border: "1px solid var(--line)" }}>
-      <div style={{ fontSize: 12.5, color: "var(--t1)", marginBottom: 3 }}>GitHub token</div>
-      <div style={{ fontSize: 11, color: "var(--t3)", lineHeight: 1.45, marginBottom: 9 }}>
-        Saved once and reused for push · pull · publish · attach across all your repos. Stored server-side —
-        never shown again. Use a fine-grained, minimally-scoped PAT you can revoke on GitHub anytime.
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px dashed var(--line)", paddingTop: 8 }}>
+      <div style={{ fontSize: 11, color: "var(--t3)" }}>Or paste your own fine-grained PAT (revocable on GitHub anytime):</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="password" value={value} placeholder="ghp_…" disabled={busy}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") void save(); }} style={{ ...cardField, flex: 1 }} />
+        <button disabled={busy || !value.trim()} onClick={() => void save()}
+          style={{ ...cardBtn, opacity: busy || !value.trim() ? 0.5 : 1 }}>{busy ? "Saving…" : "Save"}</button>
       </div>
-      {error && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)", marginBottom: 8 }}>⚠ {error}</div>}
-      {state?.set && !showForm && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Icon name="key" size={13} style={{ color: "var(--accent)" }} />
-          <span style={{ flex: 1, fontSize: 12.5, color: "var(--t2)", fontFamily: "var(--mono)" }}>{state.masked}</span>
-          <button disabled={busy} onClick={() => { setEditing(true); setValue(""); }} style={btn}>Replace</button>
-          <button disabled={busy} onClick={() => void clear()} style={{ ...btn, color: "var(--danger)" }}>Clear</button>
-        </div>
-      )}
-      {showForm && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <input type="password" autoFocus value={value} placeholder="ghp_… (fine-grained PAT)" disabled={busy}
-            onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") { setEditing(false); setValue(""); } }} style={field} />
-          <div style={{ display: "flex", gap: 8 }}>
-            <button disabled={busy || !value.trim()} onClick={() => void save()} style={{ ...btn, background: "var(--accent)", color: "var(--on-accent)", border: "none", opacity: busy || !value.trim() ? 0.5 : 1 }}>{busy ? "Saving…" : "Save token"}</button>
-            {state?.set && <button disabled={busy} onClick={() => { setEditing(false); setValue(""); }} style={btn}>Cancel</button>}
-          </div>
-        </div>
-      )}
+      {error && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {error}</div>}
     </div>
+  );
+}
+
+/** The SAVE-ONCE reusable GitHub token (git_credentials) — per-person, unlike HubSpot/Slack next to
+ *  it. "Connect GitHub" (OAuth) is the default path; pasting a PAT is the fallback, both writing to
+ *  the same store. Applied for push / pull / publish / attach across ALL of the user's repos. */
+export function GitHubTokenCard() {
+  const getStatus = useCallback(async () => toOAuthStatus(await getGitToken()), []);
+  const disconnect = useCallback(async () => toOAuthStatus(await setGitToken(null)), []);
+  return (
+    <OAuthConnectionCard provider="github" label="GitHub"
+      description="Lets an agent push a finished feature-request branch to your product repo for review."
+      connectUrl="/api/github/oauth/authorize" getStatus={getStatus} disconnect={disconnect}
+      fallback={(onConnected) => <GitHubPatFallback onConnected={onConnected} />} />
   );
 }
 

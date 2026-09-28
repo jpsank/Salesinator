@@ -326,6 +326,43 @@
       ]
     },
     {
+      "key": "VEXA_GITHUB_OAUTH_CLIENT_ID",
+      "class": "defaulted",
+      "default": "(unset)",
+      "description": "“Connect GitHub” OAuth App client id — an alternative to pasting a PAT into the existing per-user git token (git_credentials.py); empty disables the button, the paste-a-PAT path still works",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
+      "key": "VEXA_GITHUB_OAUTH_CLIENT_SECRET",
+      "class": "defaulted",
+      "default": "(unset)",
+      "secret": true,
+      "description": "“Connect GitHub” OAuth App client secret",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
+      "key": "VEXA_GITHUB_OAUTH_REDIRECT_URI",
+      "class": "defaulted",
+      "default": "(unset)",
+      "description": "must exactly match the callback URL registered on the GitHub OAuth App (e.g. http://localhost:18100/api/workspace/git-token/oauth/callback)",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
+      "key": "VEXA_TERMINAL_URL",
+      "class": "defaulted",
+      "default": "http://localhost:13000",
+      "description": "where the browser lands after a “Connect GitHub” OAuth flow finishes",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
       "key": "VEXA_REQUIRE_GATEWAY_IDENTITY",
       "class": "defaulted",
       "default": "false",

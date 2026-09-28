@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from jsonschema.exceptions import ValidationError
 from pydantic import BaseModel
 
@@ -65,6 +65,7 @@ from control_plane.workspace_git_sync import RemoteSyncError, pull_origin, push_
 from control_plane.workspace_purpose import read_purpose, write_purpose
 from control_plane import workspace_membership as membership_mod
 from control_plane import git_credentials as git_creds
+from control_plane import github_oauth
 from control_plane import system_mounts
 from control_plane.workspace_membership import MembershipError, MembershipIndex, InMemoryMembershipIndex
 from control_plane.dispatch import Dispatcher
@@ -1736,6 +1737,43 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"set": stored, "masked": git_creds.masked_github_token(wsr.root, subject)}
+
+    @app.get("/api/workspace/git-token/oauth/authorize")
+    def ws_git_token_oauth_authorize(request: Request):
+        """"Connect GitHub" — an OAuth alternative to POSTing a pasted PAT above. Needs the caller's
+        Vexa identity NOW (github_oauth.py's callback has no session to read it from), so it's
+        folded into a signed `state` param GitHub echoes back verbatim."""
+        if settings is None or not settings.github_oauth_client_id or not settings.github_oauth_redirect_uri:
+            raise HTTPException(status_code=503, detail="GitHub OAuth is not configured on this deployment")
+        subject = subject_of(request)
+        state = github_oauth.sign_state(subject=subject, secret=settings.dispatch_signing_key.get_secret_value())
+        return RedirectResponse(github_oauth.build_authorize_url(
+            client_id=settings.github_oauth_client_id, redirect_uri=settings.github_oauth_redirect_uri,
+            state=state,
+        ))
+
+    @app.get("/api/workspace/git-token/oauth/callback")
+    def ws_git_token_oauth_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+        """GitHub redirects the browser HERE directly (not through the gateway) — no cookie, no
+        X-User-Id; `state` (signed at /authorize) is the only way back to who asked."""
+        terminal_url = (settings.terminal_url if settings is not None else "http://localhost:13000").rstrip("/")
+        settings_url = f"{terminal_url}/?settings=integrations"
+        if error or not code or not state:
+            return RedirectResponse(f"{settings_url}&github_error={error or 'no_code'}")
+        try:
+            subject = github_oauth.verify_state(state=state, secret=settings.dispatch_signing_key.get_secret_value())
+        except github_oauth.GitHubOAuthError as e:
+            return RedirectResponse(f"{settings_url}&github_error={e}")
+        try:
+            token = github_oauth.exchange_code(
+                client_id=settings.github_oauth_client_id, client_secret=settings.github_oauth_client_secret.get_secret_value(),
+                redirect_uri=settings.github_oauth_redirect_uri, code=code,
+            )
+            git_creds.set_github_token(wsr.root, subject, token)
+        except github_oauth.GitHubOAuthError as e:
+            logger.error("GitHub OAuth code exchange failed for subject=%s: %s", subject, e)
+            return RedirectResponse(f"{settings_url}&github_error=exchange_failed")
+        return RedirectResponse(f"{settings_url}&github_connected=1")
 
     @app.get("/api/workspace/git-remote-status")
     def ws_git_remote_status(request: Request, slug: Optional[str] = None):

@@ -12,18 +12,45 @@ class Settings(BaseSettings):
 
     # HubSpot's login token, so we can look up companies. Plain web requests, no HubSpot software
     # library installed — keeps this add-on's dependencies simple and license-clean.
+    #
+    # Two ways to authenticate, pick one: a static private-app token (hubspot_token, set once by
+    # hand — simplest, fine for one operator's own testing), or the OAuth connection below (what
+    # powers the "Connect HubSpot" button in Vexa's Settings page — the one an actual sales team
+    # uses, since it's a real click-through consent flow instead of copy-pasting a token).
     hubspot_token: str = ""
     hubspot_base_url: str = "https://api.hubapi.com"
+
+    # The OAuth app's OWN identity — registered once by whoever operates this deployment, at
+    # HubSpot's developer portal (developers.hubspot.com → an app with the OAuth product, not a
+    # private app). Not a per-user secret; every rep's "Connect HubSpot" click goes through this
+    # one app. redirect_uri must exactly match what's registered there.
+    hubspot_oauth_client_id: str = ""
+    hubspot_oauth_client_secret: str = ""
+    hubspot_oauth_redirect_uri: str = ""
+    hubspot_oauth_scopes: str = "crm.objects.companies.read"
+
+    # Where to send the browser back to once a "Connect X" flow finishes — Vexa's own Terminal UI.
+    terminal_url: str = "http://localhost:13000"
 
     # If a call never gets tagged with a customer (no Slack tag, no calendar match), its notes land
     # here instead — nothing is ever lost, it just needs a human to sort it out later.
     unmapped_workspace_slug: str = "unmapped"
 
-    # Slack login token, signing secret (to prove a request is really from Slack), and which channel
-    # feature-request messages get posted to.
+    # Slack login token (static, or via OAuth below — same pick-one as HubSpot), a signing secret
+    # (to prove an Events API request is really from Slack — a SEPARATE credential from the OAuth
+    # ones below; it authenticates INCOMING calls from Slack, not our outgoing ones), and which
+    # channel feature-request messages get posted to.
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_channel_id: str = ""
+
+    # The OAuth app's OWN identity — registered once at api.slack.com/apps ("Connect Slack" in
+    # Vexa's Settings page). Standard (non-rotating) Slack bot tokens don't expire, so unlike
+    # HubSpot there's no refresh step — just the one-time exchange.
+    slack_oauth_client_id: str = ""
+    slack_oauth_client_secret: str = ""
+    slack_oauth_redirect_uri: str = ""
+    slack_oauth_scopes: str = "chat:write,channels:read,groups:read"
 
     # Where Vexa's customer folders live on disk — this add-on reads meeting notes directly from here.
     workspaces_root: str = "/workspaces"

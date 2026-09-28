@@ -19,24 +19,19 @@
  *  after any edit whose effect must be reconciled onto already-imported meetings (auto-join, bot
  *  name, enabled, a replaced feed). A rename alone changes nothing downstream, so it skips the sync.
  */
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../ui-kit";
 import { presentError } from "./apiClient";
+import {
+  cardBtn as btn, cardCheckRow as checkRow, cardField as field, cardLabelCol as labelCol,
+  cardLabelled as labelled, cardMeta as meta, cardPrimaryBtn as primaryBtn, cardRow as row,
+} from "./integrationCard";
 import { refreshMeetings } from "./liveMeetings";
 import {
   MAX_CALENDARS, listCalendars, createCalendar, updateCalendar, deleteCalendar,
   syncCalendar, getCalendarSyncStatus,
   type CalendarConnection, type CalendarUpdateBody, type CalendarSyncStamp,
 } from "./plannedApi";
-
-const field: CSSProperties = { width: "100%", boxSizing: "border-box", fontSize: 12, padding: "6px 9px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)" };
-const btn: CSSProperties = { fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)", cursor: "pointer" };
-const primaryBtn: CSSProperties = { ...btn, background: "var(--accent)", color: "var(--on-accent)", border: "none" };
-const row: CSSProperties = { border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 };
-const meta: CSSProperties = { fontSize: 11, color: "var(--t3)", lineHeight: 1.5 };
-const labelled: CSSProperties = { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--t2)" };
-const labelCol: CSSProperties = { width: 96, flex: "none", color: "var(--t3)" };
-const checkRow: CSSProperties = { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--t2)", cursor: "pointer" };
 
 /** Which PATCH fields must be reconciled onto already-imported meetings by a follow-up sync.
  *  A rename is cosmetic on the connection alone — everything else changes what gets joined. */

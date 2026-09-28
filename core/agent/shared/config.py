@@ -110,6 +110,16 @@ class Settings(BaseSettings):
     # Internal-tier shared secret for the admin-api membership-index edge (Lane M).
     internal_api_secret: SecretStr = SecretStr("")
 
+    # ── "Connect GitHub" — an OAuth alternative to pasting a PAT into the existing per-user
+    # reusable git token (git_credentials.py). One OAuth App registered once by whoever operates
+    # this deployment; the token it produces still lands in the SAME per-user store as a manually
+    # pasted PAT — this only changes how the token is obtained, not where it's kept or how it's used.
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: SecretStr = SecretStr("")
+    github_oauth_redirect_uri: str = ""
+    # Where to send the browser back to once "Connect GitHub" finishes — the Terminal's own origin.
+    terminal_url: str = "http://localhost:13000"
+
     def is_secret_present(self) -> bool:
         """True when a scoped identity token has been provided (without revealing it)."""
         return bool(self.agent_identity_token.get_secret_value())

@@ -276,6 +276,15 @@ services:
       # 'Add bot from URL' (terminal): agent-api forwards POST /api/meeting/bot → the gateway POST /bots.
       - VEXA_GATEWAY_URL=http://gateway:8000
       - VEXA_BOT_API_KEY=${VEXA_BOT_API_KEY:-}
+      # sales-cycle add-on: off by default (byte-identical behavior otherwise) — reads a meeting's
+      # bound workspace_id and uses it as the copilot's subject instead of the placeholder above.
+      - SALES_CYCLE_WORKSPACE_RESOLVE=${SALES_CYCLE_WORKSPACE_RESOLVE:-false}
+      # "Connect GitHub" (Settings → Integrations): an OAuth alternative to pasting a PAT into the
+      # existing per-user git token. Empty client id/secret = the button 503s; paste-a-PAT still works.
+      - VEXA_GITHUB_OAUTH_CLIENT_ID=${VEXA_GITHUB_OAUTH_CLIENT_ID:-}
+      - VEXA_GITHUB_OAUTH_CLIENT_SECRET=${VEXA_GITHUB_OAUTH_CLIENT_SECRET:-}
+      - VEXA_GITHUB_OAUTH_REDIRECT_URI=${VEXA_GITHUB_OAUTH_REDIRECT_URI:-}
+      - VEXA_TERMINAL_URL=${VEXA_TERMINAL_URL:-http://localhost:13000}
     volumes:
       # The Workspace store backing (dev): the worker mounts the subject's subdir; agent-api reads the tree.
       - agent-workspaces:/workspaces
@@ -293,6 +302,76 @@ services:
     init: true
     depends_on:
       runtime:
+        condition: service_healthy
+    networks: [vexa]
+    restart: unless-stopped
+
+  # sales-cycle — the HubSpot/Slack/GitHub add-on (integrations/sales-cycle/). Not part of core Vexa;
+  # talks to it only over the gateway + agent-api's internal port, plus a read-only mount of the same
+  # workspaces volume (to read feature-request notes directly — see entity_files.py for why).
+  sales-cycle:
+    build:
+      context: ../..
+      dockerfile: integrations/sales-cycle/Dockerfile
+    image: vexa-sales-cycle:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${SALES_CYCLE_PORT:-18300}:8200"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - SALES_CYCLE_VEXA_GATEWAY_URL=http://gateway:8000
+      - SALES_CYCLE_AGENT_API_INTERNAL_URL=http://agent-api:8100
+      - SALES_CYCLE_WORKSPACES_ROOT=/workspaces
+      - SALES_CYCLE_DB_PATH=/data/sales-cycle.db
+      - SALES_CYCLE_TERMINAL_URL=${SALES_CYCLE_TERMINAL_URL:-http://localhost:13000}
+      - SALES_CYCLE_HUBSPOT_TOKEN=${SALES_CYCLE_HUBSPOT_TOKEN:-}
+      - SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID=${SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID:-}
+      - SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_SECRET=${SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_SECRET:-}
+      - SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI=${SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI:-}
+      - SALES_CYCLE_SLACK_BOT_TOKEN=${SALES_CYCLE_SLACK_BOT_TOKEN:-}
+      - SALES_CYCLE_SLACK_SIGNING_SECRET=${SALES_CYCLE_SLACK_SIGNING_SECRET:-}
+      - SALES_CYCLE_SLACK_CHANNEL_ID=${SALES_CYCLE_SLACK_CHANNEL_ID:-}
+      - SALES_CYCLE_SLACK_OAUTH_CLIENT_ID=${SALES_CYCLE_SLACK_OAUTH_CLIENT_ID:-}
+      - SALES_CYCLE_SLACK_OAUTH_CLIENT_SECRET=${SALES_CYCLE_SLACK_OAUTH_CLIENT_SECRET:-}
+      - SALES_CYCLE_SLACK_OAUTH_REDIRECT_URI=${SALES_CYCLE_SLACK_OAUTH_REDIRECT_URI:-}
+      - SALES_CYCLE_CALENDAR_WEBHOOK_SECRET=${SALES_CYCLE_CALENDAR_WEBHOOK_SECRET:-}
+      - SALES_CYCLE_CALENDAR_API_KEY=${SALES_CYCLE_CALENDAR_API_KEY:-}
+      - SALES_CYCLE_OWN_DOMAINS=${SALES_CYCLE_OWN_DOMAINS:-}
+      - SALES_CYCLE_PRODUCT_REPO_USER_ID=${SALES_CYCLE_PRODUCT_REPO_USER_ID:-}
+    volumes:
+      - agent-workspaces:/workspaces:ro
+      - sales-cycle-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8200/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      gateway:
+        condition: service_healthy
+      agent-api:
+        condition: service_healthy
+    networks: [vexa]
+    restart: unless-stopped
+
+  # sales-cycle's two "check for new work" endpoints don't run themselves — something has to call
+  # them on a schedule. This is that something: a tiny loop, not a real cron daemon, since the
+  # interval only needs to be "reasonably soon," not exact.
+  sales-cycle-cron:
+    image: curlimages/curl:latest
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          curl -sf -X POST http://sales-cycle:8200/internal/poll-feature-requests || true
+          curl -sf -X POST http://sales-cycle:8200/internal/process-approved || true
+          sleep 60
+        done
+    depends_on:
+      sales-cycle:
         condition: service_healthy
     networks: [vexa]
     restart: unless-stopped
@@ -890,6 +969,10 @@ services:
         # under the hot overlay's NODE_ENV=development — dev-mode Next needs the dev toolchain at
         # runtime and otherwise npm-installs it AT BOOT (slow, network-dependent, currently broken).
         RUNTIME_DEPS: ${TERMINAL_RUNTIME_DEPS:-prod}
+        # sales-cycle add-on: the public URL the browser navigates to for "Connect HubSpot" (a real
+        # redirect, not a fetch — see salesCycleApi.ts). Baked in at build time like the other
+        # NEXT_PUBLIC_* args above; rebuild the terminal image after changing it.
+        NEXT_PUBLIC_SALES_CYCLE_URL: http://localhost:${SALES_CYCLE_PORT:-18300}
     image: vexaai/v012-terminal:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${TERMINAL_PORT:-13000}:3000"
@@ -900,6 +983,10 @@ services:
       - GATEWAY_URL=http://gateway:8000
       - AGENT_API_URL=http://agent-api:8100
       - VEXA_ADMIN_API_URL=http://admin-api:8001
+      # sales-cycle add-on (integrations/sales-cycle/): the server-side target for /api/sales-cycle/*
+      # (see app/api/sales-cycle/[...path]/route.ts) — a different host from the gateway above, since
+      # it's a separate service, not part of Vexa itself.
+      - SALES_CYCLE_URL=http://sales-cycle:8200
       - VEXA_API_URL=http://gateway:8000
       - VEXA_ADMIN_API_KEY=${ADMIN_TOKEN:-}
       - VEXA_BOT_API_KEY=${VEXA_BOT_API_KEY:-}
@@ -998,6 +1085,7 @@ volumes:
   postgres-data:
   minio-data:
   agent-workspaces:
+  sales-cycle-data:
 
 networks:
   vexa:
