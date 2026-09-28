@@ -95,6 +95,41 @@ def test_mark_done_removes_from_unprocessed_queue():
     assert s.list_approved_unprocessed() == []
 
 
+def test_mark_pushed_moves_from_dispatched_unpushed_to_pushed_unopened():
+    s = _store()
+    s.record_pending_approval(
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
+    )
+    approved = s.approve(slack_channel="C1", slack_ts="1")
+    s.claim_for_dispatch(approved.id)
+    s.mark_dispatched(approved.id, branch="feature/x", workload_id="unit-1")
+    assert [a.id for a in s.list_dispatched_unpushed()] == [approved.id]
+    assert s.list_pushed_unopened() == []
+
+    s.mark_pushed(approved.id)
+
+    assert s.list_dispatched_unpushed() == []
+    pushed = s.list_pushed_unopened()
+    assert len(pushed) == 1
+    assert pushed[0].id == approved.id
+    assert pushed[0].workload_id == "unit-1"  # still carries the unit_id — the PR-open step needs it
+
+
+def test_mark_done_from_pushed_removes_from_pushed_unopened_queue():
+    s = _store()
+    s.record_pending_approval(
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
+    )
+    approved = s.approve(slack_channel="C1", slack_ts="1")
+    s.claim_for_dispatch(approved.id)
+    s.mark_dispatched(approved.id, branch="feature/x", workload_id="unit-1")
+    s.mark_pushed(approved.id)
+
+    s.mark_done(approved.id)
+
+    assert s.list_pushed_unopened() == []
+
+
 def test_oauth_connection_roundtrip():
     s = _store()
     assert s.get_oauth_connection("hubspot") is None

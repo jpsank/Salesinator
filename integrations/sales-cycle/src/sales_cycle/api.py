@@ -14,8 +14,8 @@ POST /slack/events
 
 POST /internal/process-approved
     For every approved feature request: if it hasn't been started yet, start the AI agent building
-    it; if it's already building, check whether it's done, and if so, push it to GitHub.
-    Also meant to run on a schedule.
+    it; if it's already building, check whether it's done, and if so, push it to GitHub; if it's
+    already pushed, open a pull request for it. Also meant to run on a schedule.
 
 POST /webhooks/meeting-started
     Vexa calls this the moment a bot joins a call. Used for the automatic version of customer
@@ -43,7 +43,10 @@ from sales_cycle.calendar_resolver import resolve_meeting_started
 from sales_cycle.hubspot_client import HubSpotClient
 from sales_cycle.live_card_watcher import watch_meeting
 from sales_cycle.oauth_routes import OAuthProviderConfig, register_oauth_routes
-from sales_cycle.orchestrator import DispatchError, PushError, git_state, push_if_ready, submit_implementation
+from sales_cycle.orchestrator import (
+    DispatchError, PullRequestError, PushError,
+    git_state, open_pull_request, push_if_ready, submit_implementation,
+)
 from sales_cycle.resolver import WorkspaceBindError, bind_meeting_workspace, resolve_by_tag, slug_for_company
 from sales_cycle.settings import Settings, get_settings
 from sales_cycle.slack_client import SlackClient
@@ -173,12 +176,20 @@ def dispatch(body: DispatchRequest, x_api_key: str = Header(..., alias="X-API-Ke
     return out
 
 
+def _expected_signoff(settings: Settings) -> str | None:
+    if settings.product_repo_signoff_name and settings.product_repo_signoff_email:
+        return f"{settings.product_repo_signoff_name} <{settings.product_repo_signoff_email}>"
+    return None
+
+
 def _dispatch_one(store: Store, settings: Settings, approval: PendingApproval) -> bool:
     """Starts the implementation turn for ONE approved request. Shared by the real-time path (fires
     the moment the ✅ reaction arrives) and the cron sweep (a safety net for anything that path
     missed — e.g. this service was down when the reaction came in). `claim_for_dispatch` makes the
     two paths race-safe: only one of them can ever start a turn for a given approval, since a
-    duplicate turn would mean two agents mutating the SAME shared product-repo workspace at once."""
+    duplicate turn would mean two agents mutating the SAME shared product-repo workspace at once —
+    each dispatch also requests its OWN isolated worktree (core/agent's isolation.mode="worktree"),
+    so two DIFFERENT approvals dispatched close together can't corrupt each other's git state either."""
     if not store.claim_for_dispatch(approval.id):
         return False  # the other path already claimed it — not an error, just a race we lost
     try:
@@ -186,6 +197,7 @@ def _dispatch_one(store: Store, settings: Settings, approval: PendingApproval) -
             agent_api_url=settings.agent_api_internal_url,
             subject=settings.product_repo_subject,
             title=approval.title, body=approval.body,
+            signoff_name=settings.product_repo_signoff_name, signoff_email=settings.product_repo_signoff_email,
         )
     except DispatchError:
         logger.exception("dispatch failed for approval id=%s title=%r", approval.id, approval.title)
@@ -236,39 +248,53 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks) -> d
 
 @app.post("/internal/process-approved")
 def process_approved() -> dict:
+    """Three independent sweeps, each its own store state: approved → dispatched (start the AI
+    turn), dispatched → pushed (check in, push once ready), pushed → done (open the PR). Each
+    approval now has its OWN isolated worktree (core/agent's isolation.mode="worktree"), so — unlike
+    before that existed — git state has to be fetched PER approval, not once for the whole sweep."""
     settings = get_settings()
     store = get_store()
     dispatched_now = []
     pushed_now = []
+    opened_now = []
 
     for approval in store.list_approved_unprocessed():
         if _dispatch_one(store, settings, approval):
             dispatched_now.append(approval.id)
 
-    unpushed = store.list_dispatched_unpushed()
-    if unpushed:
-        # Every approval here shares the SAME product_repo_subject workspace — one git-state fetch
-        # answers for all of them in this sweep, instead of one redundant identical GET per approval.
+    for approval in store.list_dispatched_unpushed():
         try:
-            state = git_state(agent_api_url=settings.agent_api_internal_url, subject=settings.product_repo_subject, timeout=15.0)
-        except DispatchError:
-            logger.exception("git-state fetch failed — skipping the push check for this sweep")
-            state = None
-        if state is not None:
-            for approval in unpushed:
-                try:
-                    pushed = push_if_ready(
-                        state, agent_api_url=settings.agent_api_internal_url,
-                        subject=settings.product_repo_subject, expected_branch=approval.branch,
-                    )
-                except PushError:
-                    logger.exception("push failed for approval id=%s branch=%s", approval.id, approval.branch)
-                    continue
-                if pushed is not None:
-                    store.mark_done(approval.id)
-                    pushed_now.append(approval.id)
+            state = git_state(
+                agent_api_url=settings.agent_api_internal_url, subject=settings.product_repo_subject,
+                unit_id=approval.workload_id, timeout=15.0,
+            )
+            pushed = push_if_ready(
+                state, agent_api_url=settings.agent_api_internal_url,
+                subject=settings.product_repo_subject, expected_branch=approval.branch,
+                unit_id=approval.workload_id, expected_signoff=_expected_signoff(settings),
+            )
+        except (DispatchError, PushError):
+            logger.exception("push check failed for approval id=%s branch=%s", approval.id, approval.branch)
+            continue
+        if pushed is not None:
+            store.mark_pushed(approval.id)
+            pushed_now.append(approval.id)
 
-    return {"dispatched": dispatched_now, "pushed": pushed_now}
+    for approval in store.list_pushed_unopened():
+        try:
+            open_pull_request(
+                agent_api_url=settings.agent_api_internal_url, subject=settings.product_repo_subject,
+                title=approval.title, body=approval.body, base=settings.product_repo_default_branch,
+                unit_id=approval.workload_id,
+            )
+        except PullRequestError:
+            logger.exception("pull-request open failed for approval id=%s branch=%s — retrying next sweep",
+                              approval.id, approval.branch)
+            continue
+        store.mark_done(approval.id)
+        opened_now.append(approval.id)
+
+    return {"dispatched": dispatched_now, "pushed": pushed_now, "opened": opened_now}
 
 
 @app.post("/webhooks/meeting-started")

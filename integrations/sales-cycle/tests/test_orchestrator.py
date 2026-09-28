@@ -1,9 +1,13 @@
+import json
+
 import httpx
 import pytest
 import respx
 
 from sales_cycle.orchestrator import (
-    DispatchError, PushError, branch_for, check_and_push, slug_for, submit_implementation,
+    DispatchError, PullRequestError, PushError,
+    branch_for, check_and_push, git_state, open_pull_request, push_if_ready, slug_for,
+    submit_implementation,
 )
 
 AGENT_API = "http://agent-api:8100"
@@ -33,10 +37,13 @@ def test_submit_implementation_posts_invocation_and_returns_branch():
     assert result == {"workload_id": "agent-123", "branch": "feature/csv-export"}
     sent = route.calls[0].request
     assert sent.headers["X-User-Id"] == "cust-1"
-    import json
     body = json.loads(sent.content)
     assert body["identity"]["subject"] == "cust-1"
+    assert "identity" in body and "principal" not in body["identity"]  # no signoff configured
+    assert body["workspaces"] == [{"id": "cust-1", "mode": "rw"}]
+    assert body["isolation"] == {"mode": "worktree"}
     assert "git checkout -b feature/csv-export" in body["start"]["entrypoint"]["inline"]
+    assert "Co-Authored-By" in body["start"]["entrypoint"]["inline"]  # instructed NOT to add one
 
 
 @respx.mock
@@ -84,3 +91,98 @@ def test_check_and_push_raises_on_push_failure():
     respx.post(f"{AGENT_API}/api/workspace/push").mock(return_value=httpx.Response(502, json={"detail": "diverged"}))
     with pytest.raises(PushError):
         check_and_push(agent_api_url=AGENT_API, subject="cust-1", expected_branch="feature/x")
+
+
+# ── signoff identity (identity.principal) — never a literal, only from the caller's settings ────
+
+@respx.mock
+def test_submit_implementation_sends_principal_when_signoff_configured():
+    route = respx.post(f"{AGENT_API}/invocations").mock(
+        return_value=httpx.Response(202, json={"workload_id": "agent-123"})
+    )
+    submit_implementation(
+        agent_api_url=AGENT_API, subject="cust-1", title="X", body="y",
+        signoff_name="Julian Sanker", signoff_email="julian@sankergroup.org",
+    )
+    body = json.loads(route.calls[0].request.content)
+    assert body["identity"]["principal"] == {"name": "Julian Sanker", "email": "julian@sankergroup.org"}
+
+
+@respx.mock
+def test_submit_implementation_omits_principal_when_only_one_of_name_email_set():
+    """Both or neither — a half-configured identity is treated as not configured at all, never a
+    partial one sent to the platform."""
+    route = respx.post(f"{AGENT_API}/invocations").mock(
+        return_value=httpx.Response(202, json={"workload_id": "agent-123"})
+    )
+    submit_implementation(agent_api_url=AGENT_API, subject="cust-1", title="X", body="y", signoff_name="Julian")
+    body = json.loads(route.calls[0].request.content)
+    assert "principal" not in body["identity"]
+
+
+# ── unit_id threading (isolated per-turn worktrees) ──────────────────────────────────────────────
+
+@respx.mock
+def test_git_state_forwards_unit_as_a_query_param():
+    route = respx.get(f"{AGENT_API}/api/workspace/git").mock(
+        return_value=httpx.Response(200, json={"branch": "main", "changes": [], "commits": []})
+    )
+    git_state(agent_api_url=AGENT_API, subject="cust-1", unit_id="unit-1", timeout=5.0)
+    assert route.calls[0].request.url.params["unit"] == "unit-1"
+
+
+@respx.mock
+def test_git_state_sends_no_unit_param_when_not_given():
+    route = respx.get(f"{AGENT_API}/api/workspace/git").mock(
+        return_value=httpx.Response(200, json={"branch": "main", "changes": [], "commits": []})
+    )
+    git_state(agent_api_url=AGENT_API, subject="cust-1", timeout=5.0)
+    assert "unit" not in route.calls[0].request.url.params
+
+
+@respx.mock
+def test_push_if_ready_forwards_unit_and_expected_signoff():
+    route = respx.post(f"{AGENT_API}/api/workspace/push").mock(
+        return_value=httpx.Response(200, json={"remote": "vexa-sync", "url": "https://github.com/x/y",
+                                                "branch": "feature/x", "head_sha": "abc"})
+    )
+    push_if_ready(
+        {"branch": "feature/x", "changes": []}, agent_api_url=AGENT_API, subject="cust-1",
+        expected_branch="feature/x", unit_id="unit-1", expected_signoff="Julian Sanker <julian@sankergroup.org>",
+    )
+    body = json.loads(route.calls[0].request.content)
+    assert body == {"unit": "unit-1", "expected_signoff": "Julian Sanker <julian@sankergroup.org>"}
+
+
+@respx.mock
+def test_push_if_ready_sends_empty_body_when_nothing_configured():
+    route = respx.post(f"{AGENT_API}/api/workspace/push").mock(
+        return_value=httpx.Response(200, json={"remote": "vexa-sync", "url": "https://github.com/x/y",
+                                                "branch": "feature/x", "head_sha": "abc"})
+    )
+    push_if_ready({"branch": "feature/x", "changes": []}, agent_api_url=AGENT_API, subject="cust-1",
+                  expected_branch="feature/x")
+    assert json.loads(route.calls[0].request.content) == {}
+
+
+# ── open_pull_request ─────────────────────────────────────────────────────────────────────────────
+
+@respx.mock
+def test_open_pull_request_posts_title_body_base_and_unit():
+    route = respx.post(f"{AGENT_API}/api/workspace/pull-request").mock(
+        return_value=httpx.Response(200, json={"url": "https://github.com/x/y/pull/7", "number": 7})
+    )
+    result = open_pull_request(
+        agent_api_url=AGENT_API, subject="cust-1", title="CSV export", body="wants it",
+        base="main", unit_id="unit-1",
+    )
+    assert result == {"url": "https://github.com/x/y/pull/7", "number": 7}
+    body = json.loads(route.calls[0].request.content)
+    assert body == {"title": "CSV export", "body": "wants it", "base": "main", "unit": "unit-1"}
+
+
+@respx.mock
+def test_open_pull_request_raises_on_failure():
+    respx.post(f"{AGENT_API}/api/workspace/pull-request").mock(return_value=httpx.Response(502))
+    with pytest.raises(PullRequestError):
+        open_pull_request(agent_api_url=AGENT_API, subject="cust-1", title="x", body="y", base="main")

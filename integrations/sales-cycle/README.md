@@ -1,12 +1,12 @@
 # sales-cycle
 
 This turns Vexa's meeting bot into a sales tool: it figures out which customer a call belongs to,
-notices when a customer asks for a new feature, and gets that feature built and pushed to GitHub for
-review — all without anyone touching Vexa's own screen.
+notices when a customer asks for a new feature, and gets that feature built, pushed to GitHub, and
+opened as a pull request — all without anyone touching Vexa's own screen.
 
 It's a separate add-on, not a change to Vexa itself. It talks to Vexa the same way any outside app
-would — over its normal web API — plus one small, optional addition inside Vexa that we added
-ourselves (details below).
+would — over its normal web API — plus a few small, optional, fully generic additions inside Vexa
+that we added ourselves (details below).
 
 ## What it does, step by step
 
@@ -22,9 +22,11 @@ ourselves (details below).
 3. **Post it to Slack for a thumbs-up — same call, not after it.** A background watcher tails that
    call's live card stream and posts each feature request to Slack as soon as it appears. A rep or
    PM reacts with ✅ to approve it while the call is still going.
-4. **Build it and push a branch.** Once approved, an AI coding agent implements the feature in the real
-   product codebase, on its own branch, and pushes it to GitHub — ready for a human to review and for
-   your existing CI to build a preview.
+4. **Build it, push a branch, open a pull request.** Once approved, an AI coding agent implements the
+   feature in the real product codebase, in its own isolated worktree, on its own branch; once it's
+   done, the branch is pushed and a PR opens against your default branch — ready for a human to
+   review, and for your preview-hosting platform to build one (most only build previews for PRs, not
+   bare branches).
 
 ## The pieces (file map)
 
@@ -35,7 +37,7 @@ ourselves (details below).
 | `calendar_resolver.py` | The automatic version of the above — reads attendee emails straight off Vexa's own notification, no extra lookup needed. |
 | `live_card_watcher.py` | Tails one call's live copilot-card stream for its whole duration and posts each `feature_request` to Slack the instant it appears. |
 | `store.py` | A small local database tracking which requests are pending, approved, or done. |
-| `orchestrator.py` | Once approved: kicks off the AI coding turn, then checks in until it's done and pushes it. |
+| `orchestrator.py` | Once approved: kicks off the AI coding turn (in its own isolated worktree), checks in until it's done, pushes it, then opens a pull request. |
 | `slack_client.py` / `slack_verify.py` | Talking to Slack, and proving a Slack request is really from Slack. |
 | `webhook_verify.py` | Proving a Vexa notification is really from Vexa. |
 | `hubspot_oauth.py` / `slack_oauth.py` | The "Connect HubSpot" / "Connect Slack" OAuth2 dance — authorize URL, code exchange, (HubSpot only) token refresh. |
@@ -239,15 +241,50 @@ this add-on uses its copy to know who to dispatch/push builds as; agent-api uses
 which subject the picker (and the curl fallback above) is allowed to act on behalf of via
 `for=`/`for_subject`. If you ever change one, change both.
 
-## The one small addition inside Vexa itself
+**Every implementation turn gets its own isolated `git worktree`** (agent-api's
+`isolation.mode: "worktree"`, opt-in per dispatch) — without it, two feature requests approved close
+together would run their `git checkout -b`/`git commit` against the SAME shared directory and
+corrupt each other. This is automatic; nothing to configure.
 
-Everything above talks to Vexa purely through its existing, public web API — except one thing: Vexa's
-meeting-notes agent didn't have a way to know which customer's notes-folder it should write into. We
-added one small switch inside Vexa (`core/agent/control_plane/transcription_watcher.py`,
-`SALES_CYCLE_WORKSPACE_RESOLVE`, on by default) that reads "which customer is this meeting tagged as"
-and uses that instead of writing every single call's notes into one shared folder. For any meeting
-that isn't tagged, it falls straight through to the old behavior — we proved that by running Vexa's
-own full test suite with the flag both on and off.
+**Attribution — optional, but worth setting if the product repo is one you (or your org) actually
+maintain**, e.g. if you're dogfooding SalesCycle on Vexa itself:
+```
+SALES_CYCLE_PRODUCT_REPO_SIGNOFF_NAME=Your Name
+SALES_CYCLE_PRODUCT_REPO_SIGNOFF_EMAIL=you@yourcompany.com
+```
+Both empty (default) — commits carry no signoff, no different from any other automated commit. Both
+set — every commit an implementation turn makes gets a proper `Signed-off-by: Your Name <you@…>`
+line (agent-api installs the standard `prepare-commit-msg` hook once per subject) and never a
+`Co-Authored-By: Claude` trailer, and the push itself refuses (409, nothing pushed) if either check
+fails. If the product repo has its OWN `pre-push` git hook configured (any repo with a normal
+contribution process might), that hook runs too, the same as it would for a human's local
+`git push` — a genuinely broken change gets refused before it reaches GitHub, not just committed.
+
+**A pull request opens automatically once a branch is pushed** (`SALES_CYCLE_PRODUCT_REPO_DEFAULT_BRANCH`,
+default `main`) — not just for human review: most preview-hosting platforms (Vercel, Netlify, …)
+only build a preview for a pull request, not a bare pushed branch, so this is also what makes the
+"live preview" half of the pipeline actually fire.
+
+## The small additions inside Vexa itself
+
+Everything above talks to Vexa purely through its existing, public web API — except three small,
+generic additions to agent-api (none of them Vexa-specific, none of them assume anything about
+what "the product repo" is):
+
+- Vexa's meeting-notes agent didn't have a way to know which customer's notes-folder it should
+  write into. `core/agent/control_plane/transcription_watcher.py`'s `SALES_CYCLE_WORKSPACE_RESOLVE`
+  (on by default) reads "which customer is this meeting tagged as" and uses that instead of writing
+  every single call's notes into one shared folder. For any meeting that isn't tagged, it falls
+  straight through to the old behavior — proved by running Vexa's own full test suite with the flag
+  both on and off.
+- Per-turn worktree isolation (`isolation.mode: "worktree"` on a unit.v1 dispatch,
+  `core/agent/control_plane/workspace_worktree.py`) — an opt-in, backward-compatible schema
+  addition; every dispatch that doesn't ask for it is byte-identical to before.
+- The signoff/no-trailer compliance check + pre-push-hook runner
+  (`core/agent/control_plane/gates_runner.py`) and pull-request creation
+  (`core/agent/control_plane/workspace_publish.py`'s `create_pull_request`,
+  `POST /api/workspace/pull-request`) — both only run when a caller opts into the isolated-worktree
+  path; the plain interactive Settings-page push is untouched.
 
 ## Calendar auto-mapping: the webhook registers itself
 

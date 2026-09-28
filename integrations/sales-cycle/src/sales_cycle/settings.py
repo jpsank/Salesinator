@@ -83,6 +83,21 @@ class Settings(BaseSettings):
     # attach step to land where this add-on then looks for it; only change one if you change both.
     product_repo_subject: str = "product-repo"
 
+    # The branch a pushed feature request's pull request opens AGAINST — the product repo's own
+    # main line. Change only if the product repo's default branch isn't "main".
+    product_repo_default_branch: str = "main"
+
+    # Attribution for every automated commit this add-on's AI turns make (core/agent's
+    # workspace_worktree.py signoff mechanism — see CONTRIBUTOR_RIGHTS.md for why this exists: the
+    # human who ships automated work owns full authorship/responsibility for it). Both empty
+    # (default) = no `identity.principal` is sent at all, so commits carry whatever
+    # subject@vexa.local fallback identity core/agent already uses on its own — a generic
+    # deployment with no real identity configured pays nothing here. Set BOTH together, never one
+    # alone, to a real name/email (e.g. whoever is accountable for what this deployment ships) to
+    # get correctly-attributed, signed-off commits instead.
+    product_repo_signoff_name: str = ""
+    product_repo_signoff_email: str = ""
+
     # For auto-detecting the customer from calendar invites: the secret that proves a "meeting started"
     # alert really came from Vexa, and the login key used to tag the meeting once we've figured out
     # which customer it's for. (v1 supports one rep's calendar; supporting many reps at once is a

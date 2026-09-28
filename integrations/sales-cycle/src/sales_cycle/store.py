@@ -6,8 +6,8 @@ external to install. It tracks two things:
   twice. Keyed by a synthetic `live:<meeting_id>:<title>` string, not a file path — nothing here reads
   from disk.
 - `pending_approvals`: each feature request's progress. Starts as "pending", becomes "approved" once
-  someone reacts ✅ in Slack, "dispatched" once the AI agent starts building it, and "done" once
-  the finished branch is pushed to GitHub.
+  someone reacts ✅ in Slack, "dispatched" once the AI agent starts building it, "pushed" once the
+  finished branch reaches GitHub, and "done" once a pull request is open for it.
 - `oauth_connections`: one row per external service (HubSpot, Slack, ...) connected via the
   "Connect X" button in Vexa's Settings page — one shared connection for the whole team, not
   per-rep, so this is keyed by `provider` name alone.
@@ -166,6 +166,20 @@ class Store:
     def list_dispatched_unpushed(self) -> list[PendingApproval]:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'dispatched'").fetchall()
+        return [PendingApproval(**dict(r)) for r in rows]
+
+    def mark_pushed(self, approval_id: int) -> None:
+        """The branch reached GitHub — but a pull request isn't open for it yet (see
+        `list_pushed_unopened`). Deliberately a separate state from 'done': a re-fetched git state on
+        a LATER sweep can no longer prove the push happened (the isolated worktree it was pushed from
+        is already released), so PR-open retries are driven by this store state, not by re-checking
+        git."""
+        with self._conn() as conn:
+            conn.execute("UPDATE pending_approvals SET status = 'pushed' WHERE id = ?", (approval_id,))
+
+    def list_pushed_unopened(self) -> list[PendingApproval]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'pushed'").fetchall()
         return [PendingApproval(**dict(r)) for r in rows]
 
     def mark_done(self, approval_id: int) -> None:
