@@ -85,18 +85,32 @@ Two ways to authenticate — pick one, don't set both:
    `groups:read`, and **`reactions:read`** (required for the ✓-approval flow's `reaction_added`
    event to be delivered at all — Slack silently drops an event subscription the bot token
    doesn't hold the matching scope for).
-3. **OAuth & Permissions** → **Redirect URLs** → add `http://localhost:18300/oauth/slack/callback`.
-4. **Event Subscriptions** → toggle on → **Request URL** `http://localhost:18300/slack/events`
-   (sales-cycle answers Slack's verification handshake automatically) → under **Subscribe to bot
-   events** add `reaction_added` → save. **This step has no API — it can only be done here, by
-   hand, once.**
-5. **Basic Information → App Credentials**: copy Client ID, Client Secret, and Signing Secret
+3. **OAuth & Permissions** → **Redirect URLs** → add `http://localhost:18300/oauth/slack/callback`
+   (this one's fine as `localhost` — it's your own browser that makes this request).
+4. **Give Slack a real address to reach `/slack/events` at.** Event Subscriptions is an INCOMING
+   webhook — Slack's own servers make this request, and `localhost` means nothing to them (it
+   only resolves to whatever machine is asking). If you're not already behind a real public
+   domain, expose sales-cycle's port with a tunnel:
+   ```bash
+   cloudflared tunnel --url http://localhost:18300
+   ```
+   This prints a public `https://<random-words>.trycloudflare.com` URL — that's ephemeral, so if
+   you restart `cloudflared` you'll get a new one and need to update step 5 below again. For a
+   stable URL instead, create a named tunnel in the Cloudflare Zero Trust dashboard (Networks →
+   Tunnels → your tunnel → Public Hostname → Service: HTTP, URL: `localhost:18300`) and pick a
+   permanent hostname.
+5. **Event Subscriptions** → toggle on → **Request URL**: `<your tunnel or domain>/slack/events`
+   (sales-cycle answers Slack's verification handshake automatically — you should see a green
+   checkmark within a couple seconds) → under **Subscribe to bot events** add `reaction_added` →
+   save. **This step has no API — it can only be done here, by hand, once (and again each time an
+   ephemeral tunnel URL changes).**
+6. **Basic Information → App Credentials**: copy Client ID, Client Secret, and Signing Secret
    (three separate values — the signing secret verifies incoming Slack requests, unrelated to the
    OAuth pair).
-6. Right-click the channel feature requests should post to → **View channel details** → copy its
+7. Right-click the channel feature requests should post to → **View channel details** → copy its
    ID.
-7. **Install to Workspace** (top of the app config) — required any time scopes change.
-8. Set:
+8. **Install to Workspace** (top of the app config) — required any time scopes change.
+9. Set:
    ```
    SALES_CYCLE_SLACK_OAUTH_CLIENT_ID=...
    SALES_CYCLE_SLACK_OAUTH_CLIENT_SECRET=...
