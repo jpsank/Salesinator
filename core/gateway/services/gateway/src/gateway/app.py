@@ -485,9 +485,13 @@ def create_app(
         # Content-Length from the (already httpx-decoded) body; a stale one would corrupt it.
         # ``mcp-session-id``/``mcp-protocol-version`` join them for the same reason: they are the
         # MCP transport's session binding, and a forward that eats them breaks the handshake.
+        # ``location`` joins them for a THIRD reason: an agent-api route that answers with a 3xx
+        # (e.g. an OAuth "Connect X" authorize hop redirecting to the provider's consent screen)
+        # is otherwise stripped down to a bare status code — the caller sees "redirected somewhere"
+        # with nowhere to go, since the one header that says where is silently dropped.
         passthrough = {
             k: resp_headers[k]
-            for k in ("content-range", "accept-ranges", "content-disposition") + _MCP_HEADERS
+            for k in ("content-range", "accept-ranges", "content-disposition", "location") + _MCP_HEADERS
             if k in resp_headers
         }
         return Response(

@@ -126,6 +126,22 @@ def test_range_response_preserves_content_range_headers():
     assert r.headers["content-type"].startswith("audio/webm")
 
 
+def test_redirect_response_preserves_location_header():
+    """An agent-api route that answers with a 3xx (e.g. GitHub OAuth's "Connect" authorize hop,
+    which redirects to github.com's consent screen) must keep its Location header on the way out.
+    Regression guard: the buffered proxy's header allowlist was built for media/range responses and
+    silently dropped Location — the caller saw a bare redirect status with nowhere to go, which is
+    how "Connect GitHub" 404'd end-to-end despite every hop underneath it working in isolation."""
+    downstream = FakeDownstream(
+        status_code=307,
+        extra_headers={"location": "https://github.com/login/oauth/authorize?client_id=cid&state=abc"},
+    )
+    client, _ = _client(downstream=downstream)
+    r = client.get("/agent/workspace/git-token/oauth/authorize", headers=AUTH, follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "https://github.com/login/oauth/authorize?client_id=cid&state=abc"
+
+
 def test_rate_limit_returns_429_past_the_per_user_cap():
     """WS-6: with a per-user limiter injected, requests up to the bucket pass (verbatim), the next is
     throttled with 429 + Retry-After — closing the unlimited-requests-on-a-valid-key DoS gap."""

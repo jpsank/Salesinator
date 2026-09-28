@@ -55,28 +55,65 @@ Subscriptions", the product repo's GitHub App) that can only be done on the prov
 
 ### HubSpot
 
-Two ways to authenticate — pick one, don't set both:
+Two ways to authenticate — pick one, don't set both. **Both can be set up entirely from Settings →
+Integrations → Sales Cycle in the Terminal UI** — the HubSpot card offers "Connect HubSpot" (OAuth)
+and, right below it, "Or paste a Service Key / private-app token" (no env var editing needed for
+either). What follows is how to GET the credential each path needs.
 
-- **Service Key** (recommended — HubSpot is retiring legacy private-app creation as of late
-  September 2026): HubSpot account → **Settings → Integrations → Service Keys** (or
-  **Development → Keys → Service keys**) → create one, name it, grant it the
-  `crm.objects.companies.read` scope (a Service Key can only be granted scopes YOU already have).
-  Copy the generated token into:
-  ```
-  SALES_CYCLE_HUBSPOT_TOKEN=pat-...
-  ```
-- **Private app token** (if your account still allows creating one): **Settings → Integrations →
-  Private Apps → Create a private app** → under **Scopes** add `crm.objects.companies.read` →
-  create → copy the token into the same `SALES_CYCLE_HUBSPOT_TOKEN`.
-- **OAuth** (if you'd rather a rep click "Connect HubSpot" than paste a static token): create a
-  **public app** at HubSpot's developer portal, set scope `crm.objects.companies.read`, set the
-  redirect URL to `http://localhost:18300/oauth/hubspot/callback` (swap the host for your real
-  domain if not running locally), then set:
-  ```
-  SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID=...
-  SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_SECRET=...
-  SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI=http://localhost:18300/oauth/hubspot/callback
-  ```
+- **Service Key** (recommended — HubSpot disabled creating new legacy private apps on
+  2026-09-28): HubSpot account → **Settings → Integrations → Service Keys** (or **Development →
+  Keys → Service keys**) → create one, name it, grant it the `crm.objects.companies.read` scope (a
+  Service Key can only be granted scopes YOU already have). Paste the generated token (`pat-...`)
+  straight into the HubSpot card's "paste a token" field — or set
+  `SALES_CYCLE_HUBSPOT_TOKEN=pat-...` in `.env` and restart sales-cycle, if you'd rather it be a
+  deployment-wide default nobody has to re-enter.
+
+- **OAuth** ("Connect HubSpot" in the browser) — **legacy public app creation is genuinely closed**
+  for new accounts now (confirmed live: HubSpot's app-creation screen says *"New legacy public app
+  creation is disabled. Run `hs project create` in the HubSpot CLI to build OAuth apps for multiple
+  accounts."*). The working path is the CLI, not the web form:
+
+  1. Install the [HubSpot CLI](https://developers.hubspot.com/docs/developer-tooling/local-development/hubspot-cli/install-the-cli)
+     and make sure `hs account list` shows your account authenticated.
+  2. Scaffold a project with OAuth auth, private distribution, no extra features:
+     ```bash
+     hs project create --name <your-app-name> --dest <some-dir> \
+       --project-base app --distribution private --auth oauth --account <your-account>
+     ```
+     (When the interactive feature picker appears, just press Enter — select nothing.)
+  3. Edit the generated `src/app/<name>/app-hsmeta.json`: set `auth.redirectUrls` to your real
+     callback URL and `auth.requiredScopes` to `["oauth", "crm.objects.companies.read"]`:
+     ```json
+     "auth": {
+       "type": "oauth",
+       "redirectUrls": ["https://<your-public-host>/oauth/hubspot/callback"],
+       "requiredScopes": ["oauth", "crm.objects.companies.read"]
+     }
+     ```
+     **The redirect URL needs to be genuinely publicly reachable, not `localhost`** — this is the
+     one we confirmed working (a Cloudflare quick tunnel, same tool/reason as Slack's Event
+     Subscriptions further down); we didn't test whether a plain `localhost` URL is rejected
+     outright or just untested for this app type, so don't assume it'll work.
+  4. `hs project upload --account <your-account>` (confirm "create project" when prompted) —
+     builds and deploys the app to your account.
+  5. `hs project info --account <your-account>` prints the App ID, but **not** the Client ID/Secret
+     — the CLI doesn't expose those. Open
+     `https://app.hubspot.com/developer-projects/<account-id>/project/<project-name>`, find the
+     app's **Auth** section, and copy the Client ID and Client Secret from there.
+  6. Set:
+     ```
+     SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID=...
+     SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_SECRET=...
+     SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI=https://<your-public-host>/oauth/hubspot/callback
+     ```
+
+  One thing we could NOT confirm from docs and had to test live: HubSpot's newer **MCP server**
+  OAuth (`mcp-*.hubspot.com/oauth/authorize/user`) requires PKCE and is a different, heavier
+  protocol meant for AI-agent clients — don't use it here, it's not what sales-cycle needs. The app
+  built via the steps above uses the classic `app.hubspot.com/oauth/authorize` endpoint and worked
+  for us **without** needing PKCE — but HubSpot's platform has been changing fast enough this year
+  that if "Connect HubSpot" ever starts failing with a PKCE-related error, that's the signal this
+  has changed again, not that something here is misconfigured.
 
 ### Slack
 

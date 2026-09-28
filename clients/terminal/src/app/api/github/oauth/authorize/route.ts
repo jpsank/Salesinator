@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const qs = forParam ? `?for=${encodeURIComponent(forParam)}` : "";
   let upstream: Response;
   try {
-    upstream = await fetch(`${GATEWAY_URL}/agent/api/workspace/git-token/oauth/authorize${qs}`, {
+    upstream = await fetch(`${GATEWAY_URL}/agent/workspace/git-token/oauth/authorize${qs}`, {
       headers: { "X-API-Key": apiKey }, redirect: "manual", cache: "no-store",
     });
   } catch (err) {
