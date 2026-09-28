@@ -363,10 +363,10 @@
       ]
     },
     {
-      "key": "VEXA_GITHUB_OAUTH_TARGET_SUBJECT",
+      "key": "VEXA_WORKSPACE_DELEGATE_SUBJECT",
       "class": "defaulted",
       "default": "product-repo",
-      "description": "the one non-caller subject \"Connect GitHub\" may authorize on behalf of (e.g. the sales-cycle add-on's shared product-repo identity) — an ?for= request must match this exactly or is refused (403)",
+      "description": "the one non-caller subject a workspace init/attached/swap call may act on behalf of via for_subject (e.g. the sales-cycle add-on's shared product-repo identity) — must match this exactly or is refused (403)",
       "targets": [
         "compose"
       ]

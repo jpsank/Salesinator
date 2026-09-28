@@ -2,7 +2,7 @@
  *  error throws, a malformed git body throws (never reaches GitSection as a fake GitState), and a 404
  *  file read is the one legit "empty" → null. */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readWorkspaceFile, listWorkspaceTree, readWorkspaceGit, readAttachedWorkspaces, swapWorkspace, renameWorkspace, publishWorkspace, readActiveSet, activateWorkspace, deactivateWorkspace } from "../workspaceApi";
+import { readWorkspaceFile, listWorkspaceTree, readWorkspaceGit, readAttachedWorkspaces, swapWorkspace, renameWorkspace, publishWorkspace, readActiveSet, activateWorkspace, deactivateWorkspace, initWorkspace, listMyGitHubRepos } from "../workspaceApi";
 import { ApiError } from "../apiClient";
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -84,9 +84,14 @@ describe("workspaceApi — scoped (no subject) + fail-loud", () => {
     mock(true, 200, { swapped: true });
     await swapWorkspace(undefined, undefined, undefined, true, "seed");   // start fresh, by slug
     expect(lastUrl()).toBe("/api/workspace/swap");
-    expect(lastBody()).toEqual({ repo: null, ref: null, slug: "seed", token: null, fresh: true });
+    expect(lastBody()).toEqual({ repo: null, ref: null, slug: "seed", token: null, fresh: true, for_subject: null });
     await swapWorkspace("https://h/r.git", "dev", "TOK");                 // attach a repo
-    expect(lastBody()).toEqual({ repo: "https://h/r.git", ref: "dev", slug: null, token: "TOK", fresh: false });
+    expect(lastBody()).toEqual({ repo: "https://h/r.git", ref: "dev", slug: null, token: "TOK", fresh: false, for_subject: null });
+  });
+  it("swapWorkspace(forSubject) reaches the body as for_subject — the shared on-behalf-of identity", async () => {
+    mock(true, 200, { swapped: true });
+    await swapWorkspace("https://h/r.git", "main", undefined, false, undefined, "product-repo");
+    expect(lastBody()).toEqual({ repo: "https://h/r.git", ref: "main", slug: null, token: null, fresh: false, for_subject: "product-repo" });
   });
   it("publishWorkspace POSTs {repo_name,private,token} to /api/workspace/publish and returns the result", async () => {
     mock(true, 200, { repo_url: "https://github.com/u/w", pushed_ref: "main", head_sha: "abc123", created: true });
@@ -115,6 +120,22 @@ describe("workspaceApi — scoped (no subject) + fail-loud", () => {
     expect(lastUrl()).toBe("/api/workspace/attached");
     mock(true, 200, { active: null, slots: {}, published_url: null });
     expect((await readAttachedWorkspaces()).published_url).toBeNull();
+  });
+  it("readAttachedWorkspaces(forSubject) appends ?for= — the shared identity's own view", async () => {
+    mock(true, 200, { active: null, slots: {} });
+    await readAttachedWorkspaces("product-repo");
+    expect(lastUrl()).toBe("/api/workspace/attached?for=product-repo");
+  });
+  it("initWorkspace(forSubject) appends ?for=", async () => {
+    mock(true, 201, { workspace: "/x", seeded: true, already_initialized: false });
+    await initWorkspace("product-repo");
+    expect(lastUrl()).toBe("/api/workspace/init?for=product-repo");
+  });
+  it("listMyGitHubRepos GETs the repos endpoint and unwraps { repos }", async () => {
+    mock(true, 200, { repos: [{ full_name: "acme/api", clone_url: "https://github.com/acme/api.git", default_branch: "main", private: true }] });
+    const repos = await listMyGitHubRepos();
+    expect(lastUrl()).toBe("/api/workspace/git-token/oauth/repos");
+    expect(repos).toEqual([{ full_name: "acme/api", clone_url: "https://github.com/acme/api.git", default_branch: "main", private: true }]);
   });
   it("renameWorkspace POSTs {slug,name} to /api/workspace/rename", async () => {
     mock(true, 200, { active: "seed", slots: {} });

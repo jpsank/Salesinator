@@ -39,6 +39,10 @@ class OAuthTokenBody(BaseModel):
     token: str
 
 
+def _is_configured(cfg: OAuthProviderConfig) -> bool:
+    return bool(cfg.client_id and cfg.redirect_uri)
+
+
 def register_oauth_routes(
     app: FastAPI, *, provider: str,
     build_authorize_url: Callable[..., str],
@@ -81,8 +85,7 @@ def register_oauth_routes(
 
     @app.get(f"/oauth/{provider}/status", name=f"{provider}_oauth_status")
     def _status() -> dict:
-        cfg = get_config()
-        configured = bool(cfg.client_id and cfg.redirect_uri)
+        configured = _is_configured(get_config())
         connection = get_store().get_oauth_connection(provider)
         if connection is None:
             return {"connected": False, "configured": configured}
@@ -106,5 +109,4 @@ def register_oauth_routes(
         get_store().save_oauth_connection(
             provider=provider, access_token=token, refresh_token=None, expires_at=None, account_label=None,
         )
-        cfg = get_config()
-        return {"connected": True, "configured": bool(cfg.client_id and cfg.redirect_uri)}
+        return {"connected": True, "configured": _is_configured(get_config())}

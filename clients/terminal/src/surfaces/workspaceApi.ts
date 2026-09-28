@@ -26,9 +26,12 @@ export async function readWorkspaceFile(path: string, opts?: { slug?: string }):
 }
 
 /** Materialize the user's workspace from the seed template — POST /api/workspace/init (idempotent: an
- *  existing workspace is returned untouched, `seeded:false`). `seeded` is true only on first creation. */
-export async function initWorkspace(): Promise<{ workspace: string; seeded: boolean; already_initialized: boolean }> {
-  return getJson(`/api/workspace/init`, { method: "POST" });
+ *  existing workspace is returned untouched, `seeded:false`). `seeded` is true only on first creation.
+ *  `forSubject` acts on the one allowlisted shared identity instead of the caller (see `getGitToken`'s
+ *  `target_subject`) — e.g. seeding the product-repo workspace before its first attach. */
+export async function initWorkspace(forSubject?: string): Promise<{ workspace: string; seeded: boolean; already_initialized: boolean }> {
+  const q = forSubject ? `?for=${encodeURIComponent(forSubject)}` : "";
+  return getJson(`/api/workspace/init${q}`, { method: "POST" });
 }
 
 export interface WorkspaceSlot { repo: string | null; ref: string | null; name?: string; nested?: boolean; archived?: boolean }
@@ -51,9 +54,11 @@ export async function deleteWorkspace(slug: string): Promise<{ slug: string; del
 export interface AttachedWorkspaces { active: string | null; slots: Record<string, WorkspaceSlot>; published_url?: string | null }
 export interface SwapResult { subject: string; active: string; repo: string | null; ref: string | null; swapped: boolean; cloned: boolean; parked: string | null; nested: boolean }
 
-/** The subject's attachment view: which workspace is active + the parked ones available to swap back to. */
-export async function readAttachedWorkspaces(): Promise<AttachedWorkspaces> {
-  return getJson(`/api/workspace/attached`);
+/** The subject's attachment view: which workspace is active + the parked ones available to swap back to.
+ *  `forSubject` reads the one allowlisted shared identity's view instead of the caller's own. */
+export async function readAttachedWorkspaces(forSubject?: string): Promise<AttachedWorkspaces> {
+  const q = forSubject ? `?for=${encodeURIComponent(forSubject)}` : "";
+  return getJson(`/api/workspace/attached${q}`);
 }
 
 /** One member of the ADDITIVE active set (the mount stack the next agent turn mounts — WP-A2.1). The
@@ -82,8 +87,11 @@ export async function createSharedWorkspace(name: string): Promise<{ workspace_i
 /** The caller's SAVED reusable GitHub token — server-side only. `masked` is `••••abcd` (never the clear
  *  value); `set` says whether one is stored. Used as the fallback credential for every git op.
  *  `oauth_configured` (GET only — POST doesn't need it) says whether GitHub OAuth is even registered
- *  on this deployment, so the Settings UI can show that instead of a dead-end "Connect" link. */
-export interface SavedGitToken { set: boolean; masked: string | null; oauth_configured?: boolean }
+ *  on this deployment, so the Settings UI can show that instead of a dead-end "Connect" link.
+ *  `target_subject` (GET only) is the one non-caller identity a workspace init/attached/swap call may
+ *  act on behalf of (e.g. sales-cycle's shared product-repo picker) — read from here so a client never
+ *  hardcodes a value this deployment owns. */
+export interface SavedGitToken { set: boolean; masked: string | null; oauth_configured?: boolean; target_subject?: string }
 
 /** Read whether a reusable GitHub token is saved (masked preview only — the clear value never leaves the server). */
 export async function getGitToken(): Promise<SavedGitToken> {
@@ -95,6 +103,15 @@ export async function setGitToken(token: string | null): Promise<SavedGitToken> 
   return getJson(`/api/workspace/git-token`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token ?? "" }),
   });
+}
+
+export interface GitHubRepoOption { full_name: string; clone_url: string; default_branch: string; private: boolean }
+
+/** The caller's own GitHub repos (needs a saved token first — 409 otherwise) — what a "pick a repo"
+ *  dropdown offers instead of making someone type a clone URL. */
+export async function listMyGitHubRepos(): Promise<GitHubRepoOption[]> {
+  const data = await getJson<{ repos: GitHubRepoOption[] }>(`/api/workspace/git-token/oauth/repos`);
+  return data.repos;
 }
 
 /** MINT a scoped invite for a shared workspace (owner/contributor). The token is returned ONCE. */
@@ -208,12 +225,17 @@ export async function deactivateWorkspace(slug: string): Promise<{ subject: stri
  *  (kept, never destroyed) so it can be swapped back to. Omit `repo` to swap back to the seeded default.
  *  `fresh` (seed only) rebuilds the default from the template instead of restoring your parked seed —
  *  the displaced default is kept under a recoverable backup slot. `token` (optional) authenticates a
- *  PRIVATE repo's clone — used server-side for the clone only, never stored (P15). */
-export async function swapWorkspace(repo?: string, ref?: string, token?: string, fresh?: boolean, slug?: string): Promise<SwapResult> {
+ *  PRIVATE repo's clone — used server-side for the clone only, never stored (P15); when omitted, the
+ *  caller's own saved GitHub token is used automatically (also true when `forSubject` targets the one
+ *  allowlisted shared identity — no separate OAuth connection needed for that identity). */
+export async function swapWorkspace(repo?: string, ref?: string, token?: string, fresh?: boolean, slug?: string, forSubject?: string): Promise<SwapResult> {
   return getJson(`/api/workspace/swap`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repo: repo ?? null, ref: ref ?? null, slug: slug ?? null, token: token ?? null, fresh: fresh ?? false }),
+    body: JSON.stringify({
+      repo: repo ?? null, ref: ref ?? null, slug: slug ?? null, token: token ?? null, fresh: fresh ?? false,
+      for_subject: forSubject ?? null,
+    }),
   });
 }
 

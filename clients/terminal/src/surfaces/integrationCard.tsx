@@ -84,9 +84,11 @@ export function PasteTokenFallback({ description, placeholder, saveToken, onConn
 /** The one card shape every OAuth-style connection uses: a status line, a Connect (link, real
  *  navigation) or Disconnect button, a description, and the redirect-feedback banner. `fallback` is
  *  an optional extra control shown only while NOT connected — GitHub's paste-a-PAT option, so OAuth
- *  is the default path but never the only one. */
+ *  is the default path but never the only one. `extra` is the connected-only counterpart — a
+ *  next-step control that only makes sense once this connection exists, e.g. GitHub's product-repo
+ *  picker (folded into the same card instead of a second, near-identical "Connect GitHub"). */
 export function OAuthConnectionCard({
-  provider, label, description, connectUrl, getStatus, disconnect, fallback,
+  provider, label, description, connectUrl, getStatus, disconnect, fallback, extra,
 }: {
   provider: string;
   label: string;
@@ -98,6 +100,8 @@ export function OAuthConnectionCard({
    *  path but never the only one. Call `onConnected` with the fresh status once the fallback path
    *  succeeds, so the card updates immediately instead of waiting on its own next status poll. */
   fallback?: (onConnected: (status: OAuthStatus) => void) => ReactNode;
+  /** Rendered only while CONNECTED — a step that needs this connection to exist first. */
+  extra?: (status: OAuthStatus) => ReactNode;
 }) {
   const [status, setStatus] = useState<OAuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -141,6 +145,7 @@ export function OAuthConnectionCard({
       </div>
       <div style={cardMeta}>{description}</div>
       {status !== null && !status.connected && fallback?.(setStatus)}
+      {status?.connected && extra?.(status)}
       {redirectFeedback.connected && (
         <div role="status" style={{ fontSize: 11.5, color: "var(--green)" }}>✓ {label} connected.</div>
       )}

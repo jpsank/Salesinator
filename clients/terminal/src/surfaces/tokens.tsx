@@ -9,9 +9,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../ui-kit";
 import { copyText } from "../ui-kit/ContextMenu";
-import { OAuthConnectionCard, PasteTokenFallback, type OAuthStatus } from "./integrationCard";
+import { cardBtn, cardField, cardMeta, cardPrimaryBtn, OAuthConnectionCard, PasteTokenFallback, type OAuthStatus } from "./integrationCard";
 import { listTokens, createToken, revokeToken, TOKEN_SCOPES, type TokenInfo, type TokenScope, type MintedToken } from "./tokensApi";
-import { getGitToken, setGitToken } from "./workspaceApi";
+import {
+  getGitToken, setGitToken, initWorkspace, readAttachedWorkspaces, swapWorkspace, listMyGitHubRepos,
+  type AttachedWorkspaces, type GitHubRepoOption,
+} from "./workspaceApi";
 import { presentError } from "./apiClient";
 
 const toOAuthStatus = (s: { set: boolean; masked: string | null; oauth_configured?: boolean }): OAuthStatus =>
@@ -128,9 +131,107 @@ function CreateTokenForm({ onCreated }: { onCreated: (t: MintedToken) => void })
   );
 }
 
+/** The product-repo picker — GitHub's connected-only "extra" step (rendered inside the SAME card,
+ *  only once GitHub is connected above — no separate "Connect GitHub" for this). Reuses whichever
+ *  token just got connected: lists the admin's OWN repos, and attaching one clones it under the
+ *  shared "product repo" identity's workspace (`target_subject`, read from GET /api/workspace/
+ *  git-token — never hardcoded here) using that SAME token. A copy of the token is persisted under
+ *  that identity server-side too (see ws_swap), so the eventual push — which runs AS that shared
+ *  identity, not as whoever set this up — can still authenticate on its own. */
+function ProductRepoPicker() {
+  const [targetSubject, setTargetSubject] = useState<string | null>(null);
+  const [attached, setAttached] = useState<AttachedWorkspaces | null>(null);
+  const [repos, setRepos] = useState<GitHubRepoOption[] | null>(null);
+  const [selected, setSelected] = useState("");
+  const [ref, setRef] = useState("");
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let on = true;
+    getGitToken().then((t) => on && setTargetSubject(t.target_subject || null)).catch(() => undefined);
+    return () => { on = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!targetSubject) return;
+    let on = true;
+    readAttachedWorkspaces(targetSubject).then((a) => on && setAttached(a)).catch((e: unknown) => on && setErr(presentError(e).headline));
+    return () => { on = false; };
+  }, [targetSubject]);
+
+  useEffect(() => {
+    let on = true;
+    listMyGitHubRepos()
+      .then((r) => { if (!on) return; setRepos(r); if (r.length > 0) { setSelected(r[0].clone_url); setRef(r[0].default_branch); } })
+      .catch((e: unknown) => on && setErr(presentError(e).headline));
+    return () => { on = false; };
+  }, []);
+
+  const pick = (cloneUrl: string) => {
+    setSelected(cloneUrl);
+    const repo = repos?.find((r) => r.clone_url === cloneUrl);
+    if (repo) setRef(repo.default_branch);
+  };
+
+  const attach = async () => {
+    if (!selected || busy || !targetSubject) return;
+    setBusy(true); setErr(null);
+    try {
+      await initWorkspace(targetSubject);
+      await swapWorkspace(selected, ref || "main", undefined, false, undefined, targetSubject);
+      setAttached(await readAttachedWorkspaces(targetSubject));
+      setPicking(false);
+    } catch (e: unknown) { setErr(presentError(e).headline); }
+    finally { setBusy(false); }
+  };
+
+  const activeSlot = attached?.active ? attached.slots[attached.active] : undefined;
+  const hasRepo = !!activeSlot?.repo;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px dashed var(--line)", paddingTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--t1)" }}>Product repo</span>
+        <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)" }}>
+          {attached === null ? "Checking…" : hasRepo ? `${activeSlot!.repo} · ${activeSlot!.ref ?? "main"}` : "Not set"}
+        </span>
+        {hasRepo && !picking && <button onClick={() => setPicking(true)} style={cardBtn}>Change</button>}
+      </div>
+      <div style={cardMeta}>
+        Once a feature request is approved (✓ in Slack), an agent implements it as a branch on this
+        repo and pushes it for review.
+      </div>
+      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+      {(!hasRepo || picking) && (
+        repos === null ? <div style={cardMeta}>Loading your repos…</div>
+        : repos.length === 0 ? <div style={cardMeta}>No repos found on this GitHub account.</div>
+        : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <select value={selected} onChange={(e) => pick(e.target.value)} style={{ ...cardField, flex: 2 }}>
+                {repos.map((r) => <option key={r.clone_url} value={r.clone_url}>{r.full_name}{r.private ? " (private)" : ""}</option>)}
+              </select>
+              <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="branch" style={{ ...cardField, flex: 1 }} />
+            </div>
+            <div>
+              <button disabled={busy || !selected} onClick={() => void attach()}
+                style={{ ...cardPrimaryBtn, opacity: busy || !selected ? 0.5 : 1 }}>
+                {busy ? "Attaching…" : "Use this repo"}
+              </button>
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 /** The SAVE-ONCE reusable GitHub token (git_credentials) — per-person, unlike HubSpot/Slack next to
  *  it. "Connect GitHub" (OAuth) is the default path; pasting a PAT is the fallback, both writing to
- *  the same store. Applied for push / pull / publish / attach across ALL of the user's repos. */
+ *  the same store. Applied for push / pull / publish / attach across ALL of the user's repos — and,
+ *  once connected, also for picking the shared product repo below (see ProductRepoPicker). */
 export function GitHubTokenCard() {
   const getStatus = useCallback(async () => toOAuthStatus(await getGitToken()), []);
   const disconnect = useCallback(async () => toOAuthStatus(await setGitToken(null)), []);
@@ -143,7 +244,8 @@ export function GitHubTokenCard() {
           description="Or paste your own fine-grained PAT (revocable on GitHub anytime):"
           placeholder="ghp_…" saveToken={async (v) => toOAuthStatus(await setGitToken(v))}
           onConnected={onConnected} />
-      )} />
+      )}
+      extra={() => <ProductRepoPicker />} />
   );
 }
 

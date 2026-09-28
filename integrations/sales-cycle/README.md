@@ -48,10 +48,11 @@ just won't have anything to look up yet); here's how to get each one for real.
 
 ## One-time setup: connecting HubSpot, Slack, and GitHub
 
-Every step below is also reachable interactively from Settings → Integrations in the Terminal
-UI ("Connect HubSpot" / "Connect Slack" / the Product repo card) once the corresponding env vars
-are set — this section is what to put IN those env vars, and the couple of steps ("Event
-Subscriptions", the product repo's GitHub App) that can only be done on the provider's own site.
+Every step below is also reachable interactively from Settings → Integrations in the Terminal UI
+("Connect HubSpot" / "Connect Slack" / "Connect GitHub", with the product-repo picker folded into
+that same GitHub card) once the corresponding env vars are set — this section is what to put IN
+those env vars, and the couple of steps ("Event Subscriptions", the GitHub OAuth App) that can
+only be done on the provider's own site.
 
 ### HubSpot
 
@@ -177,14 +178,17 @@ every rep's own "Connect GitHub" token card.
 The "build it and push a branch" step runs as one dedicated Vexa **subject** — just a slug
 (default `product-repo`), not a real login — whose own workspace is your actual product repo.
 
-**Preferred: the UI.** Once the GitHub OAuth App above is set up, open Settings → Integrations →
-Sales Cycle → **Product repo** → **Connect GitHub** → pick your repo from the dropdown. No clone
-URL typed, no token pasted — same "OAuth then pick from your own repos" flow as any Lovable-style
-GitHub connect.
+**Preferred: the UI, and there's no separate connection to make.** Open Settings → Integrations →
+**GitHub** (the same personal card, not a second one) → **Connect GitHub** → once connected, a
+**Product repo** section appears right there in that same card → pick your repo from the dropdown.
+No clone URL typed, no token pasted, and no second "Connect GitHub" click for a separate identity
+— whoever's GitHub is already connected on that card is who authenticates the attach, and a copy
+of that token is kept server-side under the `product-repo` subject too, so later pushes (which run
+as that subject, not as whoever set it up) keep working on their own.
 
-**Fallback: curl**, for a scripted/headless setup (attaches the repo the exact same way the UI's
-"attach a custom git repo" flow does, just called directly since this subject has no login of its
-own to click through):
+**Fallback: curl**, for a scripted/headless setup (attaches the repo the exact same way the UI
+does, just called directly with an explicit token since there's no browser session to source one
+from):
 ```bash
 curl -X POST "$AGENT_API_URL/api/workspace/swap" \
   -H "X-User-Id: product-repo" -H "Content-Type: application/json" \

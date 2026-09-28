@@ -2,6 +2,10 @@
 Proves the signed-state handoff (no session on the callback leg) lands the token in the SAME
 per-user store a manually pasted PAT would (git_credentials), and that the whole thing is a no-op
 (503) when unconfigured — the paste-a-PAT path above it is untouched either way.
+
+Always the CALLER's own identity — there is no separate OAuth connection for a "product repo" or
+any other on-behalf-of workspace action; see the workspace_delegate_subject (?for=/for_subject)
+tests below for how those reuse the caller's OWN saved token instead.
 """
 from __future__ import annotations
 
@@ -44,12 +48,16 @@ def test_authorize_503_when_not_configured(tmp_path):
     assert r.status_code == 503
 
 
-def test_git_token_get_reports_oauth_configured(tmp_path):
+def test_git_token_get_reports_oauth_configured_and_target_subject(tmp_path):
     """The Settings UI needs to know whether it's even worth showing "Connect" — not just whether
-    the callback would 503, without the rep having to click it first to find out."""
+    the callback would 503, without the rep having to click it first to find out. `target_subject`
+    is the configured workspace_delegate_subject, so a client never hardcodes a value this
+    deployment owns (e.g. the product-repo picker asks for THIS instead of a baked-in string)."""
     (tmp_path / "u_jane").mkdir(parents=True)
-    unconfigured = _client(tmp_path)
-    assert unconfigured.get("/api/workspace/git-token", headers=H).json()["oauth_configured"] is False
+    unconfigured = _client(tmp_path, workspace_delegate_subject="product-repo")
+    body = unconfigured.get("/api/workspace/git-token", headers=H).json()
+    assert body["oauth_configured"] is False
+    assert body["target_subject"] == "product-repo"
 
     configured = _client(
         tmp_path, github_oauth_client_id="cid",
@@ -72,6 +80,22 @@ def test_authorize_redirects_to_github_with_signed_state(tmp_path):
     # the state encodes u_jane, signed — pull it out and verify it decodes back to the same subject
     import urllib.parse
     state = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)["state"][0]
+    assert github_oauth.verify_state(state=state, secret="dev-dispatch-signing-key") == "u_jane"
+
+
+def test_authorize_ignores_a_for_param_always_uses_the_caller(tmp_path):
+    """authorize/repos never supported acting on behalf of another subject — only the workspace
+    init/attached/swap endpoints do (they don't need a SEPARATE OAuth connection to do it)."""
+    (tmp_path / "u_jane").mkdir(parents=True)
+    c = _client(
+        tmp_path, github_oauth_client_id="cid",
+        github_oauth_redirect_uri="http://localhost:18100/api/workspace/git-token/oauth/callback",
+        workspace_delegate_subject="product-repo",
+    )
+    r = c.get("/api/workspace/git-token/oauth/authorize?for=product-repo", headers=H, follow_redirects=False)
+    assert r.status_code in (302, 307)
+    import urllib.parse
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(r.headers["location"]).query)["state"][0]
     assert github_oauth.verify_state(state=state, secret="dev-dispatch-signing-key") == "u_jane"
 
 
@@ -136,64 +160,16 @@ def test_callback_state_for_a_different_subject_stores_under_that_subject_not_th
     assert git_creds.read_github_token(tmp_path, "u_jane") is None
 
 
-# ── the shared "product repo" identity (?for=) — a Lovable-style repo picker for a non-technical
-# admin, without ever handing the whole team's OAuth connection to one rep's personal card ──────────
-
-def test_authorize_for_disallowed_subject_is_refused(tmp_path):
-    (tmp_path / "u_jane").mkdir(parents=True)
-    c = _client(
-        tmp_path, github_oauth_client_id="cid",
-        github_oauth_redirect_uri="http://localhost:18100/api/workspace/git-token/oauth/callback",
-        github_oauth_target_subject="product-repo",
-    )
-    r = c.get("/api/workspace/git-token/oauth/authorize?for=some-other-users-subject", headers=H, follow_redirects=False)
-    assert r.status_code == 403
-
-
-def test_authorize_for_allowed_subject_signs_state_for_it_not_the_caller(tmp_path):
-    (tmp_path / "u_jane").mkdir(parents=True)
-    c = _client(
-        tmp_path, github_oauth_client_id="cid",
-        github_oauth_redirect_uri="http://localhost:18100/api/workspace/git-token/oauth/callback",
-        github_oauth_target_subject="product-repo",
-    )
-    r = c.get("/api/workspace/git-token/oauth/authorize?for=product-repo", headers=H, follow_redirects=False)
-    assert r.status_code in (302, 307)
-    import urllib.parse
-    state = urllib.parse.parse_qs(urllib.parse.urlparse(r.headers["location"]).query)["state"][0]
-    assert github_oauth.verify_state(state=state, secret="dev-dispatch-signing-key") == "product-repo"
-
-
-def test_callback_for_the_shared_subject_uses_its_own_redirect_flag(tmp_path, monkeypatch):
-    """So "Connect GitHub" succeeding for the shared product-repo identity never lights up a
-    DIFFERENT rep's own personal GitHub card with a false "connected" banner."""
-    c = _client(
-        tmp_path, github_oauth_client_id="cid", github_oauth_client_secret="csecret",
-        github_oauth_redirect_uri="http://x/cb", terminal_url="http://localhost:13000",
-        github_oauth_target_subject="product-repo",
-    )
-
-    class _Resp:
-        def read(self): return json.dumps({"access_token": "ghu_shared"}).encode()
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-
-    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", lambda req, timeout=10: _Resp())
-    state = github_oauth.sign_state(subject="product-repo", secret="dev-dispatch-signing-key")
-    r = c.get(f"/api/workspace/git-token/oauth/callback?code=x&state={state}", follow_redirects=False)
-    assert r.headers["location"] == "http://localhost:13000/?settings=integrations&product_repo_github_connected=1"
-    assert git_creds.read_github_token(tmp_path, "product-repo") == "ghu_shared"
-
-
 def test_repos_requires_a_connected_token_first(tmp_path):
-    c = _client(tmp_path, github_oauth_target_subject="product-repo")
-    r = c.get("/api/workspace/git-token/oauth/repos?for=product-repo", headers=H)
+    (tmp_path / "u_jane").mkdir(parents=True)
+    c = _client(tmp_path)
+    r = c.get("/api/workspace/git-token/oauth/repos", headers=H)
     assert r.status_code == 409
 
 
-def test_repos_lists_the_connected_accounts_repos(tmp_path, monkeypatch):
-    git_creds.set_github_token(tmp_path, "product-repo", "ghu_shared")
-    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+def test_repos_lists_the_callers_own_repos(tmp_path, monkeypatch):
+    git_creds.set_github_token(tmp_path, "u_jane", "ghu_janes")
+    c = _client(tmp_path)
 
     class _Resp:
         def read(self):
@@ -205,7 +181,7 @@ def test_repos_lists_the_connected_accounts_repos(tmp_path, monkeypatch):
         def __exit__(self, *a): return False
 
     monkeypatch.setattr(github_oauth.urllib.request, "urlopen", lambda req, timeout=10: _Resp())
-    r = c.get("/api/workspace/git-token/oauth/repos?for=product-repo", headers=H)
+    r = c.get("/api/workspace/git-token/oauth/repos", headers=H)
     assert r.status_code == 200
     assert r.json() == {"repos": [
         {"full_name": "acme/api", "clone_url": "https://github.com/acme/api.git",
@@ -213,15 +189,15 @@ def test_repos_lists_the_connected_accounts_repos(tmp_path, monkeypatch):
     ]}
 
 
-def test_repos_for_disallowed_subject_is_refused(tmp_path):
-    c = _client(tmp_path, github_oauth_target_subject="product-repo")
-    r = c.get("/api/workspace/git-token/oauth/repos?for=someone-else", headers=H)
-    assert r.status_code == 403
+# ── workspace_delegate_subject (?for=/for_subject) — init/attached/swap only, so a "product repo"
+# never needs its OWN separate OAuth connection: it reuses whoever's already connected GitHub ──────
 
-
-def test_swap_for_the_shared_subject_mounts_under_that_subject_not_the_caller(tmp_path, monkeypatch):
-    """Real git over a local repo — no network (same pattern as test_api.py's swap coverage). The
-    point: ?for=/for_subject must redirect WHICH workspace gets swapped, not just be accepted."""
+def test_swap_for_the_shared_subject_uses_the_callers_own_token_and_mounts_under_that_subject(tmp_path, monkeypatch):
+    """Real git over a local repo — no network (same pattern as test_api.py's swap coverage). Two
+    things proved together: (1) ?for=/for_subject redirects WHICH workspace gets swapped, not just
+    accepted; (2) the CALLER's own saved token authenticates it — there's no separate product-repo
+    OAuth connection to maintain — and a copy lands under the target subject's own credential store
+    too, so a later op that runs AS that subject (the eventual push) can still authenticate."""
     import subprocess
 
     monkeypatch.setenv("VEXA_ALLOW_LOCAL_REPO_ROOT", str(tmp_path))
@@ -235,8 +211,9 @@ def test_swap_for_the_shared_subject_mounts_under_that_subject_not_the_caller(tm
     run("add", "-A"); run("commit", "-q", "-m", "x")
 
     workspaces = tmp_path / "ws"
+    git_creds.set_github_token(workspaces, "u_jane", "ghu_janes_own_token")
     c = TestClient(create_app(
-        Dispatcher(load_settings(workspaces_dir=str(workspaces), github_oauth_target_subject="product-repo"),
+        Dispatcher(load_settings(workspaces_dir=str(workspaces), workspace_delegate_subject="product-repo"),
                    _FakeRuntime(), _FakeIdentity()),
         reader=WorkspaceReader(str(workspaces)),
     ))
@@ -246,10 +223,13 @@ def test_swap_for_the_shared_subject_mounts_under_that_subject_not_the_caller(tm
     assert r.json()["subject"] == "product-repo"
     assert (workspaces / "product-repo" / "MARK").read_text() == "CUSTOM\n"
     assert not (workspaces / "u_jane").exists()  # the caller's own workspace was never touched
+    # the caller's token got copied under the target subject too — a later server-to-server op
+    # running AS "product-repo" (the eventual push) can authenticate without a separate connection
+    assert git_creds.read_github_token(workspaces, "product-repo") == "ghu_janes_own_token"
 
 
 def test_swap_for_disallowed_subject_is_refused(tmp_path):
-    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    c = _client(tmp_path, workspace_delegate_subject="product-repo")
     r = c.post("/api/workspace/swap", headers=H, json={"repo": "https://github.com/acme/api.git", "for_subject": "someone-else"})
     assert r.status_code == 403
 
@@ -259,7 +239,7 @@ def test_init_for_the_shared_subject_seeds_it_not_the_caller(tmp_path, monkeypat
     seed.mkdir()
     (seed / "CLAUDE.md").write_text("SEED\n")
     monkeypatch.setenv("VEXA_WORKSPACE_SEED_DIR", str(seed))
-    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    c = _client(tmp_path, workspace_delegate_subject="product-repo")
     r = c.post("/api/workspace/init?for=product-repo", headers=H)
     assert r.status_code == 201
     assert r.json()["seeded"] is True
@@ -268,7 +248,7 @@ def test_init_for_the_shared_subject_seeds_it_not_the_caller(tmp_path, monkeypat
 
 
 def test_init_for_disallowed_subject_is_refused(tmp_path):
-    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    c = _client(tmp_path, workspace_delegate_subject="product-repo")
     r = c.post("/api/workspace/init?for=someone-else", headers=H)
     assert r.status_code == 403
 
@@ -276,7 +256,7 @@ def test_init_for_disallowed_subject_is_refused(tmp_path):
 def test_attached_for_the_shared_subject_reports_its_own_empty_shape(tmp_path):
     """Safe to call before any attach — same "empty shape" guarantee attached_workspaces() gives
     any brand-new subject, proving ?for= reaches this endpoint rather than erroring or 403ing."""
-    c = _client(tmp_path, github_oauth_target_subject="product-repo")
+    c = _client(tmp_path, workspace_delegate_subject="product-repo")
     r = c.get("/api/workspace/attached?for=product-repo", headers=H)
     assert r.status_code == 200
     assert "slots" in r.json() and "active_set" in r.json()
