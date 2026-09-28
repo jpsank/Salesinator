@@ -50,7 +50,9 @@ class Settings(BaseSettings):
     slack_oauth_client_id: str = ""
     slack_oauth_client_secret: str = ""
     slack_oauth_redirect_uri: str = ""
-    slack_oauth_scopes: str = "chat:write,channels:read,groups:read"
+    # reactions:read is REQUIRED for the reaction_added event (the ✓-approval flow) to be delivered
+    # at all — Slack silently drops an event subscription the bot token doesn't hold the scope for.
+    slack_oauth_scopes: str = "chat:write,channels:read,groups:read,reactions:read"
 
     # Where Vexa's customer folders live on disk — this add-on reads meeting notes directly from here.
     workspaces_root: str = "/workspaces"
