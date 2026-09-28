@@ -6,12 +6,9 @@ from pathlib import Path
 
 import httpx
 import respx
-from fastapi.testclient import TestClient
 
 import sales_cycle.api as api_module
-from sales_cycle.api import app
-
-client = TestClient(app)
+from conftest import client
 
 SECRET = "test-signing-secret"
 

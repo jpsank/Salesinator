@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import logging
 
-import httpx
-
+from sales_cycle._http import call
 from sales_cycle.hubspot_client import Company, HubSpotClient, HubSpotError
 
 logger = logging.getLogger("sales_cycle.resolver")
@@ -47,12 +46,8 @@ def bind_meeting_workspace(
 ) -> None:
     """Tags the meeting with the given workspace, using Vexa's own endpoint for it."""
     url = f"{gateway_url.rstrip('/')}/meetings/{platform}/{native_meeting_id}/workspace"
-    try:
-        resp = httpx.post(
-            url, json={"workspace_id": workspace_id},
-            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-    except httpx.HTTPError as e:
-        raise WorkspaceBindError(f"POST {url} failed: {type(e).__name__}: {e}") from e
+    call(
+        "POST", url, json={"workspace_id": workspace_id},
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"}, timeout=timeout,
+        error_cls=WorkspaceBindError, error_prefix=f"POST {url}",
+    )

@@ -51,7 +51,6 @@ from worker.meeting import *  # noqa: F401,F403,E402
 from worker.meeting import (  # noqa: E402 — explicit re-exports for names `*` skips (underscore-prefixed) + clarity
     MEETING_DOC_PROMPT,
     _CARD_FRAME,
-    _CARD_GROUP,
     _PROC_LINE_RE,
     _STEERING_SECTION,
     _accumulate_card,

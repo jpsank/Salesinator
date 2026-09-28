@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import httpx
+from sales_cycle._http import call
 
 
 @dataclass(frozen=True)
@@ -39,18 +39,11 @@ class HubSpotClient:
             "properties": ["name", "domain"],
             "limit": 1,
         }
-        try:
-            resp = httpx.post(
-                f"{self._base_url}/crm/v3/objects/companies/search",
-                json=body,
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise HubSpotError(f"HubSpot search failed: HTTP {e.response.status_code}") from e
-        except httpx.HTTPError as e:
-            raise HubSpotError(f"HubSpot search failed: {type(e).__name__}: {e}") from e
+        resp = call(
+            "POST", f"{self._base_url}/crm/v3/objects/companies/search",
+            json=body, headers={"Authorization": f"Bearer {self._token}"}, timeout=self._timeout,
+            error_cls=HubSpotError, error_prefix="HubSpot search",
+        )
         results = resp.json().get("results") or []
         if not results:
             return None

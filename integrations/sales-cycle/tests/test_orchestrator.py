@@ -9,16 +9,13 @@ from sales_cycle.orchestrator import (
 AGENT_API = "http://agent-api:8100"
 
 
-def test_slug_for_lowercases_and_hyphenates():
-    assert slug_for("CSV Export for Reports") == "csv-export-for-reports"
-
-
-def test_slug_for_strips_punctuation():
-    assert slug_for("SSO / SAML support!!") == "sso-saml-support"
-
-
-def test_slug_for_empty_falls_back():
-    assert slug_for("!!!") == "feature"
+@pytest.mark.parametrize("title,expected", [
+    ("CSV Export for Reports", "csv-export-for-reports"),
+    ("SSO / SAML support!!", "sso-saml-support"),
+    ("!!!", "feature"),
+])
+def test_slug_for(title, expected):
+    assert slug_for(title) == expected
 
 
 def test_branch_for_has_feature_prefix():

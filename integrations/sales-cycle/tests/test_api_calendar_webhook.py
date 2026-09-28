@@ -5,14 +5,10 @@ import time
 
 import httpx
 import respx
-from fastapi.testclient import TestClient
 
-from sales_cycle.api import app
-
-client = TestClient(app)
+from conftest import GATEWAY, client
 
 SECRET = "test-webhook-secret"
-GATEWAY = "http://gateway:8000"
 
 
 def _sign(timestamp: str, body: bytes) -> str:

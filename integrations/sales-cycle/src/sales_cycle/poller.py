@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from sales_cycle.entity_files import find_feature_request_entities
+from sales_cycle.entity_files import iter_feature_request_paths, parse_feature_request_file
 from sales_cycle.slack_client import SlackClient, SlackError
 from sales_cycle.store import Store
 
@@ -27,9 +27,12 @@ def poll_once(*, store: Store, slack: SlackClient, workspaces_root: Path, channe
     """Returns whichever requests got a Slack message this time. Never crashes — if posting one to
     Slack fails, we log it and just move on to the next one rather than stopping the whole check."""
     notified: list[str] = []
-    for entity in find_feature_request_entities(workspaces_root):
-        key = str(entity.path)
+    for path, workspace_id in iter_feature_request_paths(workspaces_root):
+        key = str(path)
         if store.is_seen(key):
+            continue  # skip the read + YAML parse entirely for anything already handled
+        entity = parse_feature_request_file(path, workspace_id)
+        if entity is None:
             continue
         try:
             ts = slack.post_message(channel=channel, text=_format_message(entity.workspace_id, entity.title, entity.body))

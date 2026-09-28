@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import re
 
-import httpx
+from sales_cycle._http import call
 
 logger = logging.getLogger("sales_cycle.orchestrator")
 
@@ -53,34 +53,27 @@ def submit_implementation(
         f"test suite. Commit your changes with a clear message. Do NOT push — that is handled "
         f"separately, outside this turn."
     )
-    try:
-        resp = httpx.post(
-            f"{agent_api_url.rstrip('/')}/invocations",
-            json={
-                "identity": {"subject": user_id, "launcher": "sales-cycle:feature-request"},
-                "runner": "claude-code",
-                "trigger": "scheduled",
-                "start": {"entrypoint": {"inline": prompt}},
-            },
-            headers={"X-User-Id": user_id, "Content-Type": "application/json"},
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-    except httpx.HTTPError as e:
-        raise DispatchError(f"POST /invocations failed: {type(e).__name__}: {e}") from e
+    resp = call(
+        "POST", f"{agent_api_url.rstrip('/')}/invocations",
+        json={
+            "identity": {"subject": user_id, "launcher": "sales-cycle:feature-request"},
+            "runner": "claude-code",
+            "trigger": "scheduled",
+            "start": {"entrypoint": {"inline": prompt}},
+        },
+        headers={"X-User-Id": user_id, "Content-Type": "application/json"}, timeout=timeout,
+        error_cls=DispatchError, error_prefix="POST /invocations",
+    )
     data = resp.json()
     return {"workload_id": data.get("workload_id"), "branch": branch}
 
 
 def _git_state(*, agent_api_url: str, user_id: str, timeout: float) -> dict:
-    try:
-        resp = httpx.get(
-            f"{agent_api_url.rstrip('/')}/api/workspace/git",
-            headers={"X-User-Id": user_id}, timeout=timeout,
-        )
-        resp.raise_for_status()
-    except httpx.HTTPError as e:
-        raise DispatchError(f"GET /api/workspace/git failed: {type(e).__name__}: {e}") from e
+    resp = call(
+        "GET", f"{agent_api_url.rstrip('/')}/api/workspace/git",
+        headers={"X-User-Id": user_id}, timeout=timeout,
+        error_cls=DispatchError, error_prefix="GET /api/workspace/git",
+    )
     return resp.json()
 
 
@@ -96,13 +89,9 @@ def check_and_push(
         return None
     if state.get("changes"):  # still has unsaved work — not finished yet
         return None
-    try:
-        resp = httpx.post(
-            f"{agent_api_url.rstrip('/')}/api/workspace/push",
-            headers={"X-User-Id": user_id, "Content-Type": "application/json"},
-            json={}, timeout=timeout,
-        )
-        resp.raise_for_status()
-    except httpx.HTTPError as e:
-        raise PushError(f"POST /api/workspace/push failed: {type(e).__name__}: {e}") from e
+    resp = call(
+        "POST", f"{agent_api_url.rstrip('/')}/api/workspace/push",
+        headers={"X-User-Id": user_id, "Content-Type": "application/json"}, json={}, timeout=timeout,
+        error_cls=PushError, error_prefix="POST /api/workspace/push",
+    )
     return resp.json()

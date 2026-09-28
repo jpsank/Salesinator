@@ -3,7 +3,7 @@ message `ts` back to correlate a later reaction against it. No SDK (Category-A l
 
 from __future__ import annotations
 
-import httpx
+from sales_cycle._http import call
 
 
 class SlackError(RuntimeError):
@@ -20,16 +20,12 @@ class SlackClient:
         """Returns the message `ts` (Slack's timestamp-as-id) — the correlation key for the reaction."""
         if not self._token:
             raise SlackError("SLACK_BOT_TOKEN not configured")
-        try:
-            resp = httpx.post(
-                f"{self._base_url}/chat.postMessage",
-                json={"channel": channel, "text": text},
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise SlackError(f"chat.postMessage failed: {type(e).__name__}: {e}") from e
+        resp = call(
+            "POST", f"{self._base_url}/chat.postMessage",
+            json={"channel": channel, "text": text},
+            headers={"Authorization": f"Bearer {self._token}"}, timeout=self._timeout,
+            error_cls=SlackError, error_prefix="chat.postMessage",
+        )
         body = resp.json()
         if not body.get("ok"):
             raise SlackError(f"chat.postMessage rejected: {body.get('error')}")

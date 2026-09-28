@@ -5,9 +5,7 @@ trigger a real branch/push."""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import time
+from sales_cycle._signature import verify_hmac_timestamp_signature
 
 
 class SlackSignatureError(RuntimeError):
@@ -17,15 +15,10 @@ class SlackSignatureError(RuntimeError):
 def verify_slack_signature(
     *, signing_secret: str, timestamp: str, signature: str, body: bytes, now: float | None = None,
 ) -> None:
-    if not signing_secret:
-        raise SlackSignatureError("SLACK_SIGNING_SECRET not configured")
-    try:
-        ts = int(timestamp)
-    except (TypeError, ValueError) as e:
-        raise SlackSignatureError("missing/invalid X-Slack-Request-Timestamp") from e
-    if abs((now if now is not None else time.time()) - ts) > 60 * 5:
-        raise SlackSignatureError("stale timestamp — possible replay")
-    basestring = f"v0:{timestamp}:{body.decode()}".encode()
-    expected = "v0=" + hmac.new(signing_secret.encode(), basestring, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, signature or ""):
-        raise SlackSignatureError("signature mismatch")
+    verify_hmac_timestamp_signature(
+        secret=signing_secret, timestamp=timestamp, signature=signature, body=body,
+        basestring_fmt="v0:{timestamp}:{body}", prefix="v0=", now=now, max_skew_sec=300.0,
+        error_cls=SlackSignatureError,
+        missing_secret_msg="SLACK_SIGNING_SECRET not configured",
+        missing_timestamp_msg="missing/invalid X-Slack-Request-Timestamp",
+    )

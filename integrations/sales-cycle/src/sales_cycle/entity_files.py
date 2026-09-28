@@ -42,10 +42,12 @@ def _parse_frontmatter(text: str) -> tuple[dict, str] | None:
     return fm, body.strip()
 
 
-def find_feature_request_entities(workspaces_root: Path) -> list[FeatureRequestEntity]:
-    """Every feature-request note, from every customer's folder. Whoever calls this decides which
-    ones are actually new (see store.py's `seen_files`) — this function just returns all of them."""
-    out: list[FeatureRequestEntity] = []
+def iter_feature_request_paths(workspaces_root: Path) -> list[tuple[Path, str]]:
+    """Every feature-request note's location, from every customer's folder — just a directory
+    listing, no file reads. Feature-request notes pile up forever (never deleted), so keeping this
+    step read-free lets a caller skip the ones it's already seen before paying for the file read +
+    YAML parse in `parse_feature_request_file` below."""
+    out: list[tuple[Path, str]] = []
     if not workspaces_root.is_dir():
         return out
     for workspace_dir in workspaces_root.iterdir():
@@ -54,16 +56,18 @@ def find_feature_request_entities(workspaces_root: Path) -> list[FeatureRequestE
         fr_dir = workspace_dir / "kg" / "entities" / "feature_request"
         if not fr_dir.is_dir():
             continue
-        for path in sorted(fr_dir.glob("*.md")):
-            try:
-                parsed = _parse_frontmatter(path.read_text())
-            except (OSError, yaml.YAMLError):
-                continue
-            if parsed is None:
-                continue
-            fm, body = parsed
-            title = fm.get("title") or fm.get("id") or path.stem
-            out.append(FeatureRequestEntity(
-                path=path, workspace_id=workspace_dir.name, title=str(title), body=body,
-            ))
+        out.extend((path, workspace_dir.name) for path in sorted(fr_dir.glob("*.md")))
     return out
+
+
+def parse_feature_request_file(path: Path, workspace_id: str) -> FeatureRequestEntity | None:
+    """Reads and parses one note. `None` if it's missing, unreadable, or not a valid entity file."""
+    try:
+        parsed = _parse_frontmatter(path.read_text())
+    except (OSError, yaml.YAMLError):
+        return None
+    if parsed is None:
+        return None
+    fm, body = parsed
+    title = fm.get("title") or fm.get("id") or path.stem
+    return FeatureRequestEntity(path=path, workspace_id=workspace_id, title=str(title), body=body)

@@ -29,16 +29,7 @@ class PendingApproval:
     status: str
     branch: str | None
     workload_id: str | None
-
-
-_FIELDS = tuple(f for f in PendingApproval.__dataclass_fields__)
-
-
-def _to_pending_approval(row: sqlite3.Row, **overrides: str) -> PendingApproval:
-    """The database row has a couple of extra columns we don't need to hand back — this just picks
-    out the ones we actually use."""
-    data = {k: row[k] for k in _FIELDS if k not in overrides}
-    return PendingApproval(**data, **overrides)
+    created_at: float
 
 
 class Store:
@@ -115,12 +106,12 @@ class Store:
             if row is None:
                 return None
             conn.execute("UPDATE pending_approvals SET status = 'approved' WHERE id = ?", (row["id"],))
-        return _to_pending_approval(row, status="approved")
+        return PendingApproval(**{**dict(row), "status": "approved"})
 
     def list_approved_unprocessed(self) -> list[PendingApproval]:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'approved'").fetchall()
-        return [_to_pending_approval(r) for r in rows]
+        return [PendingApproval(**dict(r)) for r in rows]
 
     def mark_dispatched(self, approval_id: int, *, branch: str, workload_id: str | None) -> None:
         with self._conn() as conn:
@@ -132,7 +123,7 @@ class Store:
     def list_dispatched_unpushed(self) -> list[PendingApproval]:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'dispatched'").fetchall()
-        return [_to_pending_approval(r) for r in rows]
+        return [PendingApproval(**dict(r)) for r in rows]
 
     def mark_done(self, approval_id: int) -> None:
         with self._conn() as conn:

@@ -1,13 +1,7 @@
 import httpx
 import respx
-from fastapi.testclient import TestClient
 
-from sales_cycle.api import app
-from sales_cycle.settings import get_settings
-
-client = TestClient(app)
-
-GATEWAY = get_settings().vexa_gateway_url.rstrip("/")
+from conftest import GATEWAY, client
 
 
 @respx.mock

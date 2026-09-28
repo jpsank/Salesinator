@@ -629,13 +629,6 @@ def _emit_beat(stream: _Stream, out_topic: str, card_turn, segments: list[dict],
 
 # ── post-meeting WRITE turn: distill the surfaced cards into the kg meeting entity ────────────────
 
-_CARD_GROUP = {  # card kind → the section it lands under in the doc
-    # NOTE: not actually referenced by MEETING_DOC_PROMPT below (the model free-forms the grouping from
-    # the prompt's own heading list) — kept in sync anyway so this stays true documentation, not drift.
-    "person": "Attendees", "company": "Companies", "product": "Products",
-    "feature_request": "Feature Requests",
-}
-
 MEETING_DOC_PROMPT = (
     "The meeting has ENDED. Author or update the knowledge-graph entity for it as a SINGLE markdown "
     "file at the EXACT path `kg/entities/meeting/{native}.md` in this workspace (create parent dirs if "
