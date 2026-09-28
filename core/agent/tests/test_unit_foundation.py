@@ -146,6 +146,66 @@ def test_dispatcher_worker_env_carries_meeting_transcript_cursor():
     assert env["VEXA_IDLE_TIMEOUT_SEC"] == str(4 * 60 * 60)
 
 
+# ── isolation.mode == "worktree" (workspace_worktree.py) ──────────────────────
+
+def _seed_baseline_repo(root: Path, subject: str) -> None:
+    import subprocess
+    ws = root / subject
+    ws.mkdir(parents=True)
+    run = lambda *a: subprocess.run(["git", *a], cwd=ws, check=True, capture_output=True)
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "seed@test")
+    run("config", "user.name", "seed")
+    (ws / "README.md").write_text("baseline\n")
+    run("add", "-A")
+    run("commit", "-q", "-m", "seed")
+
+
+def test_validate_unit_invocation_accepts_isolation_worktree():
+    inv = {**VALID_INV, "isolation": {"mode": "worktree"}}
+    contracts.validate_unit_invocation(inv)  # must not raise — backward-compatible addition
+
+
+def test_dispatch_without_isolation_uses_the_shared_baseline_path(tmp_path):
+    _seed_baseline_repo(tmp_path, "u_jane")
+    settings = load_settings(workspaces_dir=str(tmp_path))
+    rt = _FakeRuntime()
+    d = dispatch.Dispatcher(settings, rt, _FakeIdentity())
+    d.dispatch(VALID_INV)
+    _, _profile, env = rt.spawned[0]
+    assert env["VEXA_WORKSPACE_PATH"] == str(tmp_path / "u_jane")
+
+
+def test_dispatch_with_isolation_worktree_uses_an_isolated_path(tmp_path):
+    _seed_baseline_repo(tmp_path, "u_jane")
+    settings = load_settings(workspaces_dir=str(tmp_path))
+    rt = _FakeRuntime()
+    d = dispatch.Dispatcher(settings, rt, _FakeIdentity())
+    inv = {**VALID_INV, "isolation": {"mode": "worktree"}}
+
+    wid = d.dispatch(inv)
+
+    _, _profile, env = rt.spawned[0]
+    expected = tmp_path / ".worktrees" / "u_jane" / wid
+    assert env["VEXA_WORKSPACE_PATH"] == str(expected)
+    assert expected.exists()
+    mounts = json.loads(env["VEXA_MOUNTS"])
+    primary = next(m for m in mounts if m.get("primary"))
+    assert primary["path"] == str(expected)
+    # every OTHER dispatch for this subject still shares the plain baseline, untouched
+    assert (tmp_path / "u_jane" / "README.md").read_text() == "baseline\n"
+
+
+def test_dispatch_with_isolation_worktree_raises_loudly_on_missing_baseline(tmp_path):
+    settings = load_settings(workspaces_dir=str(tmp_path))  # no baseline ever seeded
+    rt = _FakeRuntime()
+    d = dispatch.Dispatcher(settings, rt, _FakeIdentity())
+    inv = {**VALID_INV, "isolation": {"mode": "worktree"}}
+    with pytest.raises(Exception):
+        d.dispatch(inv)
+    assert rt.spawned == []  # never reached the spawn call
+
+
 def test_local_identity_minter_emits_signed_dispatch_claims():
     token = LocalIdentityMinter("secret", ttl_sec=60).mint(
         "u_jane",

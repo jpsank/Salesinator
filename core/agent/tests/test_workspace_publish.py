@@ -16,7 +16,10 @@ from control_plane.workspace_attach import swap_workspace
 from control_plane.workspace_publish import (
     PUBLISH_REMOTE,
     PublishError,
+    PullRequestError,
     RepoExistsError,
+    create_pull_request,
+    owner_repo_from_url,
     publish_workspace,
     published_remote_url,
 )
@@ -264,3 +267,70 @@ def test_publish_ws_dir_refuses_attached_clone(tmp_path):
     with pytest.raises(PublishError, match="attached from an external repo"):
         publish_workspace(root, "u1", token=TOKEN, repo_name="x",
                           create_repo=lambda n, p, t, o: "unused", ws_dir=other)
+
+
+# ── owner_repo_from_url ─────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("url,owner,repo", [
+    ("https://github.com/jpsank/vexa-sales-cycle.git", "jpsank", "vexa-sales-cycle"),
+    ("https://github.com/jpsank/vexa-sales-cycle", "jpsank", "vexa-sales-cycle"),
+    ("git@github.com:jpsank/vexa-sales-cycle.git", "jpsank", "vexa-sales-cycle"),
+])
+def test_owner_repo_from_url_parses_https_and_ssh(url, owner, repo):
+    assert owner_repo_from_url(url) == (owner, repo)
+
+
+def test_owner_repo_from_url_rejects_garbage():
+    with pytest.raises(ValueError):
+        owner_repo_from_url("not a url at all")
+
+
+# ── create_pull_request ─────────────────────────────────────────────────────────
+
+def _attached_workspace_with_origin(root: Path, subject: str, remote_url: str) -> Path:
+    ws = root / subject
+    ws.mkdir(parents=True)
+    _run(ws, "init", "-q", "-b", "main")
+    _run(ws, "config", "user.email", "t@t"); _run(ws, "config", "user.name", "t")
+    (ws / "f.txt").write_text("x\n"); _run(ws, "add", "-A"); _run(ws, "commit", "-q", "-m", "c0")
+    _run(ws, "remote", "add", "origin", remote_url)
+    return ws
+
+
+def test_create_pull_request_calls_github_with_the_current_branch(tmp_path):
+    ws = _attached_workspace_with_origin(tmp_path, "u1", "https://github.com/acme/product.git")
+    _run(ws, "checkout", "-q", "-b", "feature/csv-export")
+
+    calls = []
+
+    def fake_create_pr(owner, repo, *, head, base, title, body, token):
+        calls.append((owner, repo, head, base, title, body, token))
+        return {"url": "https://github.com/acme/product/pull/7", "number": 7}
+
+    result = create_pull_request(
+        ws, title="CSV export", body="customer wants it", base="main", token=TOKEN, create_pr=fake_create_pr,
+    )
+
+    assert result == {"url": "https://github.com/acme/product/pull/7", "number": 7}
+    assert calls == [("acme", "product", "feature/csv-export", "main", "CSV export", "customer wants it", TOKEN)]
+
+
+def test_create_pull_request_refuses_with_no_home_remote(tmp_path):
+    ws = tmp_path / "u1"
+    ws.mkdir()
+    _run(ws, "init", "-q", "-b", "main")
+    _run(ws, "config", "user.email", "t@t"); _run(ws, "config", "user.name", "t")
+    (ws / "f.txt").write_text("x\n"); _run(ws, "add", "-A"); _run(ws, "commit", "-q", "-m", "c0")
+
+    with pytest.raises(PublishError, match="no GitHub home"):
+        create_pull_request(ws, title="x", body="y", base="main", token=TOKEN, create_pr=lambda **k: {})
+
+
+def test_create_pull_request_surfaces_github_errors_token_redacted(tmp_path):
+    ws = _attached_workspace_with_origin(tmp_path, "u1", "https://github.com/acme/product.git")
+
+    def failing_create_pr(owner, repo, **kwargs):
+        raise PullRequestError("GitHub pull-request creation failed (HTTP 422): branch already has a pull request")
+
+    with pytest.raises(PullRequestError, match="HTTP 422"):
+        create_pull_request(ws, title="x", body="y", base="main", token=TOKEN, create_pr=failing_create_pr)

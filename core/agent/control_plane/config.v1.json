@@ -372,6 +372,24 @@
       ]
     },
     {
+      "key": "VEXA_WORKSPACE_WORKTREE_SETUP_CMD",
+      "class": "defaulted",
+      "default": "",
+      "description": "an optional shell command run once, cwd=the fresh worktree, right after provisioning an isolated per-turn worktree (isolation.mode==\"worktree\", see workspace_worktree.py) — e.g. a JS-monorepo deployment sets this to `pnpm install --frozen-lockfile` so its own pre-push gates have node_modules to check against. Empty (default) is a no-op for every deployment that doesn't need it.",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
+      "key": "SALES_CYCLE_WORKSPACE_RESOLVE",
+      "class": "defaulted",
+      "default": "true",
+      "description": "when true, transcription_watcher.py resolves a live meeting's bound workspace_id (set by the sales-cycle add-on's HubSpot/calendar mapping) and files the meeting's kg doc there instead of the pre-M2 placeholder subject; an unset/false value (or any value outside 1/true/yes/on) falls straight through to the placeholder — the same behavior as before this flag existed.",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
       "key": "VEXA_REQUIRE_GATEWAY_IDENTITY",
       "class": "defaulted",
       "default": "false",

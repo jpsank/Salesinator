@@ -97,6 +97,15 @@
         "session": { "$ref": "#/$defs/SessionRef" }
       }
     },
+    "Isolation": {
+      "description": "OPT-IN per-turn workspace isolation. Absent (the default) = every dispatch for a subject shares that subject's one persistent workspace directory, as before. mode=worktree = the Runtime provisions a fresh `git worktree` off the subject's baseline for JUST this turn (workspace_worktree.py) instead of reusing the shared directory — for callers that dispatch commit-capable turns and need concurrent turns to never collide.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["worktree"] }
+      }
+    },
     "Invocation": {
       "description": "One dispatch. The dispatcher emits it (from any trigger source); the Scheduler fires it; the Runtime spawns it. `output` (= unit:<id>:out) and `trust` are derived, not stored.",
       "type": "object",
@@ -118,7 +127,8 @@
         },
         "trigger": { "$ref": "#/$defs/Trigger" },
         "context": { "$ref": "#/$defs/Context" },
-        "start": { "$ref": "#/$defs/Start" }
+        "start": { "$ref": "#/$defs/Start" },
+        "isolation": { "$ref": "#/$defs/Isolation" }
       }
     }
   }

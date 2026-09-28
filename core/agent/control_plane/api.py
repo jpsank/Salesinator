@@ -60,8 +60,12 @@ from control_plane.workspace_attach import (
     workspace_dir_for,
 )
 from control_plane.repo_ref import RepoRefError, assert_fetchable
-from control_plane.workspace_publish import PublishError, RepoExistsError, publish_workspace, published_remote_url
+from control_plane.workspace_publish import (
+    PublishError, PullRequestError, RepoExistsError, create_pull_request, publish_workspace, published_remote_url,
+)
 from control_plane.workspace_git_sync import RemoteSyncError, pull_origin, push_origin, remote_status
+from control_plane.workspace_worktree import worktree_dir_for, release_worktree
+from control_plane.gates_runner import check_commit_compliance, run_configured_pre_push_hook
 from control_plane.workspace_purpose import read_purpose, write_purpose
 from control_plane import workspace_membership as membership_mod
 from control_plane import git_credentials as git_creds
@@ -368,10 +372,32 @@ class WorkspacePushBody(BaseModel):
     """Push a workspace's current branch to its GitHub home (origin / vexa-publish), fast-forward only.
     ``slug`` targets one of the caller's workspaces (default = the primary); ``token`` is the caller's PAT.
     OPTIONAL — when omitted, the caller's SAVED reusable GitHub token (git_credentials) is used. Whichever
-    token applies is used for this push only and NEVER stored on the workspace remote (P15)."""
+    token applies is used for this push only and NEVER stored on the workspace remote (P15).
+
+    ``unit`` (opt-in isolation, workspace_worktree.py) targets one of the caller's own per-turn
+    worktrees instead of a plain workspace slot. When set, two compliance checks run BEFORE the push:
+    ``expected_signoff`` (a preformatted ``Name <email>`` string; omit to skip the check entirely —
+    generic by default, never enforced unless the caller asks for it) must appear as a Signed-off-by
+    line on HEAD, and HEAD must never carry a Co-Authored-By: Claude trailer; then whatever pre-push
+    hook the attached repo itself has configured (if any) is run and must pass."""
     model_config = {"extra": "forbid"}
     slug: Optional[str] = None
     token: Optional[str] = None
+    unit: Optional[str] = None
+    expected_signoff: Optional[str] = None
+
+
+class WorkspacePullRequestBody(BaseModel):
+    """Open a pull request for a workspace's current branch, on the repo its home remote points at.
+    ``unit``/``slug``/``token`` resolve exactly like ``WorkspacePushBody`` — same worktree/workspace,
+    same reusable-token fallback. ``base`` defaults to ``main``."""
+    model_config = {"extra": "forbid"}
+    slug: Optional[str] = None
+    unit: Optional[str] = None
+    token: Optional[str] = None
+    title: str
+    body: str
+    base: str = "main"
 
 
 class GitTokenBody(BaseModel):
@@ -1511,14 +1537,21 @@ def create_app(
         return {"path": path, "content": content}
 
     @app.get("/api/workspace/git")
-    def ws_git(request: Request, slug: Optional[str] = None):
+    def ws_git(request: Request, slug: Optional[str] = None, unit: Optional[str] = None):
         """Author-attributed source-control state (branch · working changes · recent commits) of a
-        workspace. No ``slug`` → the caller's own primary. A ``slug`` addresses a SHARED workspace the
-        caller is a member of (same authorized resolution as tree/file reads) — its commits carry
-        ``author`` + ``kind`` so the terminal can show OTHER members' agent pushes as they land."""
+        workspace. No ``slug``/``unit`` → the caller's own primary. A ``slug`` addresses a SHARED
+        workspace the caller is a member of (same authorized resolution as tree/file reads) — its
+        commits carry ``author`` + ``kind`` so the terminal can show OTHER members' agent pushes as
+        they land. A ``unit`` addresses one of the CALLER'S OWN isolated per-turn worktrees
+        (workspace_worktree.py, opt-in via isolation.mode=="worktree") — inherently scoped to this
+        subject, since the path is namespaced by it; a not-yet-provisioned or already-released unit
+        simply reads as an empty git state (no ``.git`` at that path yet), not an error."""
+        subject = subject_of(request)
+        if unit:
+            return wsr.git_state_at(worktree_dir_for(wsr.root, subject, unit), viewer=subject)
         try:
             target = _read_target(request, slug)  # authorizes: a slug outside the caller's mount set → 403
-            return wsr.git_state_at(target, viewer=subject_of(request))
+            return wsr.git_state_at(target, viewer=subject)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid subject")
 
@@ -1851,9 +1884,20 @@ def create_app(
     def ws_push(request: Request, body: WorkspacePushBody = Body(...)):
         """Push a workspace's current branch to its GitHub home (origin for attached clones, vexa-publish
         for published vexa-born), fast-forward only — NEVER a force push. The token authenticates the push
-        and is never stored; a diverged remote fails loud (pull first). Every error is token-redacted (P15)."""
+        and is never stored; a diverged remote fails loud (pull first). Every error is token-redacted (P15).
+
+        When ``body.unit`` is given (an isolated per-turn worktree), two compliance checks run FIRST —
+        the cheap attribution check before the slower pre-push-hook check, so a trivial problem fails
+        in milliseconds rather than after however long the hook takes. Neither silently edits the
+        commit; a violation refuses the push with the exact problem quoted."""
         subject = subject_of(request)
-        ws = _manage_dir(subject, body.slug)
+        ws = worktree_dir_for(wsr.root, subject, body.unit) if body.unit else _manage_dir(subject, body.slug)
+        if body.unit:
+            failures = check_commit_compliance(ws, expected_signoff=body.expected_signoff)
+            if not failures:
+                failures = run_configured_pre_push_hook(ws)
+            if failures:
+                raise HTTPException(status_code=409, detail="; ".join(failures))
         token = (body.token or "").strip() or git_creds.read_github_token(wsr.root, subject)
         if not token:
             raise HTTPException(status_code=400, detail="a GitHub token is required — pass one or save a reusable token")
@@ -1863,7 +1907,29 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc))
         except RemoteSyncError as exc:
             raise HTTPException(status_code=502, detail=str(exc))  # already token-redacted (P15)
+        if body.unit:
+            release_worktree(wsr.root, subject, body.unit)  # best-effort; never turns success into a 5xx
         return {"remote": r.remote, "url": r.url, "branch": r.branch, "head_sha": r.head_sha}
+
+    @app.post("/api/workspace/pull-request")
+    def ws_pull_request(request: Request, req: WorkspacePullRequestBody = Body(...)):
+        """Open a pull request for a workspace's current (already-pushed) branch. Every error is
+        token-redacted (P15); a not-yet-pushed branch or missing home remote is a 400, a GitHub API
+        failure a 502."""
+        subject = subject_of(request)
+        ws = worktree_dir_for(wsr.root, subject, req.unit) if req.unit else _manage_dir(subject, req.slug)
+        token = (req.token or "").strip() or git_creds.read_github_token(wsr.root, subject)
+        if not token:
+            raise HTTPException(status_code=400, detail="a GitHub token is required — pass one or save a reusable token")
+        try:
+            result = create_pull_request(ws, title=req.title, body=req.body, base=req.base, token=token)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except PublishError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))  # already token-redacted (P15)
+        except PullRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))  # already token-redacted (P15)
+        return result
 
     @app.post("/api/workspace/pull")
     def ws_pull(request: Request, body: WorkspacePullBody = Body(default=WorkspacePullBody())):

@@ -238,3 +238,92 @@ def publish_workspace(
              subject, remote_url, branch, created)  # metadata only — never the token (P15)
     return PublishResult(repo_url=_display_url(remote_url), pushed_ref=branch,
                          head_sha=head_sha, created=created)
+
+
+# ── pull request creation (the counterpart of _github_create_repo, same house style) ──────────────
+
+_OWNER_REPO_RE = re.compile(
+    r"^(?:https?://[^/]+/|git@[^:]+:)(?P<owner>[^/]+)/(?P<repo>.+?)(?:\.git)?/?$"
+)
+
+
+class PullRequestError(RuntimeError):
+    """A pull-request creation failed. The message is REDACTED of the access token (P15)."""
+
+
+# Inject the actual GitHub call for tests (no network), mirroring CreateRepoFn above.
+# Signature: (owner, repo, *, head, base, title, body, token) → {"url", "number"}.
+CreatePullRequestFn = Callable[..., dict]
+
+
+def owner_repo_from_url(url: str) -> tuple[str, str]:
+    """Parse ``owner/repo`` out of a GitHub https or ssh remote URL. Raises ``ValueError`` for
+    anything that doesn't look like one (a non-GitHub remote, a malformed URL)."""
+    m = _OWNER_REPO_RE.match(url.strip())
+    if not m:
+        raise ValueError(f"not a recognizable GitHub remote URL: {url!r}")
+    return m.group("owner"), m.group("repo")
+
+
+def _github_create_pull_request(
+    owner: str, repo: str, *, head: str, base: str, title: str, body: str, token: str,
+) -> dict:
+    """``POST /repos/{owner}/{repo}/pulls`` via the caller's PAT — same stdlib-urllib, same
+    token-redacted error handling as ``_github_create_repo`` above. Returns ``{"url", "number"}``
+    (the PR's human URL + number) on success."""
+    req = urllib.request.Request(
+        f"{GITHUB_API}/repos/{owner}/{repo}/pulls",
+        data=json.dumps({"title": title, "body": body, "head": head, "base": base}).encode(),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "User-Agent": "vexa-agent",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            payload = json.loads(exc.read() or b"{}")
+            detail = str(payload.get("message") or "")
+        except (ValueError, OSError):
+            pass
+        detail = _redacted(detail, token)
+        raise PullRequestError(f"GitHub pull-request creation failed (HTTP {exc.code}): {detail}".strip()) from None
+    except urllib.error.URLError as exc:
+        raise PullRequestError(f"GitHub unreachable: {_redacted(str(exc.reason), token)}") from None
+    url = data.get("html_url")
+    number = data.get("number")
+    if not url or number is None:
+        raise PullRequestError("GitHub pull-request creation returned no url/number")
+    return {"url": url, "number": number}
+
+
+def create_pull_request(
+    ws: str | Path, *, title: str, body: str, base: str, token: str,
+    create_pr: Optional[CreatePullRequestFn] = None,
+) -> dict:
+    """Opens a pull request for the workspace's CURRENT branch against ``base``, on the repo its
+    home remote points at (``origin`` for an attached clone, ``vexa-publish`` for a published
+    vexa-born one — same resolution as push). Raises ``PublishError``/``PullRequestError`` (both
+    token-redacted) on any failure — a not-yet-pushed branch, no home remote, or a GitHub API error."""
+    # Local import: workspace_git_sync imports PUBLISH_REMOTE/_display_url FROM this module, so a
+    # module-level import here would be circular. Both modules are fully loaded by the time this
+    # function actually runs.
+    from control_plane.workspace_git_sync import _current_branch, home_remote
+
+    wsp = Path(ws)
+    home = home_remote(wsp)
+    if home is None:
+        raise PublishError("this workspace has no GitHub home yet — publish or attach a repo first")
+    _, url = home
+    owner, repo = owner_repo_from_url(url)
+    branch = _current_branch(wsp)
+    if not branch:
+        raise PublishError("workspace is on a detached HEAD — check out a branch first")
+    fn = create_pr or _github_create_pull_request
+    return fn(owner, repo, head=branch, base=base, title=title, body=body, token=token)

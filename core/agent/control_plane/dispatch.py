@@ -21,6 +21,7 @@ from typing import Optional
 import contracts
 from control_plane.workspace_attach import active_workspaces, shared_active_mounts
 from control_plane.workspace_purpose import read_purpose
+from control_plane.workspace_worktree import provision_worktree
 from control_plane.system_mounts import GLOBAL_SLUG, SYSTEM_SLUG, global_mount, system_mount
 from shared.config import Settings
 from shared.ports import IdentityPort, RuntimePort
@@ -208,9 +209,16 @@ def _worker_cwd(root: str, subject: str, mounts: list[dict]) -> str:
 
 def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token: str,
                    memberships: Optional[list[dict]] = None,
-                   model_config: Optional[dict] = None) -> dict[str, str]:
+                   model_config: Optional[dict] = None,
+                   primary_override: Optional[str] = None) -> dict[str, str]:
     """Map a ``unit.v1`` dispatch to the worker's ``runtime.v1`` env (12-factor, P7). The minted token +
-    the workspace LIST + the per-dispatch Stream topics travel here; the runtime injects them opaquely."""
+    the workspace LIST + the per-dispatch Stream topics travel here; the runtime injects them opaquely.
+
+    ``primary_override`` (isolation.mode == "worktree", see workspace_worktree.py): when set, the
+    PRIMARY mount's path is rewritten to it and it becomes the worker's cwd directly — an isolated
+    per-turn worktree instead of the subject's shared baseline directory. Both live under the same
+    already-bound store root, so this needs no change to how the Runtime binds paths into the
+    container."""
     identity = invocation["identity"]
     subject = identity["subject"]
     # The dispatch's personal (rw) workspace folder is mounted at <root>/<subject>; the Runtime binds the
@@ -220,6 +228,8 @@ def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token:
     # The whole store root is already bound by the runtime, so this is a WORKER-FACING contract (the paths
     # + roles the turn respects), not a per-mount bind — it generalizes uniformly across all three backends.
     mounts = build_mount_set(settings, subject, memberships)
+    if primary_override:
+        mounts = [{**m, "path": primary_override} if m.get("primary") else m for m in mounts]
     env = {
         "VEXA_OWNER": subject,                                    # quota + cred-brokerage axis = the person
         "VEXA_LAUNCHER": identity["launcher"],
@@ -233,7 +243,7 @@ def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token:
         "VEXA_START": json.dumps(invocation["start"]),            # entrypoint(inline|path) | session(ref)
         "VEXA_WORKSPACE_MOUNT_SOURCE": settings.workspace_mount_source,  # host path / named volume (the store backing)
         "VEXA_WORKSPACE_MOUNT_TARGET": root,                      # where the Runtime binds it in the container
-        "VEXA_WORKSPACE_PATH": _worker_cwd(root, subject, mounts),  # the worker's cwd — the primary baseline, or (if it's switched off) the first active normal workspace
+        "VEXA_WORKSPACE_PATH": primary_override or _worker_cwd(root, subject, mounts),  # the worker's cwd — an isolated worktree if given, else the primary baseline (or, if that's switched off, the first active normal workspace)
         "VEXA_MOUNTS": json.dumps(mounts),                       # the ordered active mount set [{slug,path,role,write,primary}]
         "VEXA_WORKSPACE_STORE_URL": settings.workspace_store_url,
         "REDIS_URL": settings.redis_url,
@@ -420,6 +430,17 @@ class Dispatcher:
         token = self._identity.mint(
             identity["subject"], identity["launcher"], invocation["workspaces"], invocation.get("tools", []),
         )
+        # Opt-in per-turn isolation (workspace_worktree.py): a fresh `git worktree` off the subject's
+        # baseline instead of every turn sharing the same working tree + index. Raises loudly on
+        # failure (never fails soft into the shared baseline — that would reintroduce the exact
+        # concurrency corruption this exists to prevent).
+        primary_override = None
+        if (invocation.get("isolation") or {}).get("mode") == "worktree":
+            primary_override = str(provision_worktree(
+                self._settings.workspaces_dir, identity["subject"], uid,
+                principal=identity.get("principal"),
+                setup_cmd=(os.environ.get("VEXA_WORKSPACE_WORKTREE_SETUP_CMD") or "").strip() or None,
+            ))
         # Lane A: resolve the subject's shared memberships once (fail soft — a membership-index hiccup must
         # never break a dispatch; the private stack still mounts). Passed as data into the mount builder.
         memberships = None
@@ -436,7 +457,7 @@ class Dispatcher:
         # credential-less failure mode is the clean rewritten done frame (llm/errors taxonomy).
         model_config = self.resolve_model_config(identity["subject"])
         env = build_unit_env(self._settings, invocation, unit_id=uid, token=token, memberships=memberships,
-                             model_config=model_config)
+                             model_config=model_config, primary_override=primary_override)
         # WARM DELIVERY (the lost-turn fix). The runtime's create is an IDEMPOTENT TOUCH for a
         # workload that is still starting/running (ADR-0027) — it returns the live status and
         # DISCARDS the spec env, where a chat message's prompt rides. So a message sent while the

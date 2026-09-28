@@ -103,3 +103,140 @@ def test_push_via_route_fast_forwards(tmp_path):
     # status now in sync
     body = c.get("/api/workspace/git-remote-status", headers=H).json()
     assert body["ahead"] == 0
+
+
+# ── unit= (isolated per-turn worktrees, workspace_worktree.py) ─────────────────
+
+def test_git_state_for_an_unprovisioned_unit_reads_as_not_ready(tmp_path):
+    _seed_primary(tmp_path, "u_jane")
+    c = _client(tmp_path)
+    body = c.get("/api/workspace/git", headers=H, params={"unit": "never-provisioned"}).json()
+    assert body == {"branch": "", "changes": [], "commits": []}
+
+
+def test_git_state_for_a_provisioned_unit_reports_its_own_branch(tmp_path):
+    from control_plane.workspace_worktree import provision_worktree
+    root = tmp_path
+    _seed_primary(root, "u_jane")
+    dest = provision_worktree(root, "u_jane", "unit-1")
+    _run(dest, "checkout", "-q", "-b", "feature/x")
+    (dest / "x.txt").write_text("x\n"); _run(dest, "add", "-A")
+    _run(dest, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "x")
+
+    c = _client(root)
+    body = c.get("/api/workspace/git", headers=H, params={"unit": "unit-1"}).json()
+    assert body["branch"] == "feature/x"
+    # the plain baseline (no unit param) is completely untouched
+    assert c.get("/api/workspace/git", headers=H).json()["branch"] == "main"
+
+
+def test_push_via_unit_pushes_the_worktrees_branch_and_releases_it(tmp_path):
+    from control_plane.workspace_worktree import provision_worktree
+    root = tmp_path
+    _seed_primary(root, "u_jane", with_origin=True)
+    dest = provision_worktree(root, "u_jane", "unit-1")
+    _run(dest, "checkout", "-q", "-b", "feature/x")
+    (dest / "x.txt").write_text("x\n"); _run(dest, "add", "-A")
+    _run(dest, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "x")
+
+    c = _client(root)
+    r = c.post("/api/workspace/push", headers=H, json={"token": "ghp_x", "unit": "unit-1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["branch"] == "feature/x"
+    assert not dest.exists()  # released on success
+
+
+def test_push_via_unit_refuses_when_signoff_missing(tmp_path):
+    from control_plane.workspace_worktree import provision_worktree
+    root = tmp_path
+    _seed_primary(root, "u_jane", with_origin=True)
+    dest = provision_worktree(root, "u_jane", "unit-1")
+    _run(dest, "checkout", "-q", "-b", "feature/x")
+    (dest / "x.txt").write_text("x\n"); _run(dest, "add", "-A")
+    _run(dest, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "no signoff here")
+
+    c = _client(root)
+    r = c.post("/api/workspace/push", headers=H, json={
+        "token": "ghp_x", "unit": "unit-1", "expected_signoff": "Julian Sanker <julian@sankergroup.org>",
+    })
+    assert r.status_code == 409
+    assert "Signed-off-by" in r.json()["detail"]
+    assert dest.exists()  # refused before push — nothing released, nothing pushed
+
+
+def test_push_via_unit_refuses_on_co_authored_by_claude_trailer(tmp_path):
+    from control_plane.workspace_worktree import provision_worktree
+    root = tmp_path
+    _seed_primary(root, "u_jane", with_origin=True)
+    dest = provision_worktree(root, "u_jane", "unit-1")
+    _run(dest, "checkout", "-q", "-b", "feature/x")
+    (dest / "x.txt").write_text("x\n"); _run(dest, "add", "-A")
+    _run(dest, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m",
+         "x\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>")
+
+    c = _client(root)
+    r = c.post("/api/workspace/push", headers=H, json={"token": "ghp_x", "unit": "unit-1"})
+    assert r.status_code == 409
+    assert "Co-Authored-By" in r.json()["detail"]
+
+
+def test_push_via_unit_respects_a_configured_pre_push_hook(tmp_path):
+    from control_plane.workspace_worktree import provision_worktree
+    root = tmp_path
+    ws = _seed_primary(root, "u_jane", with_origin=True)
+    hook = ws / ".git" / "hooks" / "pre-push"
+    hook.write_text("#!/bin/sh\necho blocked by hook >&2\nexit 1\n")
+    hook.chmod(0o755)
+    dest = provision_worktree(root, "u_jane", "unit-1")
+    _run(dest, "checkout", "-q", "-b", "feature/x")
+    (dest / "x.txt").write_text("x\n"); _run(dest, "add", "-A")
+    _run(dest, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "x")
+
+    c = _client(root)
+    r = c.post("/api/workspace/push", headers=H, json={"token": "ghp_x", "unit": "unit-1"})
+    assert r.status_code == 409
+    assert "blocked by hook" in r.json()["detail"]
+
+
+def test_pull_request_route_resolves_unit_and_calls_create_pull_request(tmp_path, monkeypatch):
+    from control_plane.workspace_worktree import provision_worktree
+    import control_plane.api as api_module
+
+    root = tmp_path
+    _seed_primary(root, "u_jane", with_origin=True)
+    dest = provision_worktree(root, "u_jane", "unit-1")
+    _run(dest, "checkout", "-q", "-b", "feature/x")
+
+    calls = []
+
+    def fake_create_pull_request(ws, *, title, body, base, token, **kwargs):
+        calls.append({"ws": str(ws), "title": title, "body": body, "base": base, "token": token})
+        return {"url": "https://github.com/acme/product/pull/7", "number": 7}
+
+    monkeypatch.setattr(api_module, "create_pull_request", fake_create_pull_request)
+
+    c = _client(root)
+    r = c.post("/api/workspace/pull-request", headers=H, json={
+        "unit": "unit-1", "token": "ghp_x", "title": "CSV export", "body": "wants it",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json() == {"url": "https://github.com/acme/product/pull/7", "number": 7}
+    assert calls == [{"ws": str(dest), "title": "CSV export", "body": "wants it", "base": "main", "token": "ghp_x"}]
+
+
+def test_pull_request_route_requires_a_token(tmp_path):
+    _seed_primary(tmp_path, "u_jane")
+    c = _client(tmp_path)
+    r = c.post("/api/workspace/pull-request", headers=H, json={"title": "x", "body": "y"})
+    assert r.status_code == 400
+
+
+def test_push_without_unit_is_unaffected_by_worktree_compliance_checks(tmp_path):
+    """The interactive Settings-page push (no `unit`) must pay none of this — plain workspaces are
+    never signoff/hook-checked, matching today's existing behavior exactly (a commit with no signoff
+    and no configured hook still pushes fine, same as before this feature existed)."""
+    ws = _seed_primary(tmp_path, "u_jane", with_origin=True)
+    (ws / "note.md").write_text("local\n"); _run(ws, "add", "-A"); _run(ws, "commit", "-q", "-m", "local, no signoff")
+    c = _client(tmp_path)
+    r = c.post("/api/workspace/push", headers=H, json={"token": "ghp_x"})
+    assert r.status_code == 200, r.text
