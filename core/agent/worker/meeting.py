@@ -630,7 +630,10 @@ def _emit_beat(stream: _Stream, out_topic: str, card_turn, segments: list[dict],
 # ── post-meeting WRITE turn: distill the surfaced cards into the kg meeting entity ────────────────
 
 _CARD_GROUP = {  # card kind → the section it lands under in the doc
+    # NOTE: not actually referenced by MEETING_DOC_PROMPT below (the model free-forms the grouping from
+    # the prompt's own heading list) — kept in sync anyway so this stays true documentation, not drift.
     "person": "Attendees", "company": "Companies", "product": "Products",
+    "feature_request": "Feature Requests",
 }
 
 MEETING_DOC_PROMPT = (
@@ -650,8 +653,11 @@ MEETING_DOC_PROMPT = (
     "---\n\n"
     "After the frontmatter, write a 2-4 line plain-English SUMMARY of the meeting (no transcript — a "
     "distilled summary), then the surfaced entities grouped under `## Attendees`, `## Companies`, "
-    "`## Topics`, `## Decisions`, `## Actions` headings, each entry a `[[wikilink]]` (omit a heading if "
-    "it has no entries). Here are the entities surfaced during the meeting (JSON):\n\n{cards}\n\n"
+    "`## Topics`, `## Decisions`, `## Actions`, `## Feature Requests` headings, each entry a "
+    "`[[wikilink]]` (omit a heading if it has no entries). A `feature_request` card is a concrete "
+    "capability the customer asked for — title the entry with the capability, body with the customer's "
+    "own framing; never merge it into `## Actions` (an action item is a task someone owes, not a product "
+    "ask). Here are the entities surfaced during the meeting (JSON):\n\n{cards}\n\n"
     "Do NOT copy the raw transcript. When done, write/edit ONLY that one file."
 )
 

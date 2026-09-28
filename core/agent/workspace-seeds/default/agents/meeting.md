@@ -3,7 +3,7 @@ enabled: true
 # model: <any provider route>        # unset = the deployment default (VEXA_MEETING_MODEL / VEXA_LLM_MODEL);
 #                                    # a free string passed to the provider; VEXA_MODEL_ALLOWLIST can gate it
 cadence_segments: 4                  # run a copilot beat every N completed segments (or on a new speaker)
-card_kinds: [person, company, product]
+card_kinds: [person, company, product, feature_request]
 write_meeting_doc: true              # author the post-meeting kg entity on session_end
 # ── Workspace-GOVERNED policy (prompt-only governance) ──────────────────────────────────────────────
 # These two rules are the live POLICY for the copilot. The MECHANISM (transcript window + JSON shape)
@@ -24,3 +24,8 @@ tag_rules: >
 <!-- Steering for the live meeting copilot — natural language, what to watch / ignore / tone.
      This whole body is merged into the copilot prompt. Edit it to tune behavior. -->
 Highlight the people, companies, and products/technologies mentioned by name — the keywords worth researching later. Nothing else. Keep the transcript neutral and concise.
+
+Tag a `feature_request` card whenever the customer explicitly asks for a capability, integration, or
+change to the product that doesn't exist today — not a general complaint or a vague wish, a concrete
+ask. Title = the capability in a few words (e.g. "CSV export for reports"); body = the customer's own
+framing of why they want it, in their words, not a rephrased ticket description.
