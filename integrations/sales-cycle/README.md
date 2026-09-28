@@ -37,6 +37,8 @@ ourselves (details below).
 | `orchestrator.py` | Once approved: kicks off the AI coding turn, then checks in until it's done and pushes it. |
 | `slack_client.py` / `slack_verify.py` | Talking to Slack, and proving a Slack request is really from Slack. |
 | `webhook_verify.py` | Proving a Vexa notification is really from Vexa. |
+| `hubspot_oauth.py` / `slack_oauth.py` | The "Connect HubSpot" / "Connect Slack" OAuth2 dance — authorize URL, code exchange, (HubSpot only) token refresh. |
+| `oauth_routes.py` | The one shared "Connect X" route shape (authorize/callback/status/disconnect/paste-a-token) HubSpot and Slack both register through. |
 | `api.py` | The web addresses (endpoints) everything above is reachable at. |
 | `settings.py` | Every knob you can configure (API keys, URLs, etc.), in one place. |
 
@@ -118,6 +120,15 @@ either). What follows is how to GET the credential each path needs.
 
 ### Slack
 
+Unlike HubSpot, creating a Slack app is unavoidable either way (there's no static-token
+equivalent of a HubSpot Service Key that skips it) — but once the app exists, you still have a
+choice for the *credential* sales-cycle uses: the OAuth flow below (`SALES_CYCLE_SLACK_OAUTH_*`,
+powers "Connect Slack" in the UI), or copy the same app's **Bot User OAuth Token** (`xoxb-...`,
+shown after step 8) straight into `SALES_CYCLE_SLACK_BOT_TOKEN` and skip the OAuth client id/
+secret/redirect steps entirely. Steps 1–2 and 4–8 (scopes, the tunnel, Event Subscriptions,
+credentials, install) are needed either way — only step 3 (OAuth redirect URL) and the OAuth half
+of step 9 are OAuth-specific.
+
 1. `api.slack.com/apps` → **Create New App** → **From scratch**.
 2. **OAuth & Permissions** → **Bot Token Scopes** → add `chat:write`, `channels:read`,
    `groups:read`, and **`reactions:read`** (required for the ✓-approval flow's `reaction_added`
@@ -147,13 +158,22 @@ either). What follows is how to GET the credential each path needs.
    OAuth pair).
 7. Right-click the channel feature requests should post to → **View channel details** → copy its
    ID.
-8. **Install to Workspace** (top of the app config) — required any time scopes change.
-9. Set:
+8. **Install to Workspace** (top of the app config) — required any time scopes change. This is
+   also where the **Bot User OAuth Token** (`xoxb-...`) appears, if you're using that instead of
+   the OAuth client id/secret.
+9. Set (always needed):
+   ```
+   SALES_CYCLE_SLACK_SIGNING_SECRET=...
+   SALES_CYCLE_SLACK_CHANNEL_ID=...
+   ```
+   plus **either**:
    ```
    SALES_CYCLE_SLACK_OAUTH_CLIENT_ID=...
    SALES_CYCLE_SLACK_OAUTH_CLIENT_SECRET=...
-   SALES_CYCLE_SLACK_SIGNING_SECRET=...
-   SALES_CYCLE_SLACK_CHANNEL_ID=...
+   ```
+   **or**:
+   ```
+   SALES_CYCLE_SLACK_BOT_TOKEN=xoxb-...
    ```
 
 ### GitHub (personal tokens AND the product repo — one shared OAuth App)
@@ -195,8 +215,11 @@ curl -X POST "$AGENT_API_URL/api/workspace/swap" \
   -d '{"repo": "https://github.com/your-org/your-product.git", "ref": "main", "token": "<a push-capable GitHub token>"}'
 ```
 
-`SALES_CYCLE_PRODUCT_REPO_SUBJECT` already defaults to `product-repo` — only change it if you used
-a different subject above.
+`SALES_CYCLE_PRODUCT_REPO_SUBJECT` (this add-on) and agent-api's `VEXA_WORKSPACE_DELEGATE_SUBJECT`
+(`core/agent/shared/config.py`) both default to `product-repo` and **must name the same subject**:
+this add-on uses its copy to know who to dispatch/push builds as; agent-api uses its copy to know
+which subject the picker (and the curl fallback above) is allowed to act on behalf of via
+`for=`/`for_subject`. If you ever change one, change both.
 
 ## The one small addition inside Vexa itself
 
