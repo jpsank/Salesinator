@@ -66,10 +66,13 @@ class Settings(BaseSettings):
     # security — it's just skipping a front door that has a gap in it right now.
     agent_api_internal_url: str = "http://agent-api:8100"
 
-    # Which Vexa account "owns" the actual product codebase. Set up once, by hand: create an account,
-    # point its files at your real GitHub repo, and put its account number here. Every "build this
-    # feature" request runs as that account, so it's always working in the right codebase.
-    product_repo_user_id: str = ""
+    # The Vexa subject whose OWN workspace is the actual product codebase. Set up once: attach the
+    # real GitHub repo to this subject's workspace the exact same way any workspace attaches a
+    # custom repo (POST /api/workspace/swap — see README.md), then put the subject string here. A
+    # subject is just a slug in this system (e.g. "product-repo") — it never needs to be a real
+    # logged-in human account. Every "build this feature" request runs AS that subject, so it's
+    # always working in the right codebase.
+    product_repo_subject: str = ""
 
     # For auto-detecting the customer from calendar invites: the secret that proves a "meeting started"
     # alert really came from Vexa, and the login key used to tag the meeting once we've figured out

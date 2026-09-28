@@ -13,7 +13,7 @@ def _fresh_store(monkeypatch, tmp_path: Path):
     api_module._store = None
     monkeypatch.setenv("SALES_CYCLE_DB_PATH", str(tmp_path / "sales-cycle.db"))
     monkeypatch.setenv("SALES_CYCLE_AGENT_API_INTERNAL_URL", AGENT_API)
-    monkeypatch.setenv("SALES_CYCLE_PRODUCT_REPO_USER_ID", "cust-product-repo")
+    monkeypatch.setenv("SALES_CYCLE_PRODUCT_REPO_SUBJECT", "cust-product-repo")
     return api_module.get_store()
 
 

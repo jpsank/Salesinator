@@ -28,7 +28,7 @@ def test_submit_implementation_posts_invocation_and_returns_branch():
         return_value=httpx.Response(202, json={"workload_id": "agent-123"})
     )
     result = submit_implementation(
-        agent_api_url=AGENT_API, user_id="cust-1", title="CSV export", body="wants it",
+        agent_api_url=AGENT_API, subject="cust-1", title="CSV export", body="wants it",
     )
     assert result == {"workload_id": "agent-123", "branch": "feature/csv-export"}
     sent = route.calls[0].request
@@ -43,7 +43,7 @@ def test_submit_implementation_posts_invocation_and_returns_branch():
 def test_submit_implementation_raises_on_failure():
     respx.post(f"{AGENT_API}/invocations").mock(return_value=httpx.Response(500))
     with pytest.raises(DispatchError):
-        submit_implementation(agent_api_url=AGENT_API, user_id="cust-1", title="X", body="y")
+        submit_implementation(agent_api_url=AGENT_API, subject="cust-1", title="X", body="y")
 
 
 @respx.mock
@@ -51,7 +51,7 @@ def test_check_and_push_not_ready_wrong_branch():
     respx.get(f"{AGENT_API}/api/workspace/git").mock(
         return_value=httpx.Response(200, json={"branch": "main", "changes": [], "commits": []})
     )
-    assert check_and_push(agent_api_url=AGENT_API, user_id="cust-1", expected_branch="feature/csv-export") is None
+    assert check_and_push(agent_api_url=AGENT_API, subject="cust-1", expected_branch="feature/csv-export") is None
 
 
 @respx.mock
@@ -59,7 +59,7 @@ def test_check_and_push_not_ready_dirty_tree():
     respx.get(f"{AGENT_API}/api/workspace/git").mock(
         return_value=httpx.Response(200, json={"branch": "feature/csv-export", "changes": ["a.py"], "commits": []})
     )
-    assert check_and_push(agent_api_url=AGENT_API, user_id="cust-1", expected_branch="feature/csv-export") is None
+    assert check_and_push(agent_api_url=AGENT_API, subject="cust-1", expected_branch="feature/csv-export") is None
 
 
 @respx.mock
@@ -71,7 +71,7 @@ def test_check_and_push_ready_pushes():
         return_value=httpx.Response(200, json={"remote": "vexa-sync", "url": "https://github.com/x/y",
                                                 "branch": "feature/csv-export", "head_sha": "abc123"})
     )
-    result = check_and_push(agent_api_url=AGENT_API, user_id="cust-1", expected_branch="feature/csv-export")
+    result = check_and_push(agent_api_url=AGENT_API, subject="cust-1", expected_branch="feature/csv-export")
     assert result["branch"] == "feature/csv-export"
     assert push_route.called
 
@@ -83,4 +83,4 @@ def test_check_and_push_raises_on_push_failure():
     )
     respx.post(f"{AGENT_API}/api/workspace/push").mock(return_value=httpx.Response(502, json={"detail": "diverged"}))
     with pytest.raises(PushError):
-        check_and_push(agent_api_url=AGENT_API, user_id="cust-1", expected_branch="feature/x")
+        check_and_push(agent_api_url=AGENT_API, subject="cust-1", expected_branch="feature/x")

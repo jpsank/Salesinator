@@ -42,16 +42,45 @@ ourselves (details below).
 
 ## Where things stand
 
-All five stages described above are built and covered by tests (66 tests total as of this writing).
-One piece needs a one-time setup step before it works for real: a dedicated Vexa account whose files
-point at your actual product codebase (used only for the "build and push a branch" step). See
-`orchestrator.py`'s notes for what that setup looks like.
+All five stages described above are built and covered by tests (95 tests total as of this writing).
+One piece needs a one-time setup step before it works for real: telling it where your actual
+product codebase lives.
+
+### One-time setup: the product repo
+
+The "build it and push a branch" step (step 4) runs as one dedicated Vexa **subject** — just a
+slug, e.g. `product-repo`, not a real login — whose own workspace is your actual product repo.
+Attach it the exact same way any Vexa workspace attaches a custom git repo (the same mechanism
+behind Settings → Workspaces → "attach a custom git repo" in the Terminal UI), just called
+directly instead of through a browser session, since this subject has no login of its own:
+
+```bash
+curl -X POST "$AGENT_API_URL/api/workspace/swap" \
+  -H "X-User-Id: product-repo" -H "Content-Type: application/json" \
+  -d '{"repo": "https://github.com/your-org/your-product.git", "ref": "main", "token": "<a push-capable GitHub token>"}'
+```
+
+Then set `SALES_CYCLE_PRODUCT_REPO_SUBJECT=product-repo` (matching whatever subject you used
+above). Nothing else is bespoke to sales-cycle here — it's the platform's own workspace-attach
+primitive, reused for a non-human subject.
 
 ## The one small addition inside Vexa itself
 
 Everything above talks to Vexa purely through its existing, public web API — except one thing: Vexa's
 meeting-notes agent didn't have a way to know which customer's notes-folder it should write into. We
-added one small, off-by-default switch inside Vexa (`core/agent/control_plane/transcription_watcher.py`)
-that, when turned on, reads "which customer is this meeting tagged as" and uses that instead of writing
-every single call's notes into one shared folder. It changes nothing when left off — we proved that by
-running Vexa's own full test suite before and after.
+added one small switch inside Vexa (`core/agent/control_plane/transcription_watcher.py`,
+`SALES_CYCLE_WORKSPACE_RESOLVE`, on by default) that reads "which customer is this meeting tagged as"
+and uses that instead of writing every single call's notes into one shared folder. For any meeting
+that isn't tagged, it falls straight through to the old behavior — we proved that by running Vexa's
+own full test suite with the flag both on and off.
+
+## Calendar auto-mapping: the webhook registers itself
+
+The calendar path (candidate-domain matching against HubSpot) needs Vexa's `meeting.started`
+webhook (docs/docs/webhooks.mdx) pointed at this add-on. Vexa itself has no settings UI for that —
+it's normally a one-time `PUT /user/webhook` API call per account. The Terminal's "Connect
+calendar" flow now does this automatically the first time a rep connects a calendar
+(`clients/terminal/src/app/api/calendar/register-webhook/route.ts`), using
+`SALES_CYCLE_CALENDAR_WEBHOOK_SECRET` as the shared secret. It never overwrites a webhook a rep
+already has configured for something else — it only fills the setting in when it's empty or
+already points here.

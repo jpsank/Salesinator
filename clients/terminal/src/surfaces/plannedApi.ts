@@ -141,3 +141,14 @@ export async function getCalendarSyncStatus(id: string): Promise<CalendarSyncSta
 export async function syncCalendar(id: string): Promise<CalendarSyncStamp> {
   return jsonOrThrow(await fetch(`/api/user/calendars/${encodeURIComponent(id)}/sync`, { method: "POST" }));
 }
+
+/** Best-effort: point this account's `meeting.started` webhook at sales-cycle, so a calendar-synced
+ *  call gets mapped to its customer automatically. Never throws — a caller treats `registered: false`
+ *  as informational, not a failure of the calendar connect it followed. */
+export async function registerCalendarWebhook(): Promise<{ registered: boolean; reason?: string; notConfigured?: boolean }> {
+  try {
+    return await jsonOrThrow(await fetch("/api/calendar/register-webhook", { method: "POST" }));
+  } catch {
+    return { registered: false, reason: "request failed" };
+  }
+}

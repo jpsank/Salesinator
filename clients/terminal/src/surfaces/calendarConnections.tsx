@@ -19,7 +19,7 @@
  *  after any edit whose effect must be reconciled onto already-imported meetings (auto-join, bot
  *  name, enabled, a replaced feed). A rename alone changes nothing downstream, so it skips the sync.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../ui-kit";
 import { presentError } from "./apiClient";
 import {
@@ -29,7 +29,7 @@ import {
 import { refreshMeetings } from "./liveMeetings";
 import {
   MAX_CALENDARS, listCalendars, createCalendar, updateCalendar, deleteCalendar,
-  syncCalendar, getCalendarSyncStatus,
+  syncCalendar, getCalendarSyncStatus, registerCalendarWebhook,
   type CalendarConnection, type CalendarUpdateBody, type CalendarSyncStamp,
 } from "./plannedApi";
 
@@ -235,6 +235,7 @@ export function CalendarConnectionsPanel() {
   const [adding, setAdding] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const webhookChecked = useRef(false);   // once per mount — idempotent server-side anyway
 
   const refresh = useCallback(async () => {
     try {
@@ -246,6 +247,10 @@ export function CalendarConnectionsPanel() {
         catch { return [c.id, {} as CalendarSyncStamp] as const; }
       }));
       setStamps(Object.fromEntries(pairs));
+      if (list.length > 0 && !webhookChecked.current) {
+        webhookChecked.current = true;
+        void registerCalendarWebhook();   // best-effort — silent unless a conflict needs a rep's attention
+      }
     } catch (e: unknown) {
       setCals([]); setErr(presentError(e).headline);
     }
@@ -264,8 +269,12 @@ export function CalendarConnectionsPanel() {
       catch (e: unknown) { stamp = { last_error: presentError(e).headline }; }
       setStamps((s) => ({ ...s, [created.id]: stamp }));
       setAdding(false);
+      webhookChecked.current = true;
+      const webhook = await registerCalendarWebhook();
       setNote(stamp.last_error
         ? `“${created.name}” connected, but its first sync needs attention.`
+        : !webhook.registered && webhook.reason
+        ? `“${created.name}” connected, but automatic customer-mapping couldn't be enabled: ${webhook.reason}.`
         : `“${created.name}” connected — ${(stamp.counts?.created ?? 0) + (stamp.counts?.updated ?? 0)} upcoming meetings imported.`);
       refreshMeetings();
       await refresh();

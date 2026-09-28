@@ -5,10 +5,10 @@ Three steps, each its own function below:
    background).
 2. `check_and_push` — check in later: is it done? If yes, push the branch to GitHub.
 
-Everything here runs as one dedicated Vexa account that's set up to always work in the real product
-codebase (see settings.py's `product_repo_user_id`). The agent itself is never given the ability to
-push to GitHub directly — it can only save its work locally. This code is the only thing that decides
-when a finished piece of work actually gets pushed out.
+Everything here runs as one dedicated Vexa subject whose own workspace is set up to always be the
+real product codebase (see settings.py's `product_repo_subject`). The agent itself is never given
+the ability to push to GitHub directly — it can only save its work locally. This code is the only
+thing that decides when a finished piece of work actually gets pushed out.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def branch_for(title: str) -> str:
 
 
 def submit_implementation(
-    *, agent_api_url: str, user_id: str, title: str, body: str, timeout: float = 10.0,
+    *, agent_api_url: str, subject: str, title: str, body: str, timeout: float = 10.0,
 ) -> dict:
     """Starts the AI agent working on this request. We don't wait around for it to finish — it runs
     in the background, and `check_and_push` (below) checks on it later."""
@@ -56,42 +56,42 @@ def submit_implementation(
     resp = call(
         "POST", f"{agent_api_url.rstrip('/')}/invocations",
         json={
-            "identity": {"subject": user_id, "launcher": "sales-cycle:feature-request"},
+            "identity": {"subject": subject, "launcher": "sales-cycle:feature-request"},
             "runner": "claude-code",
             "trigger": "scheduled",
             "start": {"entrypoint": {"inline": prompt}},
         },
-        headers={"X-User-Id": user_id, "Content-Type": "application/json"}, timeout=timeout,
+        headers={"X-User-Id": subject, "Content-Type": "application/json"}, timeout=timeout,
         error_cls=DispatchError, error_prefix="POST /invocations",
     )
     data = resp.json()
     return {"workload_id": data.get("workload_id"), "branch": branch}
 
 
-def _git_state(*, agent_api_url: str, user_id: str, timeout: float) -> dict:
+def _git_state(*, agent_api_url: str, subject: str, timeout: float) -> dict:
     resp = call(
         "GET", f"{agent_api_url.rstrip('/')}/api/workspace/git",
-        headers={"X-User-Id": user_id}, timeout=timeout,
+        headers={"X-User-Id": subject}, timeout=timeout,
         error_cls=DispatchError, error_prefix="GET /api/workspace/git",
     )
     return resp.json()
 
 
 def check_and_push(
-    *, agent_api_url: str, user_id: str, expected_branch: str, timeout: float = 15.0,
+    *, agent_api_url: str, subject: str, expected_branch: str, timeout: float = 15.0,
 ) -> dict | None:
     """Checks whether the agent finished: is it on the right branch, with everything saved (nothing
     left half-done)? If not, returns nothing — we'll just check again next time. If it IS done, pushes
     the branch to GitHub and returns the result. Only ever pushes the exact branch this request asked
     for, never anything else it might happen to be sitting on."""
-    state = _git_state(agent_api_url=agent_api_url, user_id=user_id, timeout=timeout)
+    state = _git_state(agent_api_url=agent_api_url, subject=subject, timeout=timeout)
     if state.get("branch") != expected_branch:
         return None
     if state.get("changes"):  # still has unsaved work — not finished yet
         return None
     resp = call(
         "POST", f"{agent_api_url.rstrip('/')}/api/workspace/push",
-        headers={"X-User-Id": user_id, "Content-Type": "application/json"}, json={}, timeout=timeout,
+        headers={"X-User-Id": subject, "Content-Type": "application/json"}, json={}, timeout=timeout,
         error_cls=PushError, error_prefix="POST /api/workspace/push",
     )
     return resp.json()

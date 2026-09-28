@@ -134,6 +134,26 @@ class Store:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'approved'").fetchall()
         return [PendingApproval(**dict(r)) for r in rows]
 
+    def claim_for_dispatch(self, approval_id: int) -> bool:
+        """Atomically moves 'approved' → 'dispatching', so the real-time path (fires on the Slack ✅)
+        and the cron sweep can never both start an implementation turn for the same request — whichever
+        gets here first wins the `WHERE status = 'approved'`, the other gets `rowcount == 0`."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE pending_approvals SET status = 'dispatching' WHERE id = ? AND status = 'approved'",
+                (approval_id,),
+            )
+            return cur.rowcount == 1
+
+    def revert_to_approved(self, approval_id: int) -> None:
+        """Undoes a claim whose dispatch attempt failed, so the cron sweep retries it later instead
+        of leaving it stuck in 'dispatching' forever."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE pending_approvals SET status = 'approved' WHERE id = ? AND status = 'dispatching'",
+                (approval_id,),
+            )
+
     def mark_dispatched(self, approval_id: int, *, branch: str, workload_id: str | None) -> None:
         with self._conn() as conn:
             conn.execute(

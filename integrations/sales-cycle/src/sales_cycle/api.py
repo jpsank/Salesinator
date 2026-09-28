@@ -38,7 +38,7 @@ import logging
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from sales_cycle import hubspot_oauth, slack_oauth
@@ -48,10 +48,10 @@ from sales_cycle.oauth_routes import OAuthProviderConfig, register_oauth_routes
 from sales_cycle.orchestrator import DispatchError, PushError, check_and_push, submit_implementation
 from sales_cycle.poller import poll_once
 from sales_cycle.resolver import WorkspaceBindError, bind_meeting_workspace, resolve_by_tag, slug_for_company
-from sales_cycle.settings import get_settings
+from sales_cycle.settings import Settings, get_settings
 from sales_cycle.slack_client import SlackClient
 from sales_cycle.slack_verify import SlackSignatureError, verify_slack_signature
-from sales_cycle.store import Store
+from sales_cycle.store import PendingApproval, Store
 from sales_cycle.webhook_verify import WebhookSignatureError, verify_webhook_signature
 
 logger = logging.getLogger("sales_cycle.api")
@@ -186,8 +186,30 @@ def poll_feature_requests() -> dict:
     return {"notified": notified, "count": len(notified)}
 
 
+def _dispatch_one(store: Store, settings: Settings, approval: PendingApproval) -> bool:
+    """Starts the implementation turn for ONE approved request. Shared by the real-time path (fires
+    the moment the ✅ reaction arrives) and the cron sweep (a safety net for anything that path
+    missed — e.g. this service was down when the reaction came in). `claim_for_dispatch` makes the
+    two paths race-safe: only one of them can ever start a turn for a given approval, since a
+    duplicate turn would mean two agents mutating the SAME shared product-repo workspace at once."""
+    if not store.claim_for_dispatch(approval.id):
+        return False  # the other path already claimed it — not an error, just a race we lost
+    try:
+        result = submit_implementation(
+            agent_api_url=settings.agent_api_internal_url,
+            subject=settings.product_repo_subject,
+            title=approval.title, body=approval.body,
+        )
+    except DispatchError:
+        logger.exception("dispatch failed for approval id=%s title=%r", approval.id, approval.title)
+        store.revert_to_approved(approval.id)
+        return False
+    store.mark_dispatched(approval.id, branch=result["branch"], workload_id=result.get("workload_id"))
+    return True
+
+
 @app.post("/slack/events")
-async def slack_events(request: Request) -> dict:
+async def slack_events(request: Request, background_tasks: BackgroundTasks) -> dict:
     body = await request.body()
     settings = get_settings()
     try:
@@ -210,7 +232,8 @@ async def slack_events(request: Request) -> dict:
         event = payload.get("event") or {}
         if event.get("type") == "reaction_added" and event.get("reaction") in ("white_check_mark", "heavy_check_mark"):
             item = event.get("item") or {}
-            approved = get_store().approve(
+            store = get_store()
+            approved = store.approve(
                 slack_channel=item.get("channel", ""), slack_ts=item.get("ts", ""),
             )
             if approved is None:
@@ -218,6 +241,9 @@ async def slack_events(request: Request) -> dict:
                             item.get("channel"), item.get("ts"))
             else:
                 logger.info("feature-request approved: workspace=%s title=%r", approved.workspace_id, approved.title)
+                # Slack needs this ack within 3s — start the implementation turn AFTER responding,
+                # not before (process-approved's cron sweep still catches it if this never runs).
+                background_tasks.add_task(_dispatch_one, store, settings, approved)
     return {"ok": True}
 
 
@@ -229,23 +255,14 @@ def process_approved() -> dict:
     pushed_now = []
 
     for approval in store.list_approved_unprocessed():
-        try:
-            result = submit_implementation(
-                agent_api_url=settings.agent_api_internal_url,
-                user_id=settings.product_repo_user_id,
-                title=approval.title, body=approval.body,
-            )
-        except DispatchError:
-            logger.exception("dispatch failed for approval id=%s title=%r", approval.id, approval.title)
-            continue
-        store.mark_dispatched(approval.id, branch=result["branch"], workload_id=result.get("workload_id"))
-        dispatched_now.append(approval.id)
+        if _dispatch_one(store, settings, approval):
+            dispatched_now.append(approval.id)
 
     for approval in store.list_dispatched_unpushed():
         try:
             pushed = check_and_push(
                 agent_api_url=settings.agent_api_internal_url,
-                user_id=settings.product_repo_user_id,
+                subject=settings.product_repo_subject,
                 expected_branch=approval.branch,
             )
         except PushError:

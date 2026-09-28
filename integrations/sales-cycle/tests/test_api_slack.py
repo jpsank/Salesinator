@@ -52,8 +52,14 @@ def test_bad_signature_is_rejected(monkeypatch):
     assert resp.status_code == 401
 
 
-def test_reaction_added_approves_pending_message(monkeypatch, tmp_path: Path):
+@respx.mock
+def test_reaction_added_approves_and_dispatches_in_real_time(monkeypatch, tmp_path: Path):
+    """The ✅ both approves AND starts the implementation turn — no waiting for the next cron
+    sweep. TestClient runs BackgroundTasks synchronously before returning, so by the time this
+    call returns, `_dispatch_one` has already run and moved the row to 'dispatched'."""
     monkeypatch.setenv("SALES_CYCLE_SLACK_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("SALES_CYCLE_AGENT_API_INTERNAL_URL", "http://agent-api:8100")
+    monkeypatch.setenv("SALES_CYCLE_PRODUCT_REPO_SUBJECT", "product-repo")
     api_module._store = None  # reset the lazy singleton so the new db_path takes effect
     monkeypatch.setenv("SALES_CYCLE_DB_PATH", str(tmp_path / "sales-cycle.db"))
 
@@ -62,6 +68,37 @@ def test_reaction_added_approves_pending_message(monkeypatch, tmp_path: Path):
         slack_channel="C1", slack_ts="100.001", workspace_id="cust-1",
         entity_path="x.md", title="CSV export", body="wants it",
     )
+    respx.post("http://agent-api:8100/invocations").mock(
+        return_value=httpx.Response(202, json={"workload_id": "agent-1"})
+    )
+
+    resp = _post_event({
+        "type": "event_callback",
+        "event": {"type": "reaction_added", "reaction": "white_check_mark",
+                  "item": {"channel": "C1", "ts": "100.001"}},
+    })
+    assert resp.status_code == 200
+    assert store.list_approved_unprocessed() == []  # already claimed + dispatched, not left pending
+    dispatched = store.list_dispatched_unpushed()
+    assert len(dispatched) == 1
+    assert dispatched[0].title == "CSV export"
+    assert dispatched[0].branch == "feature/csv-export"
+
+
+@respx.mock
+def test_reaction_added_dispatch_failure_leaves_it_approved_for_the_cron_sweep(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("SALES_CYCLE_AGENT_API_INTERNAL_URL", "http://agent-api:8100")
+    monkeypatch.setenv("SALES_CYCLE_PRODUCT_REPO_SUBJECT", "product-repo")
+    api_module._store = None
+    monkeypatch.setenv("SALES_CYCLE_DB_PATH", str(tmp_path / "sales-cycle.db"))
+
+    store = api_module.get_store()
+    store.record_pending_approval(
+        slack_channel="C1", slack_ts="100.001", workspace_id="cust-1",
+        entity_path="x.md", title="CSV export", body="wants it",
+    )
+    respx.post("http://agent-api:8100/invocations").mock(return_value=httpx.Response(500))
 
     resp = _post_event({
         "type": "event_callback",

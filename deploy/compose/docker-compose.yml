@@ -278,7 +278,7 @@ services:
       - VEXA_BOT_API_KEY=${VEXA_BOT_API_KEY:-}
       # sales-cycle add-on: off by default (byte-identical behavior otherwise) — reads a meeting's
       # bound workspace_id and uses it as the copilot's subject instead of the placeholder above.
-      - SALES_CYCLE_WORKSPACE_RESOLVE=${SALES_CYCLE_WORKSPACE_RESOLVE:-false}
+      - SALES_CYCLE_WORKSPACE_RESOLVE=${SALES_CYCLE_WORKSPACE_RESOLVE:-true}
       # "Connect GitHub" (Settings → Integrations): an OAuth alternative to pasting a PAT into the
       # existing per-user git token. Empty client id/secret = the button 503s; paste-a-PAT still works.
       - VEXA_GITHUB_OAUTH_CLIENT_ID=${VEXA_GITHUB_OAUTH_CLIENT_ID:-}
@@ -338,7 +338,7 @@ services:
       - SALES_CYCLE_CALENDAR_WEBHOOK_SECRET=${SALES_CYCLE_CALENDAR_WEBHOOK_SECRET:-}
       - SALES_CYCLE_CALENDAR_API_KEY=${SALES_CYCLE_CALENDAR_API_KEY:-}
       - SALES_CYCLE_OWN_DOMAINS=${SALES_CYCLE_OWN_DOMAINS:-}
-      - SALES_CYCLE_PRODUCT_REPO_USER_ID=${SALES_CYCLE_PRODUCT_REPO_USER_ID:-}
+      - SALES_CYCLE_PRODUCT_REPO_SUBJECT=${SALES_CYCLE_PRODUCT_REPO_SUBJECT:-}
     volumes:
       - agent-workspaces:/workspaces:ro
       - sales-cycle-data:/data
@@ -987,6 +987,9 @@ services:
       # (see app/api/sales-cycle/[...path]/route.ts) — a different host from the gateway above, since
       # it's a separate service, not part of Vexa itself.
       - SALES_CYCLE_URL=http://sales-cycle:8200
+      # Shared with sales-cycle's own SALES_CYCLE_CALENDAR_WEBHOOK_SECRET (below) — used by
+      # app/api/calendar/register-webhook/route.ts to auto-register the meeting.started webhook.
+      - SALES_CYCLE_CALENDAR_WEBHOOK_SECRET=${SALES_CYCLE_CALENDAR_WEBHOOK_SECRET:-}
       - VEXA_API_URL=http://gateway:8000
       - VEXA_ADMIN_API_KEY=${ADMIN_TOKEN:-}
       - VEXA_BOT_API_KEY=${VEXA_BOT_API_KEY:-}
