@@ -287,30 +287,32 @@ async def webhook_meeting_started(request: Request) -> dict:
     return result
 
 
+def _hubspot_oauth_config() -> OAuthProviderConfig:
+    s = get_settings()
+    return OAuthProviderConfig(
+        client_id=s.hubspot_oauth_client_id, client_secret=s.hubspot_oauth_client_secret,
+        redirect_uri=s.hubspot_oauth_redirect_uri, scopes=s.hubspot_oauth_scopes,
+    )
+
+
+def _slack_oauth_config() -> OAuthProviderConfig:
+    s = get_settings()
+    return OAuthProviderConfig(
+        client_id=s.slack_oauth_client_id, client_secret=s.slack_oauth_client_secret,
+        redirect_uri=s.slack_oauth_redirect_uri, scopes=s.slack_oauth_scopes,
+    )
+
+
 register_oauth_routes(
     app, provider="hubspot",
     build_authorize_url=hubspot_oauth.build_authorize_url, exchange_code=hubspot_oauth.exchange_code,
-    error_cls=hubspot_oauth.HubSpotOAuthError, get_store=get_store,
-    get_terminal_url=lambda: get_settings().terminal_url,
-    get_config=lambda: OAuthProviderConfig(
-        client_id=get_settings().hubspot_oauth_client_id,
-        client_secret=get_settings().hubspot_oauth_client_secret,
-        redirect_uri=get_settings().hubspot_oauth_redirect_uri,
-        scopes=get_settings().hubspot_oauth_scopes,
-    ),
+    error_cls=hubspot_oauth.HubSpotOAuthError, get_store=get_store, get_config=_hubspot_oauth_config,
 )
 
 register_oauth_routes(
     app, provider="slack",
     build_authorize_url=slack_oauth.build_authorize_url, exchange_code=slack_oauth.exchange_code,
-    error_cls=slack_oauth.SlackOAuthError, get_store=get_store,
-    get_terminal_url=lambda: get_settings().terminal_url,
-    get_config=lambda: OAuthProviderConfig(
-        client_id=get_settings().slack_oauth_client_id,
-        client_secret=get_settings().slack_oauth_client_secret,
-        redirect_uri=get_settings().slack_oauth_redirect_uri,
-        scopes=get_settings().slack_oauth_scopes,
-    ),
+    error_cls=slack_oauth.SlackOAuthError, get_store=get_store, get_config=_slack_oauth_config,
 )
 
 

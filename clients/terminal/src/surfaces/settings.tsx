@@ -11,6 +11,7 @@ import { GitHubTokenCard, TokensPanel } from "./tokens";
 import { presentError } from "./apiClient";
 import { CalendarConnectionsPanel } from "./calendarConnections";
 import { SalesCycleSection } from "./salesCycleConnection";
+import { cardField as field, cardBtn as btn } from "./integrationCard";
 import { getModelPrefs, setModelPrefs, getTranscriptionPrefs, setTranscriptionPrefs, getGlobalSetting, setGlobalSetting, testModels, testTranscription, type ConfigTestResult } from "./settingsApi";
 
 type SectionId = "integrations" | "models" | "tokens" | "account";
@@ -20,9 +21,6 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: string }> = [
   { id: "tokens", label: "API tokens", icon: "key" },
   { id: "account", label: "Account", icon: "user" },
 ];
-
-const field: CSSProperties = { width: "100%", boxSizing: "border-box", fontSize: 12, padding: "6px 9px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)" };
-const btn: CSSProperties = { fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)", cursor: "pointer" };
 
 /** One models/transcription config form — the SAME fields serve the per-user prefs and (for
  *  admins) the global platform defaults; only load/save differ. Secrets arrive MASKED

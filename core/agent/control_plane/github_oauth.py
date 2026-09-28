@@ -42,7 +42,7 @@ def sign_state(*, subject: str, secret: str) -> str:
 def verify_state(*, state: str, secret: str, now: float | None = None) -> str:
     """Returns the subject `state` was signed for. Raises on anything forged, malformed, or stale."""
     try:
-        subject, ts, sig = state.split(":", 2)
+        subject, ts, sig = state.rsplit(":", 2)
     except ValueError as e:
         raise GitHubOAuthError("malformed state") from e
     expected = hmac.new(secret.encode(), f"{subject}:{ts}".encode(), hashlib.sha256).hexdigest()

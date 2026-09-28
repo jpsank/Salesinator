@@ -13,6 +13,7 @@ from typing import Callable, Protocol
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 
+from sales_cycle.settings import get_settings
 from sales_cycle.store import Store
 
 logger = logging.getLogger("sales_cycle.oauth_routes")
@@ -39,11 +40,10 @@ def register_oauth_routes(
     error_cls: type[Exception],
     get_config: Callable[[], OAuthProviderConfig],
     get_store: Callable[[], Store],
-    get_terminal_url: Callable[[], str],
 ) -> None:
-    """`get_config`/`get_store`/`get_terminal_url` are callables, not values, so each request reads
-    live settings (env vars, or the current store) rather than whatever was configured when the
-    app started."""
+    """`get_config` is a callable, not a value, so each request reads live settings (env vars)
+    rather than whatever was configured when the app started. `get_store` is threaded in (rather
+    than imported directly) to avoid a circular import: `api.py` imports this module."""
 
     @app.get(f"/oauth/{provider}/authorize", name=f"{provider}_oauth_authorize")
     def _authorize() -> RedirectResponse:
@@ -59,7 +59,7 @@ def register_oauth_routes(
         """The provider redirects the browser HERE directly (not through Vexa) after the user
         approves or declines — this connection is deployment-wide, not tied to whichever Vexa
         account happens to be logged in, so there's no Vexa session to thread through this leg."""
-        settings_url = f"{get_terminal_url().rstrip('/')}/?settings=sales-cycle"
+        settings_url = f"{get_settings().terminal_url.rstrip('/')}/?settings=sales-cycle"
         if error or not code:
             return RedirectResponse(f"{settings_url}&{provider}_error={error or 'no_code'}")
         cfg = get_config()
