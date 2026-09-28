@@ -66,6 +66,23 @@ def test_get_valid_access_token_none_when_never_connected():
     assert get_valid_access_token(store=store, client_id="cid", client_secret="csecret") is None
 
 
+def test_get_valid_access_token_returns_a_pasted_static_token_without_refreshing(monkeypatch):
+    """A manually-pasted token (no OAuth, no refresh_token, no expiry — exactly what /oauth/hubspot/
+    token stores) must be handed back as-is forever, same as a static env-var token would be."""
+    store = Store(":memory:")
+    store.save_oauth_connection(
+        provider="hubspot", access_token="pat-na2-secret", refresh_token=None,
+        expires_at=None, account_label=None,
+    )
+
+    def _boom(*a, **k):
+        raise AssertionError("a token with no expiry must never be refreshed")
+
+    monkeypatch.setattr("sales_cycle.hubspot_oauth._refresh", _boom)
+    token = get_valid_access_token(store=store, client_id="cid", client_secret="csecret")
+    assert token == "pat-na2-secret"
+
+
 def test_get_valid_access_token_returns_unexpired_token_without_refreshing(monkeypatch):
     store = Store(":memory:")
     store.save_oauth_connection(

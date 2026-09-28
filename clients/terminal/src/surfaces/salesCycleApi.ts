@@ -32,6 +32,14 @@ export async function disconnectOAuth(provider: string): Promise<OAuthStatus> {
   return jsonOrThrow(await fetch(`/api/sales-cycle/oauth/${provider}/disconnect`, { method: "POST" }));
 }
 
+/** Paste a token directly instead of going through OAuth — e.g. HubSpot's Service Key / private-
+ *  app token, for whoever's account can't or doesn't want to register an OAuth app. */
+export async function setOAuthToken(provider: string, token: string): Promise<OAuthStatus> {
+  return jsonOrThrow(await fetch(`/api/sales-cycle/oauth/${provider}/token`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }),
+  }));
+}
+
 /** A "Connect X" link's target. A real cross-origin navigation (the browser leaves the Terminal
  *  entirely, via the sales-cycle service and then the provider's own consent screen, before
  *  landing back here) — not a fetch, so this is the one place in the sales-cycle integration that

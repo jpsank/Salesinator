@@ -45,6 +45,42 @@ export function useOAuthRedirectFeedback(provider: string): { connected: boolean
   return state;
 }
 
+/** The "paste a token directly" fallback every OAuth-style card can offer alongside its Connect
+ *  button — GitHub's own PAT paste, HubSpot's Service Key/private-app token, etc. One definition
+ *  instead of a near-identical copy per provider. */
+export function PasteTokenFallback({ description, placeholder, saveToken, onConnected }: {
+  description: string;
+  placeholder: string;
+  saveToken: (token: string) => Promise<OAuthStatus>;
+  onConnected: (status: OAuthStatus) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!value.trim() || busy) return;
+    setBusy(true); setError(null);
+    try { onConnected(await saveToken(value.trim())); setValue(""); }
+    catch (e: unknown) { setError(presentError(e).headline); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px dashed var(--line)", paddingTop: 8 }}>
+      <div style={cardMeta}>{description}</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="password" value={value} placeholder={placeholder} disabled={busy}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") void save(); }} style={{ ...cardField, flex: 1 }} />
+        <button disabled={busy || !value.trim()} onClick={() => void save()}
+          style={{ ...cardBtn, opacity: busy || !value.trim() ? 0.5 : 1 }}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+      {error && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {error}</div>}
+    </div>
+  );
+}
+
 /** The one card shape every OAuth-style connection uses: a status line, a Connect (link, real
  *  navigation) or Disconnect button, a description, and the redirect-feedback banner. `fallback` is
  *  an optional extra control shown only while NOT connected — GitHub's paste-a-PAT option, so OAuth

@@ -4,8 +4,8 @@
  *  HubSpot account / one Slack workspace for the whole sales team) — not a per-person setting like
  *  Calendar or GitHub next to them — so there's no per-user identity in this flow at all.
  */
-import { cardMeta, OAuthConnectionCard } from "./integrationCard";
-import { disconnectOAuth, getOAuthStatus, oauthConnectUrl } from "./salesCycleApi";
+import { cardMeta, OAuthConnectionCard, PasteTokenFallback } from "./integrationCard";
+import { disconnectOAuth, getOAuthStatus, oauthConnectUrl, setOAuthToken } from "./salesCycleApi";
 import { ProductRepoCard } from "./productRepoConnection";
 
 export function SalesCycleSection() {
@@ -17,7 +17,13 @@ export function SalesCycleSection() {
       <OAuthConnectionCard provider="hubspot" label="HubSpot"
         description="Lets meetings be tagged with the right customer by matching against your HubSpot companies — by name (a rep types it) or automatically by the attendee's email domain (calendar-synced calls)."
         connectUrl={oauthConnectUrl("hubspot")}
-        getStatus={() => getOAuthStatus("hubspot")} disconnect={() => disconnectOAuth("hubspot")} />
+        getStatus={() => getOAuthStatus("hubspot")} disconnect={() => disconnectOAuth("hubspot")}
+        fallback={(onConnected) => (
+          <PasteTokenFallback
+            description="Or paste a Service Key / private-app token (HubSpot is retiring OAuth-free private apps — a Service Key is the current replacement):"
+            placeholder="pat-…" saveToken={(token) => setOAuthToken("hubspot", token)}
+            onConnected={onConnected} />
+        )} />
       <OAuthConnectionCard provider="slack" label="Slack"
         description="Posts each captured feature request to a channel for a ✓ (approve) — and once GitHub is connected, an agent implements and pushes it."
         connectUrl={oauthConnectUrl("slack")}

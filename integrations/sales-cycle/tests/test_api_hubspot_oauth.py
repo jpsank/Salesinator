@@ -91,3 +91,28 @@ def test_disconnect(monkeypatch, tmp_path: Path):
     resp = client.post("/oauth/hubspot/disconnect")
     assert resp.json() == {"connected": False}
     assert store.get_oauth_connection("hubspot") is None
+
+
+def test_paste_a_token_directly_without_oauth(monkeypatch, tmp_path: Path):
+    """A Service Key / private-app token pasted through the Settings UI — no OAuth app needed."""
+    store = _fresh_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID", "")
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI", "")
+
+    resp = client.post("/oauth/hubspot/token", json={"token": "pat-na2-secret"})
+    assert resp.status_code == 200
+    assert resp.json() == {"connected": True, "configured": False}  # OAuth still isn't registered — fine
+
+    connection = store.get_oauth_connection("hubspot")
+    assert connection is not None
+    assert connection.access_token == "pat-na2-secret"
+    assert connection.refresh_token is None and connection.expires_at is None
+
+    status = client.get("/oauth/hubspot/status").json()
+    assert status == {"connected": True, "configured": False, "account_label": None}
+
+
+def test_paste_a_token_rejects_empty(monkeypatch, tmp_path: Path):
+    _fresh_store(monkeypatch, tmp_path)
+    resp = client.post("/oauth/hubspot/token", json={"token": "   "})
+    assert resp.status_code == 400

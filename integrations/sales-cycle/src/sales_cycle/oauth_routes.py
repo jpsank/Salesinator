@@ -12,6 +12,7 @@ from typing import Callable, Protocol
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from sales_cycle.settings import get_settings
 from sales_cycle.store import Store
@@ -31,6 +32,11 @@ class ExchangeCode(Protocol):
     def __call__(
         self, *, store: Store, client_id: str, client_secret: str, redirect_uri: str, code: str,
     ) -> object: ...
+
+
+class OAuthTokenBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    token: str
 
 
 def register_oauth_routes(
@@ -86,3 +92,19 @@ def register_oauth_routes(
     def _disconnect() -> dict:
         get_store().disconnect_oauth(provider)
         return {"connected": False}
+
+    @app.post(f"/oauth/{provider}/token", name=f"{provider}_oauth_set_token")
+    def _set_token(body: OAuthTokenBody) -> dict:
+        """Paste a token directly instead of going through OAuth — e.g. HubSpot's Service Key /
+        private-app token, for whoever's account can't or doesn't want to register an OAuth app.
+        Stored in the exact same place an OAuth-obtained token would be, so every other code path
+        (get_valid_access_token, status, disconnect) treats it identically — it just has no
+        refresh_token or expiry, so it's handed back as-is forever, same as a static env-var token."""
+        token = body.token.strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="token must not be empty")
+        get_store().save_oauth_connection(
+            provider=provider, access_token=token, refresh_token=None, expires_at=None, account_label=None,
+        )
+        cfg = get_config()
+        return {"connected": True, "configured": bool(cfg.client_id and cfg.redirect_uri)}
