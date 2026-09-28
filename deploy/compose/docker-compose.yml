@@ -307,8 +307,9 @@ services:
     restart: unless-stopped
 
   # sales-cycle — the HubSpot/Slack/GitHub add-on (integrations/sales-cycle/). Not part of core Vexa;
-  # talks to it only over the gateway + agent-api's internal port, plus a read-only mount of the same
-  # workspaces volume (to read feature-request notes directly — see entity_files.py for why).
+  # talks to it only over the gateway plus agent-api's and meeting-api's internal ports (the live
+  # card watcher tails a call's copilot-card stream and reads its workspace binding straight from
+  # those — see live_card_watcher.py).
   sales-cycle:
     build:
       context: ../..
@@ -322,7 +323,7 @@ services:
     environment:
       - SALES_CYCLE_VEXA_GATEWAY_URL=http://gateway:8000
       - SALES_CYCLE_AGENT_API_INTERNAL_URL=http://agent-api:8100
-      - SALES_CYCLE_WORKSPACES_ROOT=/workspaces
+      - SALES_CYCLE_MEETING_API_INTERNAL_URL=http://meeting-api:8080
       - SALES_CYCLE_DB_PATH=/data/sales-cycle.db
       - SALES_CYCLE_TERMINAL_URL=${SALES_CYCLE_TERMINAL_URL:-http://localhost:13000}
       - SALES_CYCLE_HUBSPOT_TOKEN=${SALES_CYCLE_HUBSPOT_TOKEN:-}
@@ -340,7 +341,6 @@ services:
       - SALES_CYCLE_OWN_DOMAINS=${SALES_CYCLE_OWN_DOMAINS:-}
       - SALES_CYCLE_PRODUCT_REPO_SUBJECT=${SALES_CYCLE_PRODUCT_REPO_SUBJECT:-}
     volumes:
-      - agent-workspaces:/workspaces:ro
       - sales-cycle-data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8200/health').status==200 else 1)"]
@@ -353,12 +353,18 @@ services:
         condition: service_healthy
       agent-api:
         condition: service_healthy
+      meeting-api:
+        condition: service_healthy
     networks: [vexa]
     restart: unless-stopped
 
-  # sales-cycle's two "check for new work" endpoints don't run themselves — something has to call
-  # them on a schedule. This is that something: a tiny loop, not a real cron daemon, since the
-  # interval only needs to be "reasonably soon," not exact.
+  # /internal/process-approved doesn't run itself — something has to call it on a schedule, as a
+  # safety net for anything the real-time paths missed (the Slack-reaction dispatch, the live card
+  # watcher's own push-on-completion — neither exists yet for the "agent finished, go push it" leg,
+  # which only resolves by polling git state). Not a real cron daemon: the interval only needs to be
+  # "reasonably soon," not exact. Tight on purpose — the wait here is pure dead latency between an
+  # agent turn finishing and its branch reaching GitHub, unlike a poll that's substituting for an
+  # event that doesn't exist at all.
   sales-cycle-cron:
     image: curlimages/curl:latest
     entrypoint:
@@ -366,9 +372,8 @@ services:
       - -c
       - |
         while true; do
-          curl -sf -X POST http://sales-cycle:8200/internal/poll-feature-requests || true
           curl -sf -X POST http://sales-cycle:8200/internal/process-approved || true
-          sleep 60
+          sleep 10
         done
     depends_on:
       sales-cycle:

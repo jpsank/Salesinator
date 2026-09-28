@@ -5,26 +5,26 @@ def _store() -> Store:
     return Store(":memory:")
 
 
-def test_seen_files_roundtrip():
+def test_seen_requests_roundtrip():
     s = _store()
-    assert s.is_seen("a.md") is False
-    s.mark_seen("a.md")
-    assert s.is_seen("a.md") is True
-    assert s.is_seen("b.md") is False
+    assert s.is_seen("live:1:csv export") is False
+    s.mark_seen("live:1:csv export")
+    assert s.is_seen("live:1:csv export") is True
+    assert s.is_seen("live:1:sso") is False
 
 
 def test_mark_seen_is_idempotent():
     s = _store()
-    s.mark_seen("a.md")
-    s.mark_seen("a.md")  # must not raise (UNIQUE/PRIMARY KEY conflict handled)
-    assert s.is_seen("a.md") is True
+    s.mark_seen("live:1:csv export")
+    s.mark_seen("live:1:csv export")  # must not raise (UNIQUE/PRIMARY KEY conflict handled)
+    assert s.is_seen("live:1:csv export") is True
 
 
 def test_approve_flow():
     s = _store()
     s.record_pending_approval(
         slack_channel="C1", slack_ts="123.456", workspace_id="cust-1",
-        entity_path="/workspaces/cust-1/kg/entities/feature_request/csv-export.md",
+        source_key="live:1:csv export",
         title="CSV export", body="wants it",
     )
     approved = s.approve(slack_channel="C1", slack_ts="123.456")
@@ -41,7 +41,7 @@ def test_approve_is_idempotent_second_reaction_is_noop():
     s = _store()
     s.record_pending_approval(
         slack_channel="C1", slack_ts="123.456", workspace_id="cust-1",
-        entity_path="x.md", title="X", body="y",
+        source_key="x.md", title="X", body="y",
     )
     first = s.approve(slack_channel="C1", slack_ts="123.456")
     second = s.approve(slack_channel="C1", slack_ts="123.456")
@@ -60,7 +60,7 @@ def test_claim_for_dispatch_is_race_safe():
     correctness bug, not just wasted work."""
     s = _store()
     s.record_pending_approval(
-        slack_channel="C1", slack_ts="1", workspace_id="cust-1", entity_path="x.md", title="X", body="y",
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
     )
     approved = s.approve(slack_channel="C1", slack_ts="1")
     assert s.claim_for_dispatch(approved.id) is True
@@ -76,7 +76,7 @@ def test_claim_for_dispatch_unknown_id_returns_false():
 def test_revert_to_approved_undoes_a_failed_claim():
     s = _store()
     s.record_pending_approval(
-        slack_channel="C1", slack_ts="1", workspace_id="cust-1", entity_path="x.md", title="X", body="y",
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
     )
     approved = s.approve(slack_channel="C1", slack_ts="1")
     assert s.claim_for_dispatch(approved.id) is True
@@ -88,7 +88,7 @@ def test_revert_to_approved_undoes_a_failed_claim():
 def test_mark_done_removes_from_unprocessed_queue():
     s = _store()
     s.record_pending_approval(
-        slack_channel="C1", slack_ts="1", workspace_id="cust-1", entity_path="x.md", title="X", body="y",
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
     )
     approved = s.approve(slack_channel="C1", slack_ts="1")
     s.mark_done(approved.id)

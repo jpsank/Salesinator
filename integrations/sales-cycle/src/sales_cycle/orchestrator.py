@@ -68,7 +68,7 @@ def submit_implementation(
     return {"workload_id": data.get("workload_id"), "branch": branch}
 
 
-def _git_state(*, agent_api_url: str, subject: str, timeout: float) -> dict:
+def git_state(*, agent_api_url: str, subject: str, timeout: float) -> dict:
     resp = call(
         "GET", f"{agent_api_url.rstrip('/')}/api/workspace/git",
         headers={"X-User-Id": subject}, timeout=timeout,
@@ -77,14 +77,18 @@ def _git_state(*, agent_api_url: str, subject: str, timeout: float) -> dict:
     return resp.json()
 
 
-def check_and_push(
-    *, agent_api_url: str, subject: str, expected_branch: str, timeout: float = 15.0,
+def push_if_ready(
+    state: dict, *, agent_api_url: str, subject: str, expected_branch: str, timeout: float = 15.0,
 ) -> dict | None:
-    """Checks whether the agent finished: is it on the right branch, with everything saved (nothing
-    left half-done)? If not, returns nothing — we'll just check again next time. If it IS done, pushes
-    the branch to GitHub and returns the result. Only ever pushes the exact branch this request asked
-    for, never anything else it might happen to be sitting on."""
-    state = _git_state(agent_api_url=agent_api_url, subject=subject, timeout=timeout)
+    """Given an already-fetched git state (see `git_state`): is the agent on the right branch, with
+    everything saved (nothing left half-done)? If not, returns nothing — we'll just check again next
+    time. If it IS done, pushes the branch to GitHub and returns the result. Only ever pushes the
+    exact branch this request asked for, never anything else it might happen to be sitting on.
+
+    Takes `state` rather than fetching it itself so a caller checking several approvals against the
+    SAME subject's workspace in one sweep (`process_approved`) can fetch it once and reuse it —
+    every approval for one deployment shares the one `product_repo_subject` workspace, so their git
+    state is identical within a sweep."""
     if state.get("branch") != expected_branch:
         return None
     if state.get("changes"):  # still has unsaved work — not finished yet
@@ -95,3 +99,15 @@ def check_and_push(
         error_cls=PushError, error_prefix="POST /api/workspace/push",
     )
     return resp.json()
+
+
+def check_and_push(
+    *, agent_api_url: str, subject: str, expected_branch: str, timeout: float = 15.0,
+) -> dict | None:
+    """Single-approval convenience wrapper around `git_state` + `push_if_ready` — fetches state
+    itself. A caller checking several approvals in one sweep should fetch state once and call
+    `push_if_ready` directly instead (see `process_approved` in api.py)."""
+    state = git_state(agent_api_url=agent_api_url, subject=subject, timeout=timeout)
+    return push_if_ready(
+        state, agent_api_url=agent_api_url, subject=subject, expected_branch=expected_branch, timeout=timeout,
+    )

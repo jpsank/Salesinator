@@ -6,6 +6,7 @@ import time
 import httpx
 import respx
 
+import sales_cycle.api as api_module
 from conftest import GATEWAY, client
 
 SECRET = "test-webhook-secret"
@@ -57,6 +58,42 @@ def test_meeting_started_resolves_and_binds(monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == {"resolved": True, "workspace_id": "cust-42", "company_name": "Acme Corp"}
     assert bind_route.called
+
+
+@respx.mock
+def test_meeting_started_launches_the_live_card_watcher_as_the_meeting_owner(monkeypatch):
+    """The live watcher must run as the meeting's OWNER (`user_id`), never the resolved customer
+    workspace — that's what agent-api's SSE ownership check and meeting-api's own records are keyed
+    on. Stubs out `watch_meeting` itself (an async, real-network call) — this test is about the
+    wiring, not the watcher's own behavior (covered by test_live_card_watcher.py)."""
+    monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_TOKEN", "test-token")
+    monkeypatch.setenv("SALES_CYCLE_CALENDAR_API_KEY", "vxa_rep_key")
+    respx.post("https://api.hubapi.com/crm/v3/objects/companies/search").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+
+    calls = []
+
+    async def _fake_watch_meeting(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(api_module, "watch_meeting", _fake_watch_meeting)
+
+    resp = _post_webhook(_meeting_started_payload(id=99, user_id=7))
+    assert resp.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["meeting_id"] == "99"
+    assert calls[0]["subject"] == "7"
+
+
+def test_meeting_started_missing_owner_id_does_not_start_a_watcher(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
+    calls = []
+    monkeypatch.setattr(api_module, "watch_meeting", lambda **kw: calls.append(kw))
+    resp = _post_webhook(_meeting_started_payload())  # no user_id override — payload lacks it
+    assert resp.status_code == 200
+    assert calls == []
 
 
 def test_bad_signature_rejected(monkeypatch):

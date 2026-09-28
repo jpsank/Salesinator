@@ -1,8 +1,10 @@
 """A tiny local database this add-on keeps for itself — just a plain file on disk, nothing fancy or
 external to install. It tracks two things:
 
-- `seen_files`: which feature-request notes we've already posted to Slack, so we never post the
-  same one twice.
+- `seen_requests`: which live feature-request cards we've already posted to Slack, so a copilot that
+  re-surfaces the same request (or a watcher reconnect replaying its recent backlog) never posts it
+  twice. Keyed by a synthetic `live:<meeting_id>:<title>` string, not a file path — nothing here reads
+  from disk.
 - `pending_approvals`: each feature request's progress. Starts as "pending", becomes "approved" once
   someone reacts ✅ in Slack, "dispatched" once the AI agent starts building it, and "done" once
   the finished branch is pushed to GitHub.
@@ -36,7 +38,7 @@ class PendingApproval:
     slack_channel: str
     slack_ts: str
     workspace_id: str
-    entity_path: str
+    source_key: str
     title: str
     body: str
     status: str
@@ -69,15 +71,15 @@ class Store:
     def _init(self) -> None:
         with self._conn() as conn:
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS seen_files (
-                    path TEXT PRIMARY KEY, seen_at REAL NOT NULL
+                CREATE TABLE IF NOT EXISTS seen_requests (
+                    key TEXT PRIMARY KEY, seen_at REAL NOT NULL
                 )
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS pending_approvals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     slack_channel TEXT NOT NULL, slack_ts TEXT NOT NULL,
-                    workspace_id TEXT NOT NULL, entity_path TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL, source_key TEXT NOT NULL,
                     title TEXT NOT NULL, body TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'pending',
                     branch TEXT, workload_id TEXT,
@@ -94,27 +96,27 @@ class Store:
                 )
             """)
 
-    def is_seen(self, path: str) -> bool:
+    def is_seen(self, key: str) -> bool:
         with self._conn() as conn:
-            row = conn.execute("SELECT 1 FROM seen_files WHERE path = ?", (path,)).fetchone()
+            row = conn.execute("SELECT 1 FROM seen_requests WHERE key = ?", (key,)).fetchone()
         return row is not None
 
-    def mark_seen(self, path: str) -> None:
+    def mark_seen(self, key: str) -> None:
         with self._conn() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO seen_files (path, seen_at) VALUES (?, ?)", (path, time.time())
+                "INSERT OR IGNORE INTO seen_requests (key, seen_at) VALUES (?, ?)", (key, time.time())
             )
 
     def record_pending_approval(
-        self, *, slack_channel: str, slack_ts: str, workspace_id: str, entity_path: str,
+        self, *, slack_channel: str, slack_ts: str, workspace_id: str, source_key: str,
         title: str, body: str,
     ) -> None:
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO pending_approvals "
-                "(slack_channel, slack_ts, workspace_id, entity_path, title, body, created_at) "
+                "(slack_channel, slack_ts, workspace_id, source_key, title, body, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (slack_channel, slack_ts, workspace_id, entity_path, title, body, time.time()),
+                (slack_channel, slack_ts, workspace_id, source_key, title, body, time.time()),
             )
 
     def approve(self, *, slack_channel: str, slack_ts: str) -> PendingApproval | None:

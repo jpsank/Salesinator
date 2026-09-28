@@ -8,10 +8,6 @@ POST /tag
     Tag a call that's already underway (or already sent) with a customer name — this is what the
     Slack `/vexa-tag` command calls.
 
-POST /internal/poll-feature-requests
-    Check for new feature requests the meeting notes picked up, and post each one to Slack.
-    Meant to be triggered on a schedule (a cron job), not called by a person directly.
-
 POST /slack/events
     Slack sends things here: the one-time "prove you own this URL" handshake when you first set
     this up, and later, every time someone reacts to a message with an emoji.
@@ -23,7 +19,9 @@ POST /internal/process-approved
 
 POST /webhooks/meeting-started
     Vexa calls this the moment a bot joins a call. Used for the automatic version of customer
-    tagging — see calendar_resolver.py.
+    tagging (see calendar_resolver.py) and starts this call's live feature-request watcher (see
+    live_card_watcher.py) — the thing that posts each feature request to Slack the moment the
+    copilot surfaces it, not after the call ends.
 
 GET /oauth/{hubspot,slack}/authorize, .../callback, .../status, POST .../disconnect
     Each provider's whole "Connect X" flow — see oauth_routes.py (the shared 4-route shape),
@@ -35,7 +33,6 @@ GET /oauth/{hubspot,slack}/authorize, .../callback, .../status, POST .../disconn
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
@@ -44,9 +41,9 @@ from pydantic import BaseModel
 from sales_cycle import hubspot_oauth, slack_oauth
 from sales_cycle.calendar_resolver import resolve_meeting_started
 from sales_cycle.hubspot_client import HubSpotClient
+from sales_cycle.live_card_watcher import watch_meeting
 from sales_cycle.oauth_routes import OAuthProviderConfig, register_oauth_routes
-from sales_cycle.orchestrator import DispatchError, PushError, check_and_push, submit_implementation
-from sales_cycle.poller import poll_once
+from sales_cycle.orchestrator import DispatchError, PushError, git_state, push_if_ready, submit_implementation
 from sales_cycle.resolver import WorkspaceBindError, bind_meeting_workspace, resolve_by_tag, slug_for_company
 from sales_cycle.settings import Settings, get_settings
 from sales_cycle.slack_client import SlackClient
@@ -176,16 +173,6 @@ def dispatch(body: DispatchRequest, x_api_key: str = Header(..., alias="X-API-Ke
     return out
 
 
-@app.post("/internal/poll-feature-requests")
-def poll_feature_requests() -> dict:
-    settings = get_settings()
-    notified = poll_once(
-        store=get_store(), slack=_slack(), workspaces_root=Path(settings.workspaces_root),
-        channel=settings.slack_channel_id,
-    )
-    return {"notified": notified, "count": len(notified)}
-
-
 def _dispatch_one(store: Store, settings: Settings, approval: PendingApproval) -> bool:
     """Starts the implementation turn for ONE approved request. Shared by the real-time path (fires
     the moment the ✅ reaction arrives) and the cron sweep (a safety net for anything that path
@@ -258,25 +245,34 @@ def process_approved() -> dict:
         if _dispatch_one(store, settings, approval):
             dispatched_now.append(approval.id)
 
-    for approval in store.list_dispatched_unpushed():
+    unpushed = store.list_dispatched_unpushed()
+    if unpushed:
+        # Every approval here shares the SAME product_repo_subject workspace — one git-state fetch
+        # answers for all of them in this sweep, instead of one redundant identical GET per approval.
         try:
-            pushed = check_and_push(
-                agent_api_url=settings.agent_api_internal_url,
-                subject=settings.product_repo_subject,
-                expected_branch=approval.branch,
-            )
-        except PushError:
-            logger.exception("push failed for approval id=%s branch=%s", approval.id, approval.branch)
-            continue
-        if pushed is not None:
-            store.mark_done(approval.id)
-            pushed_now.append(approval.id)
+            state = git_state(agent_api_url=settings.agent_api_internal_url, subject=settings.product_repo_subject, timeout=15.0)
+        except DispatchError:
+            logger.exception("git-state fetch failed — skipping the push check for this sweep")
+            state = None
+        if state is not None:
+            for approval in unpushed:
+                try:
+                    pushed = push_if_ready(
+                        state, agent_api_url=settings.agent_api_internal_url,
+                        subject=settings.product_repo_subject, expected_branch=approval.branch,
+                    )
+                except PushError:
+                    logger.exception("push failed for approval id=%s branch=%s", approval.id, approval.branch)
+                    continue
+                if pushed is not None:
+                    store.mark_done(approval.id)
+                    pushed_now.append(approval.id)
 
     return {"dispatched": dispatched_now, "pushed": pushed_now}
 
 
 @app.post("/webhooks/meeting-started")
-async def webhook_meeting_started(request: Request) -> dict:
+async def webhook_meeting_started(request: Request, background_tasks: BackgroundTasks) -> dict:
     body = await request.body()
     settings = get_settings()
     try:
@@ -294,6 +290,19 @@ async def webhook_meeting_started(request: Request) -> dict:
         return {"resolved": False, "reason": "not a meeting.started event"}
 
     meeting = ((payload.get("data") or {}).get("meeting")) or {}
+
+    meeting_id = meeting.get("id")
+    subject = meeting.get("user_id")
+    if meeting_id is not None and subject is not None:
+        background_tasks.add_task(
+            watch_meeting,
+            agent_api_url=settings.agent_api_internal_url, meeting_api_url=settings.meeting_api_internal_url,
+            subject=str(subject), meeting_id=str(meeting_id), store=get_store(), slack=_slack(),
+            channel=settings.slack_channel_id, unmapped_slug=settings.unmapped_workspace_slug,
+        )
+    else:
+        logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
+
     own_domains = {d.strip().lower() for d in settings.own_domains.split(",") if d.strip()}
     result = resolve_meeting_started(
         event=meeting, hubspot=_hubspot(), gateway_url=settings.vexa_gateway_url,

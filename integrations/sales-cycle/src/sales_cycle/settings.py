@@ -54,9 +54,6 @@ class Settings(BaseSettings):
     # at all — Slack silently drops an event subscription the bot token doesn't hold the scope for.
     slack_oauth_scopes: str = "chat:write,channels:read,groups:read,reactions:read"
 
-    # Where Vexa's customer folders live on disk — this add-on reads meeting notes directly from here.
-    workspaces_root: str = "/workspaces"
-
     # Where this add-on keeps its own small local database (which requests are pending/approved/done).
     db_path: str = "/data/sales-cycle.db"
 
@@ -67,6 +64,14 @@ class Settings(BaseSettings):
     # (only from other services running alongside it), so this isn't a workaround that weakens
     # security — it's just skipping a front door that has a gap in it right now.
     agent_api_internal_url: str = "http://agent-api:8100"
+
+    # Companion to agent_api_internal_url above, for meeting-api. Different reason: the live card
+    # watcher (live_card_watcher.py) is launched off a webhook, not a rep's own request, so there's
+    # no per-rep API key to hand the gateway — it authenticates as the meeting's own dispatching user
+    # straight to these two internal services instead, the same internal server-to-server trust
+    # orchestrator.py's submit_implementation/check_and_push already rely on for agent-api. Neither
+    # address is reachable from outside the deployment.
+    meeting_api_internal_url: str = "http://meeting-api:8080"
 
     # The Vexa subject whose OWN workspace is the actual product codebase. Set up once: attach the
     # real GitHub repo to this subject's workspace (Settings → Integrations → GitHub's "Product

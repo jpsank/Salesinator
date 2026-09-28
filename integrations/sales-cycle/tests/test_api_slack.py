@@ -66,7 +66,7 @@ def test_reaction_added_approves_and_dispatches_in_real_time(monkeypatch, tmp_pa
     store = api_module.get_store()
     store.record_pending_approval(
         slack_channel="C1", slack_ts="100.001", workspace_id="cust-1",
-        entity_path="x.md", title="CSV export", body="wants it",
+        source_key="x.md", title="CSV export", body="wants it",
     )
     respx.post("http://agent-api:8100/invocations").mock(
         return_value=httpx.Response(202, json={"workload_id": "agent-1"})
@@ -96,7 +96,7 @@ def test_reaction_added_dispatch_failure_leaves_it_approved_for_the_cron_sweep(m
     store = api_module.get_store()
     store.record_pending_approval(
         slack_channel="C1", slack_ts="100.001", workspace_id="cust-1",
-        entity_path="x.md", title="CSV export", body="wants it",
+        source_key="x.md", title="CSV export", body="wants it",
     )
     respx.post("http://agent-api:8100/invocations").mock(return_value=httpx.Response(500))
 
@@ -118,7 +118,7 @@ def test_reaction_added_ignores_unrelated_emoji(monkeypatch, tmp_path: Path):
     store = api_module.get_store()
     store.record_pending_approval(
         slack_channel="C1", slack_ts="100.001", workspace_id="cust-1",
-        entity_path="x.md", title="CSV export", body="wants it",
+        source_key="x.md", title="CSV export", body="wants it",
     )
 
     resp = _post_event({
@@ -128,24 +128,3 @@ def test_reaction_added_ignores_unrelated_emoji(monkeypatch, tmp_path: Path):
     })
     assert resp.status_code == 200
     assert store.list_approved_unprocessed() == []
-
-
-@respx.mock
-def test_poll_feature_requests_endpoint(monkeypatch, tmp_path: Path):
-    api_module._store = None
-    monkeypatch.setenv("SALES_CYCLE_DB_PATH", str(tmp_path / "sales-cycle.db"))
-    monkeypatch.setenv("SALES_CYCLE_WORKSPACES_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C1")
-    monkeypatch.setenv("SALES_CYCLE_SLACK_BOT_TOKEN", "xoxb-test")
-
-    d = tmp_path / "workspaces" / "cust-1" / "kg" / "entities" / "feature_request"
-    d.mkdir(parents=True)
-    (d / "csv-export.md").write_text("---\ntype: feature_request\nid: csv-export\ntitle: CSV export\n---\nwants it\n")
-
-    respx.post("https://slack.com/api/chat.postMessage").mock(
-        return_value=httpx.Response(200, json={"ok": True, "ts": "1.1"})
-    )
-
-    resp = client.post("/internal/poll-feature-requests")
-    assert resp.status_code == 200
-    assert resp.json()["count"] == 1

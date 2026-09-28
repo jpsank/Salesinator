@@ -15,11 +15,13 @@ ourselves (details below).
      call.
    - The automatic way: if the rep's calendar is connected to Vexa, we look at who was invited to the
      meeting, match their email domain against HubSpot, and tag it — no rep action needed.
-2. **Notice feature requests during the call.** We taught Vexa's meeting notes to recognize when a
-   customer explicitly asks for something the product doesn't do yet, and write it down as its own
-   item (not buried in general notes).
-3. **Post it to Slack for a thumbs-up.** Each request gets its own Slack message. A rep or PM reacts
-   with ✅ to approve it.
+2. **Notice feature requests live, during the call.** We taught Vexa's meeting copilot to recognize
+   when a customer explicitly asks for something the product doesn't do yet, and surface it as its
+   own tagged card the moment it's said (not buried in general notes, and not waiting for the call
+   to end).
+3. **Post it to Slack for a thumbs-up — same call, not after it.** A background watcher tails that
+   call's live card stream and posts each feature request to Slack as soon as it appears. A rep or
+   PM reacts with ✅ to approve it while the call is still going.
 4. **Build it and push a branch.** Once approved, an AI coding agent implements the feature in the real
    product codebase, on its own branch, and pushes it to GitHub — ready for a human to review and for
    your existing CI to build a preview.
@@ -31,8 +33,7 @@ ourselves (details below).
 | `hubspot_client.py` | Looks up a company in HubSpot, by name or by email domain. |
 | `resolver.py` | Ties a meeting to a customer's workspace, using HubSpot's answer. |
 | `calendar_resolver.py` | The automatic version of the above — reads attendee emails straight off Vexa's own notification, no extra lookup needed. |
-| `entity_files.py` | Reads the "feature request" notes the meeting agent wrote down. |
-| `poller.py` | Checks for new feature requests and posts each one to Slack. |
+| `live_card_watcher.py` | Tails one call's live copilot-card stream for its whole duration and posts each `feature_request` to Slack the instant it appears. |
 | `store.py` | A small local database tracking which requests are pending, approved, or done. |
 | `orchestrator.py` | Once approved: kicks off the AI coding turn, then checks in until it's done and pushes it. |
 | `slack_client.py` / `slack_verify.py` | Talking to Slack, and proving a Slack request is really from Slack. |
@@ -44,9 +45,24 @@ ourselves (details below).
 
 ## Where things stand
 
-All five stages described above are built and covered by tests (100+ tests as of this writing).
+All four stages described above are built and covered by tests (100+ tests as of this writing).
 Every credential below is empty by default (the stack runs fine with none of it set — the add-on
 just won't have anything to look up yet); here's how to get each one for real.
+
+## Real-time capture: why a watcher, not a poll
+
+Feature requests are captured LIVE, not after the call: Vexa's meeting copilot already surfaces
+cards (transcript notes, tagged items — `feature_request` is one tag) on a per-meeting stream the
+moment each one comes up, the same stream the Terminal's own live-call view renders from. For each
+call, `live_card_watcher.py` is started as a background task the instant that call's
+`meeting.started` webhook arrives, tails that one stream for the meeting's whole duration, and posts
+each `feature_request` card to Slack as soon as it appears — running as the call's own dispatching
+user (`data.meeting.user_id` off that webhook), which is what both the stream's ownership check and
+the workspace-binding lookup are keyed on. Workspace resolution happens per card, not once per
+call, since a customer tag can land after the call — and its first few cards — already started.
+`/internal/process-approved` still runs on a schedule, but only for what's left once a request is
+approved: checking in on the AI agent's implementation turn and pushing the finished branch once
+it's done (there's no event for "the agent finished" to react to instead).
 
 ## One-time setup: connecting HubSpot, Slack, and GitHub
 
@@ -113,10 +129,12 @@ either). What follows is how to GET the credential each path needs.
   One thing we could NOT confirm from docs and had to test live: HubSpot's newer **MCP server**
   OAuth (`mcp-*.hubspot.com/oauth/authorize/user`) requires PKCE and is a different, heavier
   protocol meant for AI-agent clients — don't use it here, it's not what sales-cycle needs. The app
-  built via the steps above uses the classic `app.hubspot.com/oauth/authorize` endpoint and worked
-  for us **without** needing PKCE — but HubSpot's platform has been changing fast enough this year
-  that if "Connect HubSpot" ever starts failing with a PKCE-related error, that's the signal this
-  has changed again, not that something here is misconfigured.
+  built via the steps above uses the classic `app.hubspot.com/oauth/authorize` endpoint; it worked
+  for us at first **without** needing PKCE, then started requiring it — confirmed live by generating
+  a verifier/challenge pair and retrying "Connect HubSpot". `hubspot_oauth.py` now sends PKCE
+  (S256) on every authorize call, so this needs no per-deployment action — but HubSpot's platform
+  has been changing fast enough this year that a PKCE-related error on "Connect HubSpot" is still
+  worth knowing about if the flow ever misbehaves again.
 
 ### Slack
 
