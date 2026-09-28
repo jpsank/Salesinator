@@ -14,7 +14,8 @@ import { listTokens, createToken, revokeToken, TOKEN_SCOPES, type TokenInfo, typ
 import { getGitToken, setGitToken } from "./workspaceApi";
 import { presentError } from "./apiClient";
 
-const toOAuthStatus = (s: { set: boolean; masked: string | null }): OAuthStatus => ({ connected: s.set, account_label: s.masked ?? undefined });
+const toOAuthStatus = (s: { set: boolean; masked: string | null; oauth_configured?: boolean }): OAuthStatus =>
+  ({ connected: s.set, account_label: s.masked ?? undefined, configured: s.oauth_configured });
 
 const EXPIRIES: Array<{ label: string; seconds?: number }> = [
   { label: "never expires" },

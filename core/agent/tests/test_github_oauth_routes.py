@@ -44,6 +44,20 @@ def test_authorize_503_when_not_configured(tmp_path):
     assert r.status_code == 503
 
 
+def test_git_token_get_reports_oauth_configured(tmp_path):
+    """The Settings UI needs to know whether it's even worth showing "Connect" — not just whether
+    the callback would 503, without the rep having to click it first to find out."""
+    (tmp_path / "u_jane").mkdir(parents=True)
+    unconfigured = _client(tmp_path)
+    assert unconfigured.get("/api/workspace/git-token", headers=H).json()["oauth_configured"] is False
+
+    configured = _client(
+        tmp_path, github_oauth_client_id="cid",
+        github_oauth_redirect_uri="http://localhost:18100/api/workspace/git-token/oauth/callback",
+    )
+    assert configured.get("/api/workspace/git-token", headers=H).json()["oauth_configured"] is True
+
+
 def test_authorize_redirects_to_github_with_signed_state(tmp_path):
     (tmp_path / "u_jane").mkdir(parents=True)
     c = _client(

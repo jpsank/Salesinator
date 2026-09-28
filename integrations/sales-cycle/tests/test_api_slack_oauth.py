@@ -35,11 +35,19 @@ def test_callback_success_redirects_and_updates_status(monkeypatch):
     assert resp.headers["location"] == "http://localhost:13000/?settings=sales-cycle&slack_connected=1"
 
     status = client.get("/oauth/slack/status").json()
-    assert status == {"connected": True, "account_label": "Acme Team"}
+    assert status == {"connected": True, "configured": True, "account_label": "Acme Team"}
 
 
-def test_status_not_connected_by_default():
-    assert client.get("/oauth/slack/status").json() == {"connected": False}
+def test_status_not_connected_by_default(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_OAUTH_CLIENT_ID", "")
+    monkeypatch.setenv("SALES_CYCLE_SLACK_OAUTH_REDIRECT_URI", "")
+    assert client.get("/oauth/slack/status").json() == {"connected": False, "configured": False}
+
+
+def test_status_configured_but_not_connected(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_OAUTH_CLIENT_ID", "cid")
+    monkeypatch.setenv("SALES_CYCLE_SLACK_OAUTH_REDIRECT_URI", "http://localhost:8200/oauth/slack/callback")
+    assert client.get("/oauth/slack/status").json() == {"connected": False, "configured": True}
 
 
 def test_disconnect(monkeypatch, tmp_path):

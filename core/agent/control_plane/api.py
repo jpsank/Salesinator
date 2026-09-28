@@ -1721,10 +1721,15 @@ def create_app(
     @app.get("/api/workspace/git-token")
     def ws_git_token_get(request: Request):
         """Whether the caller has a SAVED reusable GitHub token, and a masked (last-4) preview of it. The
-        clear value is NEVER returned — server-side only (git_credentials)."""
+        clear value is NEVER returned — server-side only (git_credentials). `oauth_configured` lets the
+        Settings UI show "OAuth not registered" instead of sending the rep into /authorize's raw 503."""
         subject = subject_of(request)
+        oauth_configured = bool(
+            settings is not None and settings.github_oauth_client_id and settings.github_oauth_redirect_uri
+        )
         return {"set": git_creds.read_github_token(wsr.root, subject) is not None,
-                "masked": git_creds.masked_github_token(wsr.root, subject)}
+                "masked": git_creds.masked_github_token(wsr.root, subject),
+                "oauth_configured": oauth_configured}
 
     @app.post("/api/workspace/git-token")
     def ws_git_token_set(request: Request, body: GitTokenBody = Body(default=GitTokenBody())):

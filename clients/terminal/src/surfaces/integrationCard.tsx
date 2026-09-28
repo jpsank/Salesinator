@@ -21,6 +21,9 @@ export const cardCheckRow: CSSProperties = { display: "flex", alignItems: "cente
 export interface OAuthStatus {
   connected: boolean;
   account_label?: string | null;
+  /** Whether this deployment even has the provider's OAuth app registered. Missing/undefined is
+   *  treated as configured (older backends that predate this field never had a reason to say no). */
+  configured?: boolean;
 }
 
 /** The one-time banner from an OAuth redirect landing back on this page
@@ -92,6 +95,8 @@ export function OAuthConnectionCard({
           <button disabled={busy} onClick={() => void doDisconnect()} style={{ ...cardBtn, color: "var(--danger)" }}>
             {busy ? "Disconnecting…" : "Disconnect"}
           </button>
+        ) : status?.configured === false ? (
+          <span style={{ fontSize: 11.5, color: "var(--t3)" }}>OAuth not registered on this deployment</span>
         ) : (
           <a href={connectUrl} style={{ ...cardPrimaryBtn, textDecoration: "none", display: "inline-block" }}>
             Connect

@@ -75,10 +75,12 @@ def register_oauth_routes(
 
     @app.get(f"/oauth/{provider}/status", name=f"{provider}_oauth_status")
     def _status() -> dict:
+        cfg = get_config()
+        configured = bool(cfg.client_id and cfg.redirect_uri)
         connection = get_store().get_oauth_connection(provider)
         if connection is None:
-            return {"connected": False}
-        return {"connected": True, "account_label": connection.account_label}
+            return {"connected": False, "configured": configured}
+        return {"connected": True, "configured": configured, "account_label": connection.account_label}
 
     @app.post(f"/oauth/{provider}/disconnect", name=f"{provider}_oauth_disconnect")
     def _disconnect() -> dict:

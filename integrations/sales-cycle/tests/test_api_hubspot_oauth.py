@@ -52,7 +52,7 @@ def test_callback_success_redirects_to_terminal_with_connected_flag(monkeypatch,
     assert resp.headers["location"] == "http://localhost:13000/?settings=sales-cycle&hubspot_connected=1"
 
     status = client.get("/oauth/hubspot/status").json()
-    assert status == {"connected": True, "account_label": "acme.hubspot.com"}
+    assert status == {"connected": True, "configured": True, "account_label": "acme.hubspot.com"}
 
 
 def test_callback_with_no_code_redirects_with_error(monkeypatch, tmp_path: Path):
@@ -71,7 +71,16 @@ def test_callback_with_hubspot_error_param_redirects_with_that_error(monkeypatch
 
 def test_status_not_connected_by_default(monkeypatch, tmp_path: Path):
     _fresh_store(monkeypatch, tmp_path)
-    assert client.get("/oauth/hubspot/status").json() == {"connected": False}
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID", "")
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI", "")
+    assert client.get("/oauth/hubspot/status").json() == {"connected": False, "configured": False}
+
+
+def test_status_configured_but_not_connected(monkeypatch, tmp_path: Path):
+    _fresh_store(monkeypatch, tmp_path)
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_OAUTH_CLIENT_ID", "cid")
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI", "http://localhost:8200/oauth/hubspot/callback")
+    assert client.get("/oauth/hubspot/status").json() == {"connected": False, "configured": True}
 
 
 def test_disconnect(monkeypatch, tmp_path: Path):

@@ -80,8 +80,10 @@ export async function createSharedWorkspace(name: string): Promise<{ workspace_i
 }
 
 /** The caller's SAVED reusable GitHub token — server-side only. `masked` is `••••abcd` (never the clear
- *  value); `set` says whether one is stored. Used as the fallback credential for every git op. */
-export interface SavedGitToken { set: boolean; masked: string | null }
+ *  value); `set` says whether one is stored. Used as the fallback credential for every git op.
+ *  `oauth_configured` (GET only — POST doesn't need it) says whether GitHub OAuth is even registered
+ *  on this deployment, so the Settings UI can show that instead of a dead-end "Connect" link. */
+export interface SavedGitToken { set: boolean; masked: string | null; oauth_configured?: boolean }
 
 /** Read whether a reusable GitHub token is saved (masked preview only — the clear value never leaves the server). */
 export async function getGitToken(): Promise<SavedGitToken> {
