@@ -20,7 +20,18 @@ export function SalesCycleSection() {
       <OAuthConnectionCard provider="slack" label="Slack"
         description="Posts each captured feature request to a channel for a ✓ (approve) — and once GitHub is connected, an agent implements and pushes it."
         connectUrl={oauthConnectUrl("slack")}
-        getStatus={() => getOAuthStatus("slack")} disconnect={() => disconnectOAuth("slack")} />
+        getStatus={() => getOAuthStatus("slack")} disconnect={() => disconnectOAuth("slack")}
+        fallback={() => (
+          <div style={{ ...cardMeta, borderTop: "1px dashed var(--line)", paddingTop: 8 }}>
+            <b style={{ color: "var(--t2)" }}>One more one-time step, in Slack's own dashboard:</b> the ✓
+            reaction only triggers a build if your Slack app has <b style={{ color: "var(--t2)" }}>Event
+            Subscriptions</b> turned on — Slack has no API for this, so it can't be automated from here.
+            At <code style={{ fontFamily: "var(--mono)" }}>api.slack.com/apps</code> → your app → Event
+            Subscriptions: enable it, set the Request URL to your sales-cycle service&rsquo;s public
+            address + <code style={{ fontFamily: "var(--mono)" }}>/slack/events</code>, then under
+            &ldquo;Subscribe to bot events&rdquo; add <code style={{ fontFamily: "var(--mono)" }}>reaction_added</code> and save.
+          </div>
+        )} />
     </div>
   );
 }
