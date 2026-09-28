@@ -1,9 +1,8 @@
-"""Plain-HTTP HubSpot client — no SDK (this repo's Category-A licensing stance, ADR-0004: prefer a
-thin client over a dependency whose license terms aren't worth auditing for two REST calls).
+"""Looks up a company in HubSpot — by name, or by email domain.
 
-Only what this package needs: find the company a customer_tag or an attendee's email domain refers
-to. Adapts HubSpot's vocabulary at this one boundary (P5) — nothing downstream of `resolver/` ever
-sees a raw HubSpot response shape.
+We talk to HubSpot's web API directly with plain requests, rather than installing HubSpot's own
+software package for it — it's only two lookups, and this keeps things simple. Everywhere else in
+this add-on works with the clean `Company` object below, never HubSpot's own raw response format.
 """
 
 from __future__ import annotations
@@ -60,9 +59,9 @@ class HubSpotClient:
         return Company(id=str(hit["id"]), name=props.get("name") or "", domain=props.get("domain"))
 
     def find_by_name(self, name: str) -> Company | None:
-        """Fuzzy match — used for the manual `customer_tag` path (a rep typing a company name)."""
+        """A loose, partial-match search — for when a rep types a company name in Slack."""
         return self._search(property_name="name", operator="CONTAINS_TOKEN", value=name)
 
     def find_by_domain(self, domain: str) -> Company | None:
-        """Exact match — used for the calendar-attendee-email path."""
+        """An exact match — for auto-detecting the customer from a calendar invite's email domain."""
         return self._search(property_name="domain", operator="EQ", value=domain)

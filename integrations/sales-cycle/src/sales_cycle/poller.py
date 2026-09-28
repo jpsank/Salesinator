@@ -1,5 +1,5 @@
-"""Notice new feature_request entities and post one Slack message per request (never bundled — a
-message must map to exactly one approvable item, or a single ✅ can't tell us which one was approved).
+"""Checks for new feature requests and posts each one to Slack as its own message — never several
+requests bundled into one message, because then a single ✅ wouldn't tell us which one got approved.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ def _format_message(workspace_id: str, title: str, body: str) -> str:
 
 
 def poll_once(*, store: Store, slack: SlackClient, workspaces_root: Path, channel: str) -> list[str]:
-    """Returns the paths newly notified this pass. Never raises — a single Slack failure logs and
-    moves on to the next entity rather than blocking the whole sweep (P18: report, don't crash)."""
+    """Returns whichever requests got a Slack message this time. Never crashes — if posting one to
+    Slack fails, we log it and just move on to the next one rather than stopping the whole check."""
     notified: list[str] = []
     for entity in find_feature_request_entities(workspaces_root):
         key = str(entity.path)

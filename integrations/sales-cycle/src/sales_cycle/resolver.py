@@ -1,7 +1,7 @@
-"""Resolve a customer_tag (or, later, an attendee email domain) to a workspace slug via HubSpot, and
-bind it onto a meeting via Vexa's own existing `POST /meetings/{platform}/{native_meeting_id}/workspace`
-endpoint (docs/docs/api/meetings.mdx:164-174) — no bespoke storage; the meeting record's `workspace_id`
-(P23 single-writer) is the one place this lives.
+"""Turns a customer name (or email domain) into a Vexa workspace, using HubSpot to identify the
+company, then tags the meeting with it using Vexa's own existing "bind this meeting to a workspace"
+endpoint. We don't keep our own separate record of which meeting belongs to which customer — Vexa's
+own meeting record is the one place that's tracked.
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ class WorkspaceBindError(RuntimeError):
 
 
 def slug_for_company(company: Company) -> str:
-    """Stable slug keyed on the HubSpot company id, not its name/domain — survives a rename."""
+    """The workspace name we use for this company — based on its HubSpot ID, not its name, so it
+    doesn't break if the company gets renamed in HubSpot later."""
     return f"cust-{company.id}"
 
 
@@ -44,7 +45,7 @@ def bind_meeting_workspace(
     *, gateway_url: str, api_key: str, platform: str, native_meeting_id: str, workspace_id: str,
     timeout: float = 5.0,
 ) -> None:
-    """Calls the EXISTING binding endpoint — never invents a parallel notion of 'which workspace'."""
+    """Tags the meeting with the given workspace, using Vexa's own endpoint for it."""
     url = f"{gateway_url.rstrip('/')}/meetings/{platform}/{native_meeting_id}/workspace"
     try:
         resp = httpx.post(

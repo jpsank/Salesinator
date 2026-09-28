@@ -1,5 +1,5 @@
-"""Verify a Vexa webhook delivery — docs/docs/webhooks.mdx:60-70:
-`X-Webhook-Signature: sha256=<hmac_sha256(secret, "<timestamp>." + body)>`, `X-Webhook-Timestamp`."""
+"""Makes sure an alert claiming to be from Vexa is actually from Vexa, using the signature Vexa
+attaches to every webhook it sends (documented in docs/docs/webhooks.mdx)."""
 
 from __future__ import annotations
 

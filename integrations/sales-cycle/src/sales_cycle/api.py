@@ -1,21 +1,29 @@
-"""The sales-cycle service's public surface (P6 — one front door).
+"""Every web address (endpoint) this add-on exposes, and what each one is for.
 
-POST /dispatch — wraps POST /bots: forwards the dispatch unchanged, then (if a customer_tag was
-  given) resolves it against HubSpot and binds the resulting workspace onto the new meeting via
-  Vexa's existing workspace-binding endpoint. Never blocks the bot from joining on a resolution miss.
+POST /dispatch
+    Send a bot into a call, same as Vexa's own POST /bots, but also accepts a customer name
+    (`customer_tag`) and tags the call with that customer before the bot joins.
 
-POST /tag — resolve-or-bind for an ALREADY-DISPATCHED meeting (the Slack-slash-command path: a rep
-  tags a call after sending it, or before the copilot arms).
+POST /tag
+    Tag a call that's already underway (or already sent) with a customer name — this is what the
+    Slack `/vexa-tag` command calls.
 
-POST /internal/poll-feature-requests — sweep the workspaces volume for new feature_request entities,
-  post one Slack message per new one (cron-triggered; no in-process scheduler in v1).
+POST /internal/poll-feature-requests
+    Check for new feature requests the meeting notes picked up, and post each one to Slack.
+    Meant to be triggered on a schedule (a cron job), not called by a person directly.
 
-POST /slack/events — Slack Events API receiver: URL verification handshake, and a ✅ reaction on a
-  feature-request message marks it approved.
+POST /slack/events
+    Slack sends things here: the one-time "prove you own this URL" handshake when you first set
+    this up, and later, every time someone reacts to a message with an emoji.
 
-POST /internal/process-approved — for each approved-but-not-yet-dispatched request, fire the
-  implementation turn; for each already-dispatched one, check whether it finished and push it.
-  Cron-triggered, same pattern as the feature-request poller.
+POST /internal/process-approved
+    For every approved feature request: if it hasn't been started yet, start the AI agent building
+    it; if it's already building, check whether it's done, and if so, push it to GitHub.
+    Also meant to run on a schedule.
+
+POST /webhooks/meeting-started
+    Vexa calls this the moment a bot joins a call. Used for the automatic version of customer
+    tagging — see calendar_resolver.py.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from sales_cycle.calendar_resolver import resolve_meeting_started
 from sales_cycle.hubspot_client import HubSpotClient
 from sales_cycle.orchestrator import DispatchError, PushError, check_and_push, submit_implementation
 from sales_cycle.poller import poll_once
@@ -35,6 +44,7 @@ from sales_cycle.settings import get_settings
 from sales_cycle.slack_client import SlackClient
 from sales_cycle.slack_verify import SlackSignatureError, verify_slack_signature
 from sales_cycle.store import Store
+from sales_cycle.webhook_verify import WebhookSignatureError, verify_webhook_signature
 
 logger = logging.getLogger("sales_cycle.api")
 
@@ -226,6 +236,35 @@ def process_approved() -> dict:
             pushed_now.append(approval.id)
 
     return {"dispatched": dispatched_now, "pushed": pushed_now}
+
+
+@app.post("/webhooks/meeting-started")
+async def webhook_meeting_started(request: Request) -> dict:
+    body = await request.body()
+    settings = get_settings()
+    try:
+        verify_webhook_signature(
+            secret=settings.calendar_webhook_secret,
+            timestamp=request.headers.get("X-Webhook-Timestamp", ""),
+            signature=request.headers.get("X-Webhook-Signature", ""),
+            body=body,
+        )
+    except WebhookSignatureError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+
+    payload = await request.json()
+    if payload.get("event_type") != "meeting.started":
+        return {"resolved": False, "reason": "not a meeting.started event"}
+
+    meeting = ((payload.get("data") or {}).get("meeting")) or {}
+    own_domains = {d.strip().lower() for d in settings.own_domains.split(",") if d.strip()}
+    result = resolve_meeting_started(
+        event=meeting, hubspot=_hubspot(), gateway_url=settings.vexa_gateway_url,
+        api_key=settings.calendar_api_key, own_domains=own_domains,
+    )
+    if not result["resolved"]:
+        logger.info("calendar-path resolution miss: %s", result.get("reason"))
+    return result
 
 
 @app.get("/health")

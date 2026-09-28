@@ -1,6 +1,7 @@
-"""Verify a Slack Events API request is genuinely from Slack (HMAC signature + replay window) —
-https://api.slack.com/authentication/verifying-requests-from-slack. This is a public webhook endpoint;
-skipping this check would let anyone POST fake approvals that trigger a real branch/push later."""
+"""Makes sure a request claiming to be from Slack is actually from Slack (Slack's own recommended
+check: https://api.slack.com/authentication/verifying-requests-from-slack). This endpoint is
+reachable from the public internet — without this check, anyone could fake a Slack approval and
+trigger a real branch/push."""
 
 from __future__ import annotations
 

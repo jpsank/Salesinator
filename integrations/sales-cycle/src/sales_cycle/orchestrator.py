@@ -1,13 +1,14 @@
-"""Approved feature-request → a real branch, implemented, pushed to GitHub.
+"""Takes an approved feature request and turns it into a real, pushed GitHub branch.
 
-Talks to agent-api's INTERNAL port directly (X-User-Id), not the gateway — see settings.py's
-`agent_api_internal_url` docstring for why. Uses the dedicated "product-repo" service account's own
-identity throughout (dispatch, git-status read, push) — no shared-workspace membership grant needed;
-its own primary workspace IS the product repo (swapped in once, out of band).
+Three steps, each its own function below:
+1. `submit_implementation` — tell the AI agent to start building it (fire-and-forget; it runs in the
+   background).
+2. `check_and_push` — check in later: is it done? If yes, push the branch to GitHub.
 
-This deliberately does NOT expose a raw "push" tool to the agent turn (rejected in the plan) — the turn
-only ever commits locally; this module decides, server-side, whether/when a finished turn's branch
-actually gets pushed to GitHub.
+Everything here runs as one dedicated Vexa account that's set up to always work in the real product
+codebase (see settings.py's `product_repo_user_id`). The agent itself is never given the ability to
+push to GitHub directly — it can only save its work locally. This code is the only thing that decides
+when a finished piece of work actually gets pushed out.
 """
 
 from __future__ import annotations
@@ -40,8 +41,8 @@ def branch_for(title: str) -> str:
 def submit_implementation(
     *, agent_api_url: str, user_id: str, title: str, body: str, timeout: float = 10.0,
 ) -> dict:
-    """Fires the one-shot implementation turn. Fire-and-forget — the dispatch runs asynchronously in
-    its own worker container; `check_and_push` polls for its result on a later sweep."""
+    """Starts the AI agent working on this request. We don't wait around for it to finish — it runs
+    in the background, and `check_and_push` (below) checks on it later."""
     branch = branch_for(title)
     prompt = (
         f"A customer explicitly asked for this product capability:\n\n"
@@ -86,14 +87,14 @@ def _git_state(*, agent_api_url: str, user_id: str, timeout: float) -> dict:
 def check_and_push(
     *, agent_api_url: str, user_id: str, expected_branch: str, timeout: float = 15.0,
 ) -> dict | None:
-    """Returns the push result once the turn has landed on `expected_branch` with a clean tree (nothing
-    left uncommitted), else None — the turn isn't finished yet, retry on the next sweep. Never pushes a
-    branch other than the one this feature request asked for (a stale/wrong checkout is a no-op here,
-    not a push of the wrong thing)."""
+    """Checks whether the agent finished: is it on the right branch, with everything saved (nothing
+    left half-done)? If not, returns nothing — we'll just check again next time. If it IS done, pushes
+    the branch to GitHub and returns the result. Only ever pushes the exact branch this request asked
+    for, never anything else it might happen to be sitting on."""
     state = _git_state(agent_api_url=agent_api_url, user_id=user_id, timeout=timeout)
     if state.get("branch") != expected_branch:
         return None
-    if state.get("changes"):  # uncommitted changes still pending — the turn hasn't finished committing
+    if state.get("changes"):  # still has unsaved work — not finished yet
         return None
     try:
         resp = httpx.post(

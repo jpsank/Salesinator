@@ -1,11 +1,11 @@
-"""A tiny local SQLite store — stdlib only, no new dependency. Two concerns, kept in one file since
-both are small and this package owns them exclusively (P1):
+"""A tiny local database this add-on keeps for itself — just a plain file on disk, nothing fancy or
+external to install. It tracks two things:
 
-- `seen_files`: which feature-request entity files we've already notified Slack about (the poller's
-  dedup — a file is noticed once, ever).
-- `pending_approvals`: the Slack message ↔ feature-request correlation. A row moves
-  pending → approved (a rep's ✅ reaction) → dispatched (the implementation turn fired) →
-  done (the branch pushed to GitHub).
+- `seen_files`: which feature-request notes we've already posted to Slack, so we never post the
+  same one twice.
+- `pending_approvals`: each feature request's progress. Starts as "pending", becomes "approved" once
+  someone reacts ✅ in Slack, "dispatched" once the AI agent starts building it, and "done" once
+  the finished branch is pushed to GitHub.
 """
 
 from __future__ import annotations
@@ -35,7 +35,8 @@ _FIELDS = tuple(f for f in PendingApproval.__dataclass_fields__)
 
 
 def _to_pending_approval(row: sqlite3.Row, **overrides: str) -> PendingApproval:
-    """Rows carry extra columns (e.g. `created_at`) the dataclass doesn't expose — pick only its fields."""
+    """The database row has a couple of extra columns we don't need to hand back — this just picks
+    out the ones we actually use."""
     data = {k: row[k] for k in _FIELDS if k not in overrides}
     return PendingApproval(**data, **overrides)
 
@@ -45,11 +46,9 @@ class Store:
         if db_path != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
-        # ONE connection for the Store's lifetime — ":memory:" creates a fresh, empty database per
-        # `sqlite3.connect()` call, so reopening per-method would silently lose everything between
-        # calls. check_same_thread=False: uvicorn's sync routes run this from a threadpool; this
-        # service's write volume is low (one row per feature-request/reaction), so SQLite's own
-        # locking is sufficient — no separate connection pool needed.
+        # We keep this one connection open for as long as the Store exists, instead of opening a new
+        # one every time. That matters most for tests using an in-memory database — opening a new
+        # in-memory database each time would silently start over from empty every call.
         self._connection = sqlite3.connect(self._db_path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._init()

@@ -1,15 +1,16 @@
-"""Read `feature_request` kg entities off the shared agent-workspaces volume directly — no Vexa API
-call, no auth mismatch (the copilot's `cust-<id>` subject isn't a real logged-in user with its own API
-key, so the public per-user `/agent/workspace/file` route doesn't fit here; the workspace is just files
-on a volume this service mounts read-only, so it reads them like any other consumer of the OKF bundle).
+"""Reads "feature request" notes straight from disk, where Vexa keeps every customer's files.
 
-Entity file shape (docs/docs/how-to/workspace-files.mdx — the OKF bundle):
+We read the files directly rather than asking Vexa's web API for them, because those customer
+folders aren't tied to a real logged-in account with its own login key — they're just folders Vexa
+made up on the fly per customer. Reading the files ourselves sidesteps that entirely.
+
+Each feature-request note is a small text file shaped like this:
     ---
     type: feature_request
-    id: <slug>
-    title: <human title>
+    id: some-short-id
+    title: A human-readable title
     ---
-    <body>
+    The body text describing the request.
 """
 
 from __future__ import annotations
@@ -42,8 +43,8 @@ def _parse_frontmatter(text: str) -> tuple[dict, str] | None:
 
 
 def find_feature_request_entities(workspaces_root: Path) -> list[FeatureRequestEntity]:
-    """Every `kg/entities/feature_request/*.md` under every `<workspaces_root>/<subject>/` — the caller
-    (the poller) is the one that decides which of these are new via the seen-files store."""
+    """Every feature-request note, from every customer's folder. Whoever calls this decides which
+    ones are actually new (see store.py's `seen_files`) — this function just returns all of them."""
     out: list[FeatureRequestEntity] = []
     if not workspaces_root.is_dir():
         return out
