@@ -216,23 +216,21 @@ def _capture_join_evidence(
     non-admitted verdict). Same discipline as `failure_stage`: derive server-side, never trust a
     stale payload field (FM-003).
 
-    `needs_help` is deliberately NOT proof of a lobby on its own. It implies one only while
-    `LEGAL_TRANSITIONS` permits reaching it from `awaiting_admission` alone — and #1251 adds
-    `joining -> needs_help` precisely so a PRE-lobby blocker (a consent gate, a captcha) can
-    escalate. The day that lands, a bot that never saw a waiting room would be stamped
-    `reached_lobby` -> `awaiting_admission_timeout` -> `host_action`: filed as *the host did not let us in*,
-    and excluded from `system_failure_rate` — the metric under-reporting our own defects in exactly
-    the cohort #1251 exists to investigate. So the test is how `needs_help` was ENTERED, not that it
-    occurred.
+    `needs_help` is deliberately NOT proof of a lobby on its own — #1251 added `joining ->
+    needs_help` (see `LEGAL_TRANSITIONS`) precisely so a PRE-lobby blocker (a consent gate, a
+    captcha) can escalate straight from `joining`, before ever reaching `awaiting_admission`. Since
+    that edge landed, `reached_lobby` is answered purely from whether `awaiting_admission` is
+    anywhere in the record's OWN history — a bot that escalated via `joining -> needs_help` never put
+    it there, so it's correctly NOT counted as having reached the lobby, whatever its `frm` is at the
+    moment this runs. Without that history check, a bot that never saw a waiting room would be
+    stamped `reached_lobby` -> `awaiting_admission_timeout` -> `host_action`: filed as *the host did
+    not let us in*, and excluded from `system_failure_rate` — the metric under-reporting our own
+    defects in exactly the cohort #1251 exists to investigate.
     """
     try:
         from .join_evidence import evidence_from_event
 
-        reached_lobby = (
-            BotStatus.AWAITING_ADMISSION in rec.history
-            or frm is BotStatus.AWAITING_ADMISSION
-            or (frm is BotStatus.NEEDS_HELP and BotStatus.AWAITING_ADMISSION in rec.history)
-        )
+        reached_lobby = BotStatus.AWAITING_ADMISSION in rec.history
         if rec.failure_stage is FailureStage.ACTIVE:
             # A bot that reached `active` was ADMITTED — whatever killed it afterwards (a pipeline
             # fault, an eviction) is not a join failure. The join taxonomy has nothing truthful to
