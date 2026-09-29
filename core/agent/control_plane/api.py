@@ -89,6 +89,18 @@ MEETING_STREAM_OUTPUT_REPLAY = 160
 MEETING_STREAM_ENDING_CAP_SEC = 45.0
 
 
+def _resolve_and_validate_seed(settings) -> "tuple[Path, list[str]]":
+    """The seed-selection pair `ws_init` and the startup `u_live` placeholder seed both need:
+    resolve the workspace-seed template out of the registry root (VEXA_WORKSPACE_SEED_DIR still
+    overrides), then validate it. Returns (seed_dir, problems) — empty problems == valid; each
+    caller decides what to do with a non-empty list (ws_init raises 500, startup logs and skips)."""
+    seed_dir = resolve_seed_dir(
+        settings.default_template if settings is not None else None,
+        seeds_root=settings.workspace_seeds_dir if settings is not None else None,
+    )
+    return seed_dir, validate_seed(seed_dir)
+
+
 def _upload_filename(name: str | None) -> str:
     base = (name or "upload").replace("\\", "/").rsplit("/", 1)[-1].strip()
     base = re.sub(r"\s+", "_", base)
@@ -1619,13 +1631,7 @@ def create_app(
         clone under ``kg/<slug>/`` instead of replacing the workspace root)."""
         subject = target_subject_of(request, for_)
         ws = wsr.workspace_dir(subject)
-        # Select the seed out of the registry root (default template for now; per-request template
-        # selection lands with the second seed). VEXA_WORKSPACE_SEED_DIR still overrides.
-        seed_dir = resolve_seed_dir(
-            settings.default_template if settings is not None else None,
-            seeds_root=settings.workspace_seeds_dir if settings is not None else None,
-        )
-        problems = validate_seed(seed_dir)
+        seed_dir, problems = _resolve_and_validate_seed(settings)
         if problems:
             raise HTTPException(status_code=500, detail="invalid workspace seed: " + "; ".join(problems))
         existed = (ws / ".git").exists()
@@ -2569,11 +2575,8 @@ def _build_production_app() -> FastAPI:
     # so a meeting that never resolves a real owner (a bad/absent VEXA_BOT_API_KEY, or an untagged
     # call) lands its copilot in a real, existing workspace instead of 404ing on a directory nobody
     # ever created. A stopgap for today's placeholder, not a substitute for M2's real fix.
-    _u_live_seed_dir = resolve_seed_dir(
-        settings.default_template if settings is not None else None,
-        seeds_root=settings.workspace_seeds_dir if settings is not None else None,
-    )
-    if not validate_seed(_u_live_seed_dir):
+    _u_live_seed_dir, _u_live_problems = _resolve_and_validate_seed(settings)
+    if not _u_live_problems:
         seed_workspace(wsr.workspace_dir(transcription_watcher.DEFAULT_SUBJECT), _u_live_seed_dir)
         system_mounts.ensure_system_workspace(str(wsr.root), transcription_watcher.DEFAULT_SUBJECT)
     else:

@@ -349,23 +349,33 @@ class WorkspaceReader:
                             "files": files, "ts": int(ct) if ct.isdigit() else 0})
         return {"branch": git("rev-parse", "--abbrev-ref", "HEAD") or "main", "changes": changes, "commits": commits}
 
-    def git_diff_at(self, base: Path, sha: str, path: Optional[str] = None) -> dict:
-        """Unified diff of ONE commit (optionally scoped to a single file) in the workspace at ``base`` —
-        so the terminal can HIGHLIGHT exactly what changed. Capped so a huge commit can't flood the UI."""
-        import re
+    @staticmethod
+    def _capped_diff(base: Path, diff_args: list[str], path: Optional[str] = None) -> tuple[str, bool]:
+        """Runs ``git -C <base> <diff_args> [-- <path>]`` and caps the output at 600 lines — the
+        shared shape ``git_diff_at``/``git_range_diff_at`` both need so a huge commit or branch
+        can't flood the UI. Returns ``(diff, truncated)``; each caller builds its own result dict
+        around it (they differ in which fields identify what was diffed)."""
         import subprocess
 
         from shared.gitenv import scrubbed_git_env
 
-        base = self._guard_under_root(base)
-        if not (base / ".git").exists() or not re.fullmatch(r"[0-9a-fA-F]{4,40}", sha or ""):
-            return {"sha": sha, "path": path, "diff": "", "truncated": False}  # bad sha never hits git
-        args = ["git", "-C", str(base), "show", "--no-color", "--format=", sha]
+        args = ["git", "-C", str(base), *diff_args]
         if path:
             args += ["--", path]
         out = subprocess.run(args, capture_output=True, text=True, env=scrubbed_git_env()).stdout
         lines = out.splitlines()
-        return {"sha": sha, "path": path, "diff": "\n".join(lines[:600]), "truncated": len(lines) > 600}
+        return "\n".join(lines[:600]), len(lines) > 600
+
+    def git_diff_at(self, base: Path, sha: str, path: Optional[str] = None) -> dict:
+        """Unified diff of ONE commit (optionally scoped to a single file) in the workspace at ``base`` —
+        so the terminal can HIGHLIGHT exactly what changed. Capped so a huge commit can't flood the UI."""
+        import re
+
+        base = self._guard_under_root(base)
+        if not (base / ".git").exists() or not re.fullmatch(r"[0-9a-fA-F]{4,40}", sha or ""):
+            return {"sha": sha, "path": path, "diff": "", "truncated": False}  # bad sha never hits git
+        diff, truncated = self._capped_diff(base, ["show", "--no-color", "--format=", sha], path)
+        return {"sha": sha, "path": path, "diff": diff, "truncated": truncated}
 
     def git_range_diff_at(self, base: Path, base_ref: str, head_ref: str,
                           path: Optional[str] = None) -> dict:
@@ -376,18 +386,10 @@ class WorkspaceReader:
         ``git_diff_at``; a ref that doesn't look like a ref never reaches git (no flag injection via
         a ref string starting with ``-``)."""
         import re
-        import subprocess
-
-        from shared.gitenv import scrubbed_git_env
 
         base = self._guard_under_root(base)
         ref_re = re.compile(r"^[A-Za-z0-9._/][A-Za-z0-9._/-]{0,199}$")
         if not (base / ".git").exists() or not ref_re.match(base_ref or "") or not ref_re.match(head_ref or ""):
             return {"base": base_ref, "head": head_ref, "path": path, "diff": "", "truncated": False}
-        args = ["git", "-C", str(base), "diff", "--no-color", f"{base_ref}...{head_ref}"]
-        if path:
-            args += ["--", path]
-        out = subprocess.run(args, capture_output=True, text=True, env=scrubbed_git_env()).stdout
-        lines = out.splitlines()
-        return {"base": base_ref, "head": head_ref, "path": path,
-                "diff": "\n".join(lines[:600]), "truncated": len(lines) > 600}
+        diff, truncated = self._capped_diff(base, ["diff", "--no-color", f"{base_ref}...{head_ref}"], path)
+        return {"base": base_ref, "head": head_ref, "path": path, "diff": diff, "truncated": truncated}
