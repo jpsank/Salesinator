@@ -366,3 +366,28 @@ class WorkspaceReader:
         out = subprocess.run(args, capture_output=True, text=True, env=scrubbed_git_env()).stdout
         lines = out.splitlines()
         return {"sha": sha, "path": path, "diff": "\n".join(lines[:600]), "truncated": len(lines) > 600}
+
+    def git_range_diff_at(self, base: Path, base_ref: str, head_ref: str,
+                          path: Optional[str] = None) -> dict:
+        """Unified diff of everything on ``head_ref`` that ISN'T on ``base_ref`` — the "review this
+        branch before merging" view (vs ``git_diff_at``'s single-commit view). The local-PR read half
+        of the fully-local review flow (see ``workspace_git_sync.merge_branch`` for the write half):
+        no GitHub, no network, just this workspace's own git history. Same capping/guarding as
+        ``git_diff_at``; a ref that doesn't look like a ref never reaches git (no flag injection via
+        a ref string starting with ``-``)."""
+        import re
+        import subprocess
+
+        from shared.gitenv import scrubbed_git_env
+
+        base = self._guard_under_root(base)
+        ref_re = re.compile(r"^[A-Za-z0-9._/][A-Za-z0-9._/-]{0,199}$")
+        if not (base / ".git").exists() or not ref_re.match(base_ref or "") or not ref_re.match(head_ref or ""):
+            return {"base": base_ref, "head": head_ref, "path": path, "diff": "", "truncated": False}
+        args = ["git", "-C", str(base), "diff", "--no-color", f"{base_ref}...{head_ref}"]
+        if path:
+            args += ["--", path]
+        out = subprocess.run(args, capture_output=True, text=True, env=scrubbed_git_env()).stdout
+        lines = out.splitlines()
+        return {"base": base_ref, "head": head_ref, "path": path,
+                "diff": "\n".join(lines[:600]), "truncated": len(lines) > 600}

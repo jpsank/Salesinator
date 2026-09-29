@@ -63,7 +63,9 @@ from control_plane.repo_ref import RepoRefError, assert_fetchable
 from control_plane.workspace_publish import (
     PublishError, PullRequestError, RepoExistsError, create_pull_request, publish_workspace, published_remote_url,
 )
-from control_plane.workspace_git_sync import RemoteSyncError, pull_origin, push_origin, remote_status
+from control_plane.workspace_git_sync import (
+    MergeError, RemoteSyncError, merge_branch, pull_origin, push_origin, remote_status,
+)
 from control_plane.workspace_worktree import worktree_dir_for, release_worktree
 from control_plane.gates_runner import check_commit_compliance, run_configured_pre_push_hook
 from control_plane.workspace_purpose import read_purpose, write_purpose
@@ -398,6 +400,15 @@ class WorkspacePullRequestBody(BaseModel):
     title: str
     body: str
     base: str = "main"
+
+
+class WorkspaceMergeBody(BaseModel):
+    """Merge ``branch`` into ``into`` — locally, no push, no token, no GitHub. ``slug`` resolves like
+    ``WorkspacePushBody`` (own parked slot or a shared workspace); default target is the primary."""
+    model_config = {"extra": "forbid"}
+    slug: Optional[str] = None
+    branch: str
+    into: str = "main"
 
 
 class GitTokenBody(BaseModel):
@@ -1565,6 +1576,30 @@ def create_app(
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid subject")
 
+    @app.get("/api/workspace/git/range-diff")
+    def ws_git_range_diff(request: Request, base: str, head: str,
+                          slug: Optional[str] = None, path: Optional[str] = None):
+        """Unified diff of everything on ``head`` that isn't on ``base`` — the "review this branch
+        before merging" view, entirely local (no GitHub). Same authorized resolution as ws_git."""
+        try:
+            target = _read_target(request, slug)  # authorizes: a slug outside the caller's mount set → 403
+            return wsr.git_range_diff_at(target, base, head, path)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid subject")
+
+    @app.post("/api/workspace/git/merge")
+    def ws_git_merge(request: Request, body: WorkspaceMergeBody = Body(...)):
+        """Merge ``branch`` into ``into`` — LOCALLY, no push, no token, no GitHub: the "approve" action
+        of the fully-local review flow (review the range-diff above, then merge). Management-scoped
+        resolution (own parked slots or a shared workspace), same as push/pull."""
+        subject = subject_of(request)
+        ws = _manage_dir(subject, body.slug)
+        try:
+            head_sha = merge_branch(ws, branch=body.branch, into=body.into)
+        except MergeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return {"branch": body.into, "merged": body.branch, "head_sha": head_sha}
+
     # ── workspace lifecycle (SCAFFOLD / TODO(phase-6)) — init from a validated template, swap which
     # validated workspace/template the next dispatch mounts. The seams exist downstream (seeding.seed_workspace
     # for init; VEXA_WORKSPACE_REPO/REF in dispatch/spawn for swap, bridge resolves per-meeting) — Phase 6
@@ -2502,10 +2537,11 @@ def _build_production_app() -> FastAPI:
     # the dispatch mount set (read-only for Slice 1), not just the /active listing.
     dispatcher = Dispatcher(settings, runtime, identity, membership_index=membership_index,
                             model_config=model_config)
+    wsr = WorkspaceReader(settings.workspaces_dir)
     app = create_app(
         dispatcher,
         stream_reader=RedisStreamReader(settings.redis_url),
-        reader=WorkspaceReader(settings.workspaces_dir),
+        reader=wsr,
         scheduler=scheduler,
         invocations_url=invocations_url,
         redis_url=settings.redis_url,
@@ -2529,6 +2565,19 @@ def _build_production_app() -> FastAPI:
     # NOTE: no `subject=` → the watcher uses its PRE-M2 `u_live` placeholder; live-meeting dispatch (M2)
     # must pass the real meeting owner here (see transcription_watcher.start).
     from control_plane import transcription_watcher
+    # Seed the placeholder's workspace the same way `POST /api/workspace/init` seeds any subject's —
+    # so a meeting that never resolves a real owner (a bad/absent VEXA_BOT_API_KEY, or an untagged
+    # call) lands its copilot in a real, existing workspace instead of 404ing on a directory nobody
+    # ever created. A stopgap for today's placeholder, not a substitute for M2's real fix.
+    _u_live_seed_dir = resolve_seed_dir(
+        settings.default_template if settings is not None else None,
+        seeds_root=settings.workspace_seeds_dir if settings is not None else None,
+    )
+    if not validate_seed(_u_live_seed_dir):
+        seed_workspace(wsr.workspace_dir(transcription_watcher.DEFAULT_SUBJECT), _u_live_seed_dir)
+        system_mounts.ensure_system_workspace(str(wsr.root), transcription_watcher.DEFAULT_SUBJECT)
+    else:
+        logger.warning("skipping u_live placeholder seed — invalid workspace seed template")
     transcription_watcher.start(settings.redis_url, dispatcher, app.state.live_meetings)
     return app
 

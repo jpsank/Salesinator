@@ -37,6 +37,10 @@ logger = logging.getLogger("agent_api.tx_watch")
 
 SRC = "transcription_segments"           # the wire every bot publishes to (configurable upstream)
 GROUP = "agent_copilot"                  # our consumer group — independent of the collector's
+# The PRE-M2 placeholder subject (see `start`'s docstring) — pulled out to a constant so the
+# one-time startup seed (api.py, right before `start()` is called) and this module's own default
+# name the SAME subject instead of two copies of the string drifting apart.
+DEFAULT_SUBJECT = "u_live"
 REARM_SEC = 30.0                         # re-touch a meeting's dispatch at most this often (keep-alive)
 # Rolling TTL the arm block refreshes on the ``proc:meeting:{row}:on`` flag while segments flow —
 # the flag's REAL end-of-life (the wire carries no session_end on the stop path, so the reap branch
@@ -272,7 +276,7 @@ def _resume_cursor(r, key: str) -> str:
     return str(cursor) if cursor else "0-0"
 
 
-def start(redis_url: str, dispatcher, live, *, subject: str = "u_live") -> threading.Thread:
+def start(redis_url: str, dispatcher, live, *, subject: str = DEFAULT_SUBJECT) -> threading.Thread:
     """Spawn the watcher (the ARM daemon thread) and return it (tests/introspection). ``keymap``
     (numeric meeting_id → row-id routing key) is the arm thread's own state.
 

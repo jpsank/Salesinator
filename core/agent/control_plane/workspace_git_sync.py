@@ -236,3 +236,30 @@ def pull_origin(ws: str | Path, *, token: Optional[str] = None) -> PullResult:
     log.info("workspace pull subject-ws=%s remote=%s ref=%s updated=%s", wsp.name, remote, branch, before != after)
     return PullResult(remote=remote, url=_display_url(url), branch=branch, head_sha=after,
                       updated=before != after, behind_before=behind_before)
+
+
+class MergeError(RuntimeError):
+    """A local merge failed — most often a real conflict. Never auto-resolved; the caller reviews
+    and fixes it like any merge conflict, or picks a different branch."""
+
+
+def merge_branch(ws: str | Path, *, branch: str, into: str) -> str:
+    """Merge ``branch`` into ``into`` — LOCALLY, no push, no token, no network, no GitHub. The write
+    half of the fully-local review flow (``workspace_reader.git_range_diff_at`` is the read half):
+    review the range-diff, then merge it in without ever leaving this workspace's own git history.
+
+    Always ``--no-ff`` (a real merge commit — a fast-forward would silently disappear ``branch``'s
+    own history from the log) and never force: a real conflict raises ``MergeError`` with git's own
+    message, and the half-finished merge is aborted so the tree is never left in a conflicted state
+    for the caller to stumble into on the next read."""
+    wsp = Path(ws)
+    current = _current_branch(wsp)
+    if current != into:
+        co = _git(wsp, "checkout", into, check=False)
+        if co.returncode != 0:
+            raise MergeError(f"could not check out {into!r}: {co.stderr.strip()}")
+    merged = _git(wsp, "merge", "--no-ff", "--no-edit", branch, check=False)
+    if merged.returncode != 0:
+        _git(wsp, "merge", "--abort", check=False)  # never leave a half-merged tree behind
+        raise MergeError(f"merge of {branch!r} into {into!r} failed: {merged.stderr.strip()}")
+    return _git(wsp, "rev-parse", "HEAD").stdout.strip()

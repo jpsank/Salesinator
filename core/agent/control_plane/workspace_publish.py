@@ -30,7 +30,7 @@ from typing import Callable, Optional
 from shared.adapters import GitPushError, push_with_token
 from shared.gitenv import scrubbed_git_env
 
-from control_plane.repo_ref import assert_fetchable
+from control_plane.repo_ref import assert_fetchable, host_of
 from control_plane.workspace_attach import SEED_SLOT, _safe_subject_dir, attached_workspaces
 
 log = logging.getLogger(__name__)
@@ -182,23 +182,31 @@ def publish_workspace(
     if not (ws / ".git").exists():
         raise PublishError("no workspace to publish — initialize it first")
 
-    # Vexa-born gate. Explicit target: an `origin` remote means an ATTACHED external clone — its home
-    # is that repo. Legacy seed-slot path: the active slot carrying a repo URL means the same thing.
+    # External-remote gate. An `origin` that names a real REMOTE HOST means an attached clone — its
+    # home is that repo, and publish is refused so it never shadows a GitHub home the caller already
+    # set up elsewhere. An `origin` that's a LOCAL PATH (the self-host VEXA_ALLOW_LOCAL_REPO_ROOT
+    # escape hatch — see control_plane/repo_ref.py) isn't a GitHub home at all, so it's NOT refused
+    # here: publish adds `vexa-publish` as an ADDITIVE remote (origin is never touched), giving a
+    # locally-attached workspace a GitHub mirror too, not replacing its local origin as home.
     if ws_dir is not None:
         origin = subprocess.run(["git", "-C", str(ws), "remote", "get-url", "origin"],
                                 capture_output=True, text=True, env=scrubbed_git_env())
-        if origin.returncode == 0 and origin.stdout.strip():
+        origin_url = origin.stdout.strip() if origin.returncode == 0 else ""
+        if origin_url and host_of(origin_url) is not None:
             raise PublishError(
                 "this workspace is attached from an external repo — it already has a home; "
-                "push to that repo instead (publish is for vexa-born workspaces)"
+                "push to that repo instead (publish is for vexa-born workspaces, or ones whose only "
+                "home so far is a local path)"
             )
     else:
         state = attached_workspaces(rootp, subject)
         active = state.get("active")
-        if active not in (None, SEED_SLOT) and state.get("slots", {}).get(active, {}).get("repo"):
+        active_repo = state.get("slots", {}).get(active, {}).get("repo") if active not in (None, SEED_SLOT) else None
+        if active_repo and host_of(active_repo) is not None:
             raise PublishError(
                 "the active workspace is attached from an external repo — it already has a home; "
-                "push to that repo instead (publish is for vexa-born workspaces)"
+                "push to that repo instead (publish is for vexa-born workspaces, or ones whose only "
+                "home so far is a local path)"
             )
 
     # The branch to push: the workspace's current branch (full history rides along with it).
@@ -309,8 +317,12 @@ def create_pull_request(
 ) -> dict:
     """Opens a pull request for the workspace's CURRENT branch against ``base``, on the repo its
     home remote points at (``origin`` for an attached clone, ``vexa-publish`` for a published
-    vexa-born one — same resolution as push). Raises ``PublishError``/``PullRequestError`` (both
-    token-redacted) on any failure — a not-yet-pushed branch, no home remote, or a GitHub API error."""
+    vexa-born one — same resolution as push) — UNLESS that home is a local path (the self-host
+    VEXA_ALLOW_LOCAL_REPO_ROOT case), which isn't a GitHub repo at all: a PR needs an actual GitHub
+    remote, so a local-origin workspace falls back to its ``vexa-publish`` remote instead, if one was
+    ever added (see the publish-gate note in ``publish_workspace``). Raises ``PublishError``/
+    ``PullRequestError`` (both token-redacted) on any failure — a not-yet-pushed branch, no GitHub
+    remote at all, or a GitHub API error."""
     # Local import: workspace_git_sync imports PUBLISH_REMOTE/_display_url FROM this module, so a
     # module-level import here would be circular. Both modules are fully loaded by the time this
     # function actually runs.
@@ -318,9 +330,12 @@ def create_pull_request(
 
     wsp = Path(ws)
     home = home_remote(wsp)
-    if home is None:
+    url = home[1] if home is not None else None
+    if url is not None and host_of(url) is None:
+        # home is a local path, not a GitHub repo — a PR can only target vexa-publish, if it exists.
+        url = published_remote_url(wsp)
+    if url is None:
         raise PublishError("this workspace has no GitHub home yet — publish or attach a repo first")
-    _, url = home
     owner, repo = owner_repo_from_url(url)
     branch = _current_branch(wsp)
     if not branch:
