@@ -20,10 +20,11 @@ ENV UV_LINK_MODE=copy \
 WORKDIR /app
 
 COPY core/agent/pyproject.toml core/agent/uv.lock ./
-# Worker image installs ONLY base (pydantic/jsonschema/PyYAML/redis) — NO fastapi/uvicorn, NO dev/test
-# (D1). claude-code is an npm global installed below, not a pip dep.
+# Worker image installs base (pydantic/jsonschema/PyYAML/redis) + the `worker` group (ddgs[mcp] — a
+# local, stdio-spawned MCP search server, no network service, no API key) — NO fastapi/uvicorn, NO
+# dev/test (D1). claude-code is an npm global installed below, not a pip dep.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-default-groups
+    uv sync --frozen --no-install-project --no-default-groups --group worker
 
 # Claude Code (the unit's model+tooling runtime) + git (the governance git ops). node 20 via nodesource
 # so claude-code resolves; the subscription credentials are bind-mounted read-only at runtime (P15).

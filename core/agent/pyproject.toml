@@ -24,8 +24,13 @@ control-plane = [
     "python-multipart>=0.0.31,<1",
     "uvicorn[standard]>=0.29,<1",
 ]
-# worker image (claude-in-container) — base only; claude-code is an npm global, not a pip dep.
-worker = []
+# worker image (claude-in-container) — claude-code is an npm global, not a pip dep; ddgs[mcp] is the
+# one real pip dep the worker needs: a local (stdio-spawned, no network service, no API key) MCP
+# server the harness's --mcp-config can point at, replacing Claude Code's native WebSearch (which is
+# an Anthropic-hosted tool with no real backend behind a local/open-source model — see
+# core/agent/llm/openai_compat.py's docstring for the completion-port side of that same gap). MIT
+# licensed (Category A, ADR-0004) — no license-exceptions.json entry needed.
+worker = ["ddgs[mcp]>=9,<10"]
 # tests (run with the ambient interpreter, not in either image). Tests exercise the control-plane
 # surface (FastAPI app), so the test env pulls in the control-plane group too.
 dev = ["pytest>=9.0.3", "pytest-asyncio>=1,<2", "fakeredis>=2.20,<3", {include-group = "control-plane"}]
