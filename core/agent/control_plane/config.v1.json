@@ -111,6 +111,12 @@
       "description": "the per-dispatch unit:<id>:out/:in streams the control plane relays (SSE) + the transcript tail"
     },
     {
+      "key": "VEXA_WORKER_REDIS_URL",
+      "class": "defaulted",
+      "default": "(empty — falls back to VEXA_REDIS_URL)",
+      "description": "the redis URL stamped into a DISPATCHED WORKER's own env; diverges from VEXA_REDIS_URL only when agent-api runs natively but the worker still spawns in Docker (agent-api's own redis URL is then host-facing, meaningless inside the worker's container)"
+    },
+    {
       "key": "VEXA_WORKSPACES_DIR",
       "class": "defaulted",
       "default": "/workspaces",

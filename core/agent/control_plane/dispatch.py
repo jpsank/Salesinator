@@ -247,7 +247,7 @@ def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token:
         "VEXA_WORKSPACE_PATH": primary_override or _worker_cwd(root, subject, mounts),  # the worker's cwd — an isolated worktree if given, else the primary baseline (or, if that's switched off, the first active normal workspace)
         "VEXA_MOUNTS": json.dumps(mounts),                       # the ordered active mount set [{slug,path,role,write,primary}]
         "VEXA_WORKSPACE_STORE_URL": settings.workspace_store_url,
-        "REDIS_URL": settings.redis_url,
+        "REDIS_URL": settings.worker_redis_url or settings.redis_url,
     }
     # Attribution (D4 / WP-A1.2): the per-mount turn commit is authored by the dispatch PRINCIPAL (the
     # authenticated human whose input drives the turn), committer stays the platform. Until membership/
@@ -335,7 +335,14 @@ def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token:
     # and a creds-less CI boot is unaffected. Backends that also broker creds keep the
     # dispatch-stamped value (docker_backend copies a key only when it is NOT already in the spec env).
     for key in MODEL_AUTH_ENV_ALLOWLIST:
-        value = (os.environ.get(key) or "").strip()
+        # WORKER_<key> wins when set — a natively-run agent-api's own value for one of these (e.g.
+        # VEXA_LLM_BASE_URL=http://localhost:11434/v1, reaching Ollama via the published host port)
+        # is meaningless if stamped verbatim into a Docker-spawned worker's env: the worker's
+        # `localhost` is itself, not the host. Reproduced live (same failure class already fixed for
+        # REDIS_URL in build_unit_env — this is the second instance, generalized here instead of a
+        # third one-off field). Every existing all-docker deployment is unaffected: WORKER_* is
+        # simply unset there, so this is a no-op fallback to the plain key, same as before.
+        value = (os.environ.get(f"WORKER_{key}") or os.environ.get(key) or "").strip()
         if value and key not in env:
             env[key] = value
     return env

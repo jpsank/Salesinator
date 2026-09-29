@@ -50,6 +50,17 @@ class Settings(BaseSettings):
     # ── Stream primitive — the per-dispatch redis Streams (unit:<id>:out / :in) ─
     redis_url: str = "redis://redis:6379/0"
 
+    # The redis URL handed to a DISPATCHED WORKER's own env (dispatch.py's REDIS_URL) — defaults to
+    # redis_url above, which is correct whenever agent-api and the worker are on the same network
+    # (the normal, all-docker case). They diverge when agent-api runs as a NATIVE host process (see
+    # deploy/compose/run-agent-api-native.sh) but the worker still spawns in Docker (runtime's own
+    # per-turn isolation boundary, unchanged): agent-api's own redis_url is then a host-facing
+    # published port (`redis://localhost:<port>/0`), which is meaningless INSIDE a container — a
+    # worker's `localhost` is itself, not the host. Reproduced live: a real dispatched worker
+    # crashed on startup with `ConnectionRefusedError` against the host-facing URL. Set explicitly
+    # (the docker-network hostname) only in that native-agent-api case.
+    worker_redis_url: str = ""
+
     # ── MVP0 chat runner — claude turn over a per-subject local git workspace ─
     # The chat unit's per-person workspace dirs live here; seeded from the template (CLAUDE.md +
     # conventions). The claude model alias/name (subscription default if empty).

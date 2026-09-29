@@ -55,10 +55,23 @@ export VEXA_ADMIN_API_URL=http://localhost:18057
 export VEXA_AGENT_DEFAULT_SUBJECT=u_live
 export VEXA_LLM_PROVIDER=openai-compat
 export VEXA_LLM_BASE_URL=http://localhost:11434/v1   # native Ollama — see run docs for GPU setup
-export VEXA_LLM_MODEL="${VEXA_LLM_MODEL:-llama3.2:3b}"
+# Same native/Docker split as VEXA_WORKER_REDIS_URL below, for the SAME reason, but this one feeds
+# dispatch.py's MODEL_AUTH_ENV_ALLOWLIST loop (env-driven, not a Settings field) — a
+# Docker-spawned worker's meeting-copilot completion call would otherwise try VEXA_LLM_BASE_URL's
+# host-facing localhost:11434 and fail, since the worker's own localhost is itself, not this host.
+# host.docker.internal, NOT ollama:11434 — Ollama runs NATIVELY too (this whole script's point),
+# so the docker-network hostname doesn't resolve at all (that container's kept stopped). Got this
+# wrong on the first pass — reproduced live: "Name or service not known" against ollama:11434.
+export WORKER_VEXA_LLM_BASE_URL=http://host.docker.internal:11434/v1
+export VEXA_LLM_MODEL="${VEXA_LLM_MODEL:-gemma4:latest}"
 export VEXA_LLM_TIMEOUT_SEC=300
 export VEXA_LOG_LEVEL=info
 export VEXA_REDIS_URL=redis://localhost:16379/0
+# The redis URL handed to a DISPATCHED WORKER's own env is DIFFERENT from agent-api's own — a
+# worker runs inside Docker, where `localhost` is the container itself, not this host. Reproduced
+# live: a real worker crashed on startup with ConnectionRefusedError against the host-facing URL
+# above before this was added. See shared/config.py's worker_redis_url docstring.
+export VEXA_WORKER_REDIS_URL=redis://redis:6379/0
 export VEXA_WORKSPACE_MOUNT_SOURCE="$WORKSPACES"
 export VEXA_DISPATCH_SIGNING_KEY=dev-dispatch-signing-key
 export VEXA_GATEWAY_URL=http://localhost:18056
