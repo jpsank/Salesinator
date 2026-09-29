@@ -16,6 +16,11 @@ services:
     # name, REDIS_URL, and every consumer stay put; only the engine changes (#653).
     image: valkey/valkey:8-alpine
     command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      # For a natively-run service (e.g. agent-api during local hybrid dev — see
+      # deploy/compose/README.md) to reach this container the same way postgres/admin-api/runtime/
+      # meeting-api/gateway already publish theirs. Loopback-only, same convention as those.
+      - "127.0.0.1:${REDIS_HOST_PORT:-16379}:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -371,7 +376,7 @@ services:
         required: false
     environment:
       - SALES_CYCLE_VEXA_GATEWAY_URL=http://gateway:8000
-      - SALES_CYCLE_AGENT_API_INTERNAL_URL=http://agent-api:8100
+      - SALES_CYCLE_AGENT_API_INTERNAL_URL=${SALES_CYCLE_AGENT_API_INTERNAL_URL:-http://agent-api:8100}
       - SALES_CYCLE_MEETING_API_INTERNAL_URL=http://meeting-api:8080
       - SALES_CYCLE_DB_PATH=/data/sales-cycle.db
       - SALES_CYCLE_TERMINAL_URL=${SALES_CYCLE_TERMINAL_URL:-http://localhost:13000}

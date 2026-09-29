@@ -71,6 +71,41 @@ docker compose -f deploy/compose/docker-compose.yml down -v
 `REDIS_URL`, `ADMIN_TOKEN`, `INTERNAL_API_SECRET`, `MINIO_*`, `BROWSER_IMAGE`/`AGENT_IMAGE`,
 `DOCKER_GID`, `*_HOST_PORT`).
 
+## Local hybrid dev — native agent-api + native Ollama, Docker for the rest
+
+For fast iteration on `core/agent` code, or to get real GPU-accelerated local-model inference on
+Apple Silicon (Docker Desktop's Linux VM has no Metal passthrough — a containerized Ollama is
+CPU-only, period): run `agent-api` and Ollama as native host processes, keep everything else on
+Docker. `runtime`'s bot/worker spawning is the actual per-turn isolation boundary and isn't a fit
+for this — it stays containerized regardless.
+
+**One-time setup:**
+```bash
+brew install ollama
+mkdir -p ~/vexa-data/agent-workspaces
+docker run --rm -v vexa-v012_agent-workspaces:/from:ro -v ~/vexa-data/agent-workspaces:/to \
+  alpine cp -a /from/. /to/                    # migrate real workspace data out of the named volume
+```
+Add to `.env`:
+```
+AGENT_API_URL=http://host.docker.internal:18100
+SALES_CYCLE_AGENT_API_INTERNAL_URL=http://host.docker.internal:18100
+```
+
+**Every day:**
+```bash
+./dev-up.sh                       # starts Docker (minus agent-api/ollama) + both native processes
+./dev-down.sh                     # stops the native processes; Docker keeps running (fast restart)
+./dev-down.sh --docker            # stops everything
+```
+
+Iterating on `core/agent` code is then: edit → `./dev-down.sh && ./dev-up.sh` (or just re-run
+`./run-agent-api-native.sh` directly) — no image rebuild, no stale-container risk from forgetting
+to respawn a long-running worker after a rebuild (the mistake that cost a live test earlier — a
+worker container holding old code in memory across a rebuild it was never told about).
+
+Logs: `~/vexa-data/logs/{agent-api,ollama}.log`. PIDs: `~/vexa-data/pids/`.
+
 ## Smoke probe — "is this install actually working?"
 
 ```bash
