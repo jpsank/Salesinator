@@ -38,6 +38,11 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    environment:
+      # Ollama's default (4096) truncates a real coding-agent system prompt + tool schema, which
+      # degrades or silently breaks tool-calling — see docs.ollama.com/integrations/opencode's own
+      # troubleshooting note. 16k is the low end of what that note recommends.
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
     volumes:
       - ollama-data:/root/.ollama
     networks: [vexa]

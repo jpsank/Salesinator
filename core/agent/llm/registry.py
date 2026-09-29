@@ -16,6 +16,7 @@ from llm.anthropic_api import AnthropicCompletion
 from llm.claude_cli import ClaudeCliCompletion
 from llm.claude_code import ClaudeCodeHarness
 from llm.errors import LLMConfigError
+from llm.opencode import OpenCodeHarness
 from llm.openai_compat import OpenAICompatCompletion
 from llm.ports import CompletionPort, HarnessPort
 
@@ -28,6 +29,9 @@ COMPLETION_PROVIDERS: dict[str, type] = {
 
 HARNESS_RUNNERS: dict[str, type] = {
     "claude-code": ClaudeCodeHarness,
+    # server-mode driven (opencode serve), not a one-shot CLI call — see llm/opencode.py's
+    # docstring for why: it's the only way to hold a gated tool call open for later approval.
+    "opencode": OpenCodeHarness,
 }
 
 
