@@ -41,6 +41,7 @@ import logging
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from sales_cycle import hubspot_oauth, slack_oauth
 from sales_cycle.calendar_resolver import resolve_meeting_started
@@ -363,7 +364,14 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
         logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
 
     own_domains = {d.strip().lower() for d in settings.own_domains.split(",") if d.strip()}
-    result = resolve_meeting_started(
+    # resolve_meeting_started (and the fallback bind below) are fully synchronous, blocking HTTP calls
+    # (calendar_resolver.py's own `call()` helper, 5s timeout each, tried per candidate domain) — called
+    # directly on an `async def` handler, they block the WHOLE event loop, stalling every other
+    # concurrent request this process is serving for as long as HubSpot/the gateway take to answer.
+    # run_in_threadpool keeps this request's own response waiting on the same result (the webhook body
+    # still needs it), it just stops that wait from blocking unrelated requests too.
+    result = await run_in_threadpool(
+        resolve_meeting_started,
         event=meeting, hubspot=_hubspot(), gateway_url=settings.vexa_gateway_url,
         api_key=settings.calendar_api_key, own_domains=own_domains,
     )
@@ -373,7 +381,8 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
         # workspace_id blank forever (the default, empty, keeps today's exact behavior).
         if settings.fallback_workspace_id and platform and native_meeting_id:
             try:
-                bind_meeting_workspace(
+                await run_in_threadpool(
+                    bind_meeting_workspace,
                     gateway_url=settings.vexa_gateway_url, api_key=settings.calendar_api_key,
                     platform=str(platform), native_meeting_id=str(native_meeting_id),
                     workspace_id=settings.fallback_workspace_id,
