@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
@@ -261,21 +262,42 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks) -> d
 
 @app.post("/internal/process-approved")
 def process_approved() -> dict:
-    """Three independent sweeps, each its own store state: approved → dispatched (start the AI
-    turn), dispatched → pushed (check in, push once ready), pushed → done (open the PR). Each
-    approval now has its OWN isolated worktree (core/agent's isolation.mode="worktree"), so — unlike
-    before that existed — git state has to be fetched PER approval, not once for the whole sweep."""
+    """Independent sweeps, each its own store state: approved → dispatched (start the AI turn),
+    dispatched → pushed (check in, push once ready) — or, if it's sat too long with no push,
+    dispatched → approved for a retry, or → failed for good (see `Store.fail_or_retry_stale_dispatch`
+    and `product_repo_dispatch_timeout_sec`) — and pushed → done (open the PR). Each approval now has
+    its OWN isolated worktree (core/agent's isolation.mode="worktree"), so — unlike before that
+    existed — git state has to be fetched PER approval, not once for the whole sweep."""
     settings = get_settings()
     store = get_store()
     dispatched_now = []
     pushed_now = []
     opened_now = []
+    timed_out_now = []
 
     for approval in store.list_approved_unprocessed():
         if _dispatch_one(store, settings, approval):
             dispatched_now.append(approval.id)
 
     for approval in store.list_dispatched_unpushed():
+        # A crashed/hung turn stays 'dispatched' forever otherwise — never checked again after this
+        # sweep, since push_if_ready would just keep returning None for it every time. Handled BEFORE
+        # the push check, not after: a genuinely stale row has nothing to check push-readiness for.
+        if (
+            approval.dispatched_at is not None
+            and (time.time() - approval.dispatched_at) > settings.product_repo_dispatch_timeout_sec
+        ):
+            outcome = store.fail_or_retry_stale_dispatch(
+                approval.id, max_attempts=settings.product_repo_max_dispatch_attempts,
+            )
+            if outcome != "skipped":
+                logger.warning(
+                    "dispatch timed out for approval id=%s branch=%s (attempt %s/%s) → %s",
+                    approval.id, approval.branch, approval.dispatch_attempts,
+                    settings.product_repo_max_dispatch_attempts, outcome,
+                )
+                timed_out_now.append({"id": approval.id, "outcome": outcome})
+            continue
         try:
             state = git_state(
                 agent_api_url=settings.agent_api_internal_url, subject=settings.product_repo_subject,
@@ -307,7 +329,10 @@ def process_approved() -> dict:
         store.mark_done(approval.id)
         opened_now.append(approval.id)
 
-    return {"dispatched": dispatched_now, "pushed": pushed_now, "opened": opened_now}
+    return {
+        "dispatched": dispatched_now, "pushed": pushed_now, "opened": opened_now,
+        "timed_out": timed_out_now,
+    }
 
 
 @app.post("/webhooks/meeting-started")

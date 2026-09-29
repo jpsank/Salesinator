@@ -7,7 +7,11 @@ external to install. It tracks two things:
   from disk.
 - `pending_approvals`: each feature request's progress. Starts as "pending", becomes "approved" once
   someone reacts ✅ in Slack, "dispatched" once the AI agent starts building it, "pushed" once the
-  finished branch reaches GitHub, and "done" once a pull request is open for it.
+  finished branch reaches GitHub, and "done" once a pull request is open for it. A "dispatched" row
+  that sits too long with no push (a crashed/hung turn) reverts to "approved" for one retry, then
+  "failed" for good — see `fail_or_retry_stale_dispatch`. Retrying starts a fresh turn (a new
+  worktree, a new workload_id); the stale turn's own worktree is simply abandoned, not actively
+  reclaimed — a known, accepted gap, not something this store tracks or cleans up.
 - `oauth_connections`: one row per external service (HubSpot, Slack, ...) connected via the
   "Connect X" button in Vexa's Settings page — one shared connection for the whole team, not
   per-rep, so this is keyed by `provider` name alone.
@@ -45,6 +49,8 @@ class PendingApproval:
     branch: str | None
     workload_id: str | None
     created_at: float
+    dispatched_at: float | None
+    dispatch_attempts: int
 
 
 class Store:
@@ -87,6 +93,16 @@ class Store:
                     UNIQUE(slack_channel, slack_ts)
                 )
             """)
+            # Migration: dispatched_at/dispatch_attempts, added for the stale-dispatch timeout sweep
+            # (a turn that crashes or hangs must not stay 'dispatched' forever). sqlite has no
+            # `ADD COLUMN IF NOT EXISTS` — guard against re-running on an already-migrated DB.
+            existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
+            if "dispatched_at" not in existing_cols:
+                conn.execute("ALTER TABLE pending_approvals ADD COLUMN dispatched_at REAL")
+            if "dispatch_attempts" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE pending_approvals ADD COLUMN dispatch_attempts INTEGER NOT NULL DEFAULT 0"
+                )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_connections (
                     provider TEXT PRIMARY KEY,
@@ -157,16 +173,46 @@ class Store:
             )
 
     def mark_dispatched(self, approval_id: int, *, branch: str, workload_id: str | None) -> None:
+        """`dispatch_attempts` counts EVERY turn started for this approval, including a prior one
+        that later timed out — `fail_or_retry_stale_dispatch` reads it to decide retry vs. give up."""
         with self._conn() as conn:
             conn.execute(
-                "UPDATE pending_approvals SET status = 'dispatched', branch = ?, workload_id = ? WHERE id = ?",
-                (branch, workload_id, approval_id),
+                "UPDATE pending_approvals SET status = 'dispatched', branch = ?, workload_id = ?, "
+                "dispatched_at = ?, dispatch_attempts = dispatch_attempts + 1 WHERE id = ?",
+                (branch, workload_id, time.time(), approval_id),
             )
 
     def list_dispatched_unpushed(self) -> list[PendingApproval]:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'dispatched'").fetchall()
         return [PendingApproval(**dict(r)) for r in rows]
+
+    def fail_or_retry_stale_dispatch(self, approval_id: int, *, max_attempts: int) -> str:
+        """A 'dispatched' approval has sat too long with no push — the turn likely crashed or hung.
+        Under `max_attempts`: revert to 'approved' so the next sweep starts a FRESH turn (a new
+        worktree, a new workload_id — the stale one is simply abandoned, not actively cleaned up;
+        see the module docstring's note on that). At `max_attempts`: give up for good, 'failed', so
+        a structurally-broken request can't silently re-spin an AI turn against the real repo
+        forever. Returns "retried", "failed", or "skipped" (the row already moved on — e.g. a
+        concurrent push-check in the same sweep beat this check to it; not an error, just a race)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT dispatch_attempts FROM pending_approvals WHERE id = ? AND status = 'dispatched'",
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                return "skipped"
+            if row["dispatch_attempts"] >= max_attempts:
+                conn.execute(
+                    "UPDATE pending_approvals SET status = 'failed' WHERE id = ? AND status = 'dispatched'",
+                    (approval_id,),
+                )
+                return "failed"
+            conn.execute(
+                "UPDATE pending_approvals SET status = 'approved' WHERE id = ? AND status = 'dispatched'",
+                (approval_id,),
+            )
+            return "retried"
 
     def mark_pushed(self, approval_id: int) -> None:
         """The branch reached GitHub — but a pull request isn't open for it yet (see

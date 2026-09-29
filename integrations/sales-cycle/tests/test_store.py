@@ -130,6 +130,68 @@ def test_mark_done_from_pushed_removes_from_pushed_unopened_queue():
     assert s.list_pushed_unopened() == []
 
 
+def test_mark_dispatched_sets_dispatched_at_and_increments_attempts():
+    s = _store()
+    s.record_pending_approval(
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
+    )
+    approved = s.approve(slack_channel="C1", slack_ts="1")
+    s.claim_for_dispatch(approved.id)
+    s.mark_dispatched(approved.id, branch="feature/x", workload_id="unit-1")
+    row = s.list_dispatched_unpushed()[0]
+    assert row.dispatched_at is not None
+    assert row.dispatch_attempts == 1
+
+
+def test_fail_or_retry_stale_dispatch_retries_under_the_cap():
+    s = _store()
+    s.record_pending_approval(
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
+    )
+    approved = s.approve(slack_channel="C1", slack_ts="1")
+    s.claim_for_dispatch(approved.id)
+    s.mark_dispatched(approved.id, branch="feature/x", workload_id="unit-1")  # attempt 1 of 2
+
+    assert s.fail_or_retry_stale_dispatch(approved.id, max_attempts=2) == "retried"
+    assert s.list_dispatched_unpushed() == []
+    assert [a.id for a in s.list_approved_unprocessed()] == [approved.id]
+    # dispatch_attempts is NOT reset by the retry itself — only a fresh mark_dispatched bumps it,
+    # so a second timeout on the SAME attempt count correctly hits the cap next time.
+    assert s.claim_for_dispatch(approved.id) is True
+    s.mark_dispatched(approved.id, branch="feature/x", workload_id="unit-2")
+    assert s.list_dispatched_unpushed()[0].dispatch_attempts == 2
+
+
+def test_fail_or_retry_stale_dispatch_fails_at_the_cap():
+    s = _store()
+    s.record_pending_approval(
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
+    )
+    approved = s.approve(slack_channel="C1", slack_ts="1")
+    s.claim_for_dispatch(approved.id)
+    s.mark_dispatched(approved.id, branch="feature/x", workload_id="unit-1")  # attempt 1 of 1 (cap)
+
+    assert s.fail_or_retry_stale_dispatch(approved.id, max_attempts=1) == "failed"
+    assert s.list_dispatched_unpushed() == []
+    assert s.list_approved_unprocessed() == []  # not left retryable — a human has to look at it
+
+
+def test_fail_or_retry_stale_dispatch_skips_a_row_that_already_moved_on():
+    """A race with the normal push-check sweep: the row reached 'pushed' before the staleness check
+    got to it. Must not clobber real progress back to 'approved' or 'failed'."""
+    s = _store()
+    s.record_pending_approval(
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1", source_key="x.md", title="X", body="y",
+    )
+    approved = s.approve(slack_channel="C1", slack_ts="1")
+    s.claim_for_dispatch(approved.id)
+    s.mark_dispatched(approved.id, branch="feature/x", workload_id="unit-1")
+    s.mark_pushed(approved.id)
+
+    assert s.fail_or_retry_stale_dispatch(approved.id, max_attempts=1) == "skipped"
+    assert [a.id for a in s.list_pushed_unopened()] == [approved.id]  # untouched
+
+
 def test_oauth_connection_roundtrip():
     s = _store()
     assert s.get_oauth_connection("hubspot") is None

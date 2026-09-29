@@ -116,6 +116,14 @@ class Settings(BaseSettings):
     product_repo_signoff_name: str = ""
     product_repo_signoff_email: str = ""
 
+    # A 'dispatched' approval with no push after this long is treated as a crashed/hung turn, not
+    # one still working — 1h is generous for a real AI coding turn while still catching a genuinely
+    # stuck one well before a human would otherwise notice. Retried once (a fresh turn, a fresh
+    # worktree) before being marked 'failed' for good, so a structurally-broken request can't
+    # silently re-spin an AI turn against the real repo forever.
+    product_repo_dispatch_timeout_sec: float = 3600.0
+    product_repo_max_dispatch_attempts: int = 2
+
     # For auto-detecting the customer from calendar invites: the secret that proves a "meeting started"
     # alert really came from Vexa, and the login key used to tag the meeting once we've figured out
     # which customer it's for. (v1 supports one rep's calendar; supporting many reps at once is a
