@@ -14,11 +14,15 @@ PIDDIR="$HOME/vexa-data/pids"
 LOGDIR="$HOME/vexa-data/logs"
 mkdir -p "$PIDDIR" "$LOGDIR"
 
+is_up() {
+  curl -s -o /dev/null --max-time 2 "$1" 2>/dev/null
+}
+
 wait_for() {
   # wait_for <url> <label> <max_seconds>
   i=0
   while [ "$i" -lt "$3" ]; do
-    if curl -s -o /dev/null -w '' --max-time 2 "$1" 2>/dev/null; then
+    if is_up "$1"; then
       echo "  ✓ $2 is up"
       return 0
     fi
@@ -32,7 +36,7 @@ wait_for() {
 start_native() {
   # start_native <name> <script> <health_url>
   name="$1"; script="$2"; url="$3"
-  if curl -s -o /dev/null --max-time 2 "$url" 2>/dev/null; then
+  if is_up "$url"; then
     echo "  ✓ $name already running"
     return 0
   fi
@@ -51,13 +55,19 @@ SERVICES="$(docker compose -f "$CD/docker-compose.yml" config --services | grep 
 docker compose -f "$CD/docker-compose.yml" up -d $SERVICES
 docker compose -f "$CD/docker-compose.yml" stop agent-api ollama 2>/dev/null || true
 
-echo "== native ollama (GPU) =="
+echo "== native ollama (GPU) + native agent-api =="
+# Independent processes — agent-api doesn't need ollama already answering to start itself (only to
+# serve its first completion request, later, on its own retry path). Kick both off, THEN wait for
+# both concurrently, instead of paying ollama's full startup wait before agent-api's even begins.
 start_native ollama run-ollama-native.sh "http://localhost:11434"
-wait_for "http://localhost:11434" ollama 60
-
-echo "== native agent-api =="
 start_native agent-api run-agent-api-native.sh "http://localhost:18100/health"
-wait_for "http://localhost:18100/health" agent-api 30
+wait_for "http://localhost:11434" ollama 60 &
+w1=$!
+wait_for "http://localhost:18100/health" agent-api 30 &
+w2=$!
+ollama_ok=0; wait "$w1" || ollama_ok=$?
+agent_api_ok=0; wait "$w2" || agent_api_ok=$?
+[ "$ollama_ok" -eq 0 ] && [ "$agent_api_ok" -eq 0 ]
 
 echo
 echo "Stack up. Logs: $LOGDIR/{ollama,agent-api}.log — PIDs: $PIDDIR/"

@@ -353,9 +353,12 @@ services:
       start_period: 10s
     init: true
     depends_on:
+      # NOT ollama: agent-api never calls it at startup, only lazily per meeting-copilot completion
+      # request (openai_compat.py), which already has its own timeout/error handling for a
+      # not-yet-ready endpoint — waiting on ollama's full healthcheck here (worst case ~120s: 10s
+      # interval, 20s start_period, 10 retries) just serializes agent-api's own startup behind it
+      # for no reason.
       runtime:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     networks: [vexa]
     restart: unless-stopped
