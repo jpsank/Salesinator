@@ -35,6 +35,7 @@ GET /oauth/{hubspot,slack}/authorize, .../callback, .../status, POST .../disconn
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -64,6 +65,11 @@ logger = logging.getLogger("sales_cycle.api")
 app = FastAPI(title="vexa-sales-cycle")
 
 _store: Store | None = None
+
+# Strong references to live watch_meeting() tasks — asyncio only holds a weak reference to a
+# fire-and-forget task, so without this a task can be garbage-collected mid-run. Discarded by its
+# own done-callback once the meeting ends.
+_watch_meeting_tasks: set[asyncio.Task] = set()
 
 
 def get_store() -> Store:
@@ -327,15 +333,6 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
     subject = meeting.get("user_id")
     platform = meeting.get("platform")
     native_meeting_id = meeting.get("native_meeting_id")
-    if meeting_id is not None and subject is not None:
-        background_tasks.add_task(
-            watch_meeting,
-            agent_api_url=settings.agent_api_internal_url, meeting_api_url=settings.meeting_api_internal_url,
-            subject=str(subject), meeting_id=str(meeting_id), store=get_store(), slack=_slack(),
-            channel=settings.slack_channel_id, unmapped_slug=settings.unmapped_workspace_slug,
-        )
-    else:
-        logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
 
     # Inviting our bot into a call IS the consent signal — no separate rep action should be needed
     # for the copilot to start watching it. Best-effort: a failure here must never break the webhook
@@ -346,6 +343,24 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
             agent_api_url=settings.agent_api_internal_url, platform=str(platform),
             native_meeting_id=str(native_meeting_id), meeting_id=str(meeting_id),
         )
+
+    if meeting_id is not None and subject is not None:
+        # asyncio.create_task, NOT background_tasks.add_task: BackgroundTasks runs its entries
+        # sequentially (Starlette's own documented behavior), and watch_meeting is a persistent
+        # watcher that doesn't return until the meeting ends — sharing that queue with anything
+        # else would starve whatever was registered after it, forever, for as long as the call
+        # lasts. Reproduced live: real copilot processing never turned on because watch_meeting had
+        # (at the time) been registered first. A real fix decouples the hazard, not just this one
+        # ordering of it — watch_meeting now runs fully independently of BackgroundTasks.
+        task = asyncio.create_task(watch_meeting(
+            agent_api_url=settings.agent_api_internal_url, meeting_api_url=settings.meeting_api_internal_url,
+            subject=str(subject), meeting_id=str(meeting_id), store=get_store(), slack=_slack(),
+            channel=settings.slack_channel_id, unmapped_slug=settings.unmapped_workspace_slug,
+        ))
+        _watch_meeting_tasks.add(task)
+        task.add_done_callback(_watch_meeting_tasks.discard)
+    else:
+        logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
 
     own_domains = {d.strip().lower() for d in settings.own_domains.split(",") if d.strip()}
     result = resolve_meeting_started(
