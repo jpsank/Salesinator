@@ -87,9 +87,10 @@ def _fake_completion(reply: str = "", *, raises: Exception | None = None):
     class _Fake:
         name = "fake"
 
-        def complete(self, prompt, *, system=None, model=None):
+        def complete(self, prompt, *, system=None, model=None, response_schema=None):
             captured["prompt"] = prompt
             captured["model"] = model
+            captured["response_schema"] = response_schema
             if raises is not None:
                 raise raises
             return CompletionResult(text=reply, model=model or "fake-model")

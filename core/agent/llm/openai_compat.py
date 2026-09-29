@@ -42,7 +42,7 @@ class OpenAICompatCompletion:
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     def complete(self, prompt: str, *, system: Optional[str] = None,
-                 model: Optional[str] = None) -> CompletionResult:
+                 model: Optional[str] = None, response_schema: Optional[dict] = None) -> CompletionResult:
         target = (model or "").strip() or self._model
         if not self._base:
             raise LLMConfigError(
@@ -57,9 +57,19 @@ class OpenAICompatCompletion:
         messages = ([{"role": "system", "content": system}] if system else [])
         messages.append({"role": "user", "content": prompt})
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
+        body: dict = {"model": target, "messages": messages}
+        if response_schema is not None:
+            # OpenAI's response_format shape — Ollama's OpenAI-compat layer honors it too (verified
+            # live against a real local model: eliminates malformed/incomplete JSON at the token
+            # level, not just via a stricter prompt). A provider that doesn't understand this field
+            # at all would 400 on it, same as any other unsupported field — no separate try/except,
+            # consistent with every other error this method already surfaces.
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": response_schema},
+            }
         try:
-            r = self._client.post(f"{self._base}/chat/completions",
-                                  json={"model": target, "messages": messages}, headers=headers)
+            r = self._client.post(f"{self._base}/chat/completions", json=body, headers=headers)
         except httpx.HTTPError as exc:
             raise LLMError(f"completion transport failure against {self._base}: {exc}") from exc
         if r.status_code in (401, 403):

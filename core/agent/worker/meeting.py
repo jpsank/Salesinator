@@ -76,6 +76,44 @@ _CARD_FRAME = (
     "Use an empty cards array if these specific lines add no tags.{steering}"
 )
 
+# The response_schema CompletionPort.complete() constrains generation to, when the provider honors
+# it (verified live against Ollama's OpenAI-compat layer: eliminates the exact "model response did
+# not include processed transcript notes" failure at the token level, not just via a stricter
+# prompt — a provider that ignores response_schema still gets the same instructions via _CARD_FRAME
+# above, just without the hard guarantee). Mirrors _CARD_FRAME's own shape exactly.
+_CARD_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "notes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "speaker": {"type": "string"},
+                    "chapter": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "required": ["id", "speaker", "chapter", "text"],
+            },
+        },
+        "cards": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string"},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "actionable": {"type": "boolean"},
+                },
+                "required": ["kind", "title", "body"],
+            },
+        },
+    },
+    "required": ["notes", "cards"],
+}
+
 # Appended to the frame only when the workspace config carries non-empty steering.
 _STEERING_SECTION = (
     "\n\n## Standing instructions from this workspace\n"
@@ -269,7 +307,7 @@ def meeting_card_turn(
         if completion is None:
             import worker.worker as _w
             completion = getattr(_w, "completion_factory", completion_from_env)()
-        reply = completion.complete(prompt, model=model).text
+        reply = completion.complete(prompt, model=model, response_schema=_CARD_RESPONSE_SCHEMA).text
     except LLMAuthError as exc:
         # Fail LOUD on a 401/auth mismatch: a distinct auth-error (provider host + the
         # BASE_URL-vs-KEY fix) instead of the opaque generic model-error (WS1b).

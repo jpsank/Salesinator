@@ -54,7 +54,9 @@ class ClaudeCliCompletion:
         self._cwd = cwd or "/tmp"
 
     def complete(self, prompt: str, *, system: Optional[str] = None,
-                 model: Optional[str] = None) -> CompletionResult:
+                 model: Optional[str] = None, response_schema: Optional[dict] = None) -> CompletionResult:
+        # response_schema: accepted-and-ignored — see anthropic_api.py's complete() for why (same
+        # reasoning: CompletionPort's contract, not a gap specific to this adapter).
         target = (model or "").strip() or self._model  # empty ⇒ subscription default (no --model)
         argv = build_argv(prompt, system=system, model=target or None)
         try:

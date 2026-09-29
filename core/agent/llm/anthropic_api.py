@@ -45,7 +45,13 @@ class AnthropicCompletion:
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     def complete(self, prompt: str, *, system: Optional[str] = None,
-                 model: Optional[str] = None) -> CompletionResult:
+                 model: Optional[str] = None, response_schema: Optional[dict] = None) -> CompletionResult:
+        # response_schema: accepted-and-ignored (CompletionPort's contract — a provider that can't
+        # constrain generation to it just doesn't). Real Anthropic models are already reliably good
+        # at plain JSON-in-prose for this workload — this hint was added for local/CPU-only models
+        # specifically, which is where the actual reliability problem was observed and fixed
+        # (openai_compat.py, via Ollama's OpenAI-compat response_format). Anthropic's own equivalent
+        # (forcing a tool_use call shape) is real, separate work, not done here.
         target = (model or "").strip() or self._model
         if not target:
             raise LLMConfigError(

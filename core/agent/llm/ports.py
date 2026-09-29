@@ -77,12 +77,19 @@ class CompletionResult:
 
 class CompletionPort(Protocol):
     """A plain prompt→text LLM provider. Raises ``LLMAuthError`` on a rejected credential,
-    ``LLMConfigError`` on missing endpoint/model config, ``LLMError`` otherwise."""
+    ``LLMConfigError`` on missing endpoint/model config, ``LLMError`` otherwise.
+
+    ``response_schema`` (optional, a plain JSON Schema dict) is a best-effort hint: a provider that
+    can genuinely constrain generation to it (today: openai-compat, via Ollama's/OpenAI's
+    ``response_format: json_schema`` — verified live to eliminate the exact "model didn't return
+    valid notes" failure this was added for) does so; a provider that can't just ignores it and
+    returns free-form text like always — never an error, since a caller (meeting.py's card beat)
+    must keep working against every registered provider, not just the one this was built against."""
 
     name: str
 
     def complete(self, prompt: str, *, system: Optional[str] = None,
-                 model: Optional[str] = None) -> CompletionResult: ...
+                 model: Optional[str] = None, response_schema: Optional[dict] = None) -> CompletionResult: ...
 
 
 class HarnessPort(Protocol):
