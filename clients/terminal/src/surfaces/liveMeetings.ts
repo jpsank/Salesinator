@@ -212,7 +212,18 @@ async function snapshot() {
     // collapse hydrated the wrong row's notes). Dedup is keyed by the ROW id purely to defend against a
     // duplicated row in the list (idempotent), never to merge distinct rows sharing a native.
     const seen = new Set<string>();
-    const next = (list || []).map(toMock).filter((m) => !seen.has(m.id) && (seen.add(m.id), true));
+    // debug_view_url only ever rides the live WS push (meeting-api looks it up fresh from runtime
+    // on each needs_help transition) — GET /api/meetings has no such field at all. Without this, a
+    // WS reconnect (or any re-snapshot while a meeting is STILL needs_help) would silently drop a
+    // still-valid, still-reachable link. Carry it forward from the prior in-memory row when the
+    // status hasn't moved off needs_help; a genuinely fresh page load (nothing in memory yet) still
+    // won't show one until the next live transition — a narrower, known gap, not this fix's job.
+    const prevDebugViewUrl = new Map(meetings.map((m) => [m.id, m.debug_view_url]));
+    const next = (list || []).map(toMock).map((m) => (
+      m.live_status === "needs_help" && !m.debug_view_url
+        ? { ...m, debug_view_url: prevDebugViewUrl.get(m.id) }
+        : m
+    )).filter((m) => !seen.has(m.id) && (seen.add(m.id), true));
     const key = (m: MeetingMock[]) => m.map((x) =>
       `${x.id}|${x.live_status}|${x.has_recording}|${x.title_custom ?? ""}|${x.scheduled_at ?? ""}|${x.workspace_id ?? ""}|${x.auto_join ?? ""}|${x.auto_join_error ?? ""}|${x.native_id ?? ""}|${(x.attendees ?? []).map((a) => a.email).join("+")}`,
     ).join(",");
