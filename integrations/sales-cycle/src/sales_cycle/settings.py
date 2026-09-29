@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     # here instead — nothing is ever lost, it just needs a human to sort it out later.
     unmapped_workspace_slug: str = "unmapped"
 
+    # If a call never gets tagged with a customer, bind it to this Vexa workspace instead of leaving
+    # it unbound forever. Empty (default) keeps today's behavior: an unresolved call's workspace_id
+    # stays blank, and the live meeting copilot falls back to its own generic placeholder workspace
+    # (which may not exist on disk — see core/agent's transcription_watcher.py). Set it to a real,
+    # already-seeded subject (e.g. your product_repo_subject) to give every untagged call a safe home.
+    fallback_workspace_id: str = ""
+
+    # The moment our bot joins a call, turn on Vexa's live meeting copilot for it — inviting the bot
+    # IS the consent signal, so no separate rep action is required. Off restores today's behavior: a
+    # rep must open the call in Vexa's Terminal for the copilot to start watching it.
+    auto_process_calls: bool = True
+
     # Slack login token (static, or via OAuth below — same pick-one as HubSpot), a signing secret
     # (to prove an Events API request is really from Slack — a SEPARATE credential from the OAuth
     # ones below; it authenticates INCOMING calls from Slack, not our outgoing ones), and which

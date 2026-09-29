@@ -19,9 +19,12 @@ POST /internal/process-approved
 
 POST /webhooks/meeting-started
     Vexa calls this the moment a bot joins a call. Used for the automatic version of customer
-    tagging (see calendar_resolver.py) and starts this call's live feature-request watcher (see
-    live_card_watcher.py) — the thing that posts each feature request to Slack the moment the
-    copilot surfaces it, not after the call ends.
+    tagging (see calendar_resolver.py, falling back to settings.fallback_workspace_id on a miss so
+    a call is never left permanently untagged), turning on Vexa's live meeting copilot for the call
+    (settings.auto_process_calls — on by default, since inviting the bot is itself the consent
+    signal), and starting this call's live feature-request watcher (see live_card_watcher.py) — the
+    thing that posts each feature request to Slack the moment the copilot surfaces it, not after the
+    call ends.
 
 GET /oauth/{hubspot,slack}/authorize, .../callback, .../status, POST .../disconnect
     Each provider's whole "Connect X" flow — see oauth_routes.py (the shared 4-route shape),
@@ -47,7 +50,9 @@ from sales_cycle.orchestrator import (
     DispatchError, PullRequestError, PushError,
     git_state, open_pull_request, push_if_ready, submit_implementation,
 )
-from sales_cycle.resolver import WorkspaceBindError, bind_meeting_workspace, resolve_by_tag, slug_for_company
+from sales_cycle.resolver import (
+    WorkspaceBindError, bind_meeting_workspace, enable_copilot_processing, resolve_by_tag, slug_for_company,
+)
 from sales_cycle.settings import Settings, get_settings
 from sales_cycle.slack_client import SlackClient
 from sales_cycle.slack_verify import SlackSignatureError, verify_slack_signature
@@ -319,6 +324,8 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
 
     meeting_id = meeting.get("id")
     subject = meeting.get("user_id")
+    platform = meeting.get("platform")
+    native_meeting_id = meeting.get("native_meeting_id")
     if meeting_id is not None and subject is not None:
         background_tasks.add_task(
             watch_meeting,
@@ -329,6 +336,16 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
     else:
         logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
 
+    # Inviting our bot into a call IS the consent signal — no separate rep action should be needed
+    # for the copilot to start watching it. Best-effort: a failure here must never break the webhook
+    # response (Vexa retries meeting.started on a non-2xx) or block calendar-path resolution below.
+    if settings.auto_process_calls and meeting_id is not None and platform and native_meeting_id:
+        background_tasks.add_task(
+            enable_copilot_processing,
+            agent_api_url=settings.agent_api_internal_url, platform=str(platform),
+            native_meeting_id=str(native_meeting_id), meeting_id=str(meeting_id),
+        )
+
     own_domains = {d.strip().lower() for d in settings.own_domains.split(",") if d.strip()}
     result = resolve_meeting_started(
         event=meeting, hubspot=_hubspot(), gateway_url=settings.vexa_gateway_url,
@@ -336,6 +353,18 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
     )
     if not result["resolved"]:
         logger.info("calendar-path resolution miss: %s", result.get("reason"))
+        # No confirmed customer match — tag it with the configured fallback instead of leaving
+        # workspace_id blank forever (the default, empty, keeps today's exact behavior).
+        if settings.fallback_workspace_id and platform and native_meeting_id:
+            try:
+                bind_meeting_workspace(
+                    gateway_url=settings.vexa_gateway_url, api_key=settings.calendar_api_key,
+                    platform=str(platform), native_meeting_id=str(native_meeting_id),
+                    workspace_id=settings.fallback_workspace_id,
+                )
+                result = {"resolved": True, "workspace_id": settings.fallback_workspace_id, "fallback": True}
+            except WorkspaceBindError:
+                logger.exception("fallback workspace bind failed for %s/%s", platform, native_meeting_id)
     return result
 
 

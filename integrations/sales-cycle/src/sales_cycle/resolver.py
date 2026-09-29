@@ -51,3 +51,21 @@ def bind_meeting_workspace(
         headers={"X-API-Key": api_key, "Content-Type": "application/json"}, timeout=timeout,
         error_cls=WorkspaceBindError, error_prefix=f"POST {url}",
     )
+
+
+class CopilotProcessError(RuntimeError):
+    """Turning on the live meeting copilot failed — caller decides whether to surface or swallow."""
+
+
+def enable_copilot_processing(
+    *, agent_api_url: str, platform: str, native_meeting_id: str, meeting_id: str, timeout: float = 5.0,
+) -> None:
+    """Turns on Vexa's live meeting copilot for this call, using its own opt-in toggle — the same
+    endpoint the Terminal's live-call view calls when a rep opens a call there."""
+    url = f"{agent_api_url.rstrip('/')}/api/meeting/process"
+    call(
+        "POST", url,
+        json={"native_id": native_meeting_id, "platform": platform, "on": True, "meeting_id": meeting_id},
+        headers={"Content-Type": "application/json"}, timeout=timeout,
+        error_cls=CopilotProcessError, error_prefix=f"POST {url}",
+    )
