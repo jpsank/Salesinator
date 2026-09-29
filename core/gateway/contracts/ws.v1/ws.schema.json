@@ -96,7 +96,11 @@
           "required": ["status"],
           "properties": {
             "status": { "type": "string" },
-            "data": { "type": ["object", "null"] }
+            "data": { "type": ["object", "null"] },
+            "debug_view_url": {
+              "type": ["string", "null"],
+              "description": "present only when status is 'needs_help' and the deployment opted into the dev-only bot debug view (runtime's VEXA_BOT_DEBUG_VIEW): a live-looked-up, 127.0.0.1-only noVNC URL a human can open to clear a join-time human-only gate (a CAPTCHA, a sign-in wall). Absent on every deployment that didn't opt in."
+            }
           }
         },
         "user_id": { "type": ["integer", "string", "null"] },

@@ -2,6 +2,7 @@ import { AdmissionError } from '../shared/admission';
 import { Page } from "playwright";
 import { log, callJoiningCallback } from "../_host";
 import { BotConfig } from "../_host";
+import { triggerEscalation } from "../shared/escalation";
 import {
   zoomNameInputSelector,
   zoomJoinButtonSelector,
@@ -315,6 +316,12 @@ export async function joinZoomMeeting(
     log(`[Zoom Web] ⚠️ ${which} is gating the Join button — a HUMAN must clear it ` +
         `via noVNC (sign in as a Zoom account / solve the captcha). ` +
         `Holding the browser open up to 15 min for Join to become enabled...`);
+    // This gate blocks clicking Join at all, so admission.ts's own poll loop (the only other
+    // caller of triggerEscalation) never even starts — without this call, the log line above
+    // promises a noVNC view that never actually comes up. triggerEscalation is idempotent
+    // (module-level `escalationTriggered` flag), so a later real escalation during admission is
+    // a harmless no-op, not a double-start.
+    await triggerEscalation(botConfig, signInWall ? 'zoom_sign_in_wall' : 'zoom_recaptcha_gate');
   }
   await page.waitForFunction(
     (sel: string) => {

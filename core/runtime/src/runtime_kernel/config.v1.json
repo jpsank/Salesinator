@@ -83,6 +83,15 @@
    "targets": []
   },
   {
+   "key": "VEXA_BOT_DEBUG_VIEW",
+   "class": "defaulted",
+   "default": "(unset — disabled)",
+   "description": "dev-only: publish a spawned bot's noVNC debug view (127.0.0.1-only, daemon-assigned port, surfaced as ports.novnc on GET /workloads/<id>) so a human can clear a join-time human-only gate (e.g. a reCAPTCHA); the view is unauthenticated (x11vnc -nopw) so this must never be default-on",
+   "targets": [
+    "compose"
+   ]
+  },
+  {
    "key": "RUNTIME_STOP_GRACE_SEC",
    "class": "defaulted",
    "default": "30",

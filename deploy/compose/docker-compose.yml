@@ -219,6 +219,11 @@ services:
       # Spawn the bot onto THIS compose network so it resolves meeting-api:8080 (lifecycle callback)
       # + redis. Must equal the project-prefixed network name (DockerBackend → HostConfig.NetworkMode).
       - DOCKER_NETWORK=${COMPOSE_PROJECT_NAME:-vexa-v012}_vexa
+      # Dev-only, off by default (see config.v1.json): publishes a bot's noVNC debug view so a human
+      # can clear a join-time human-only gate (a Zoom reCAPTCHA). Docker always binds a published
+      # port on the DAEMON's host interfaces regardless of which container called the socket API, so
+      # 127.0.0.1 here means the real host's loopback, not this container's own.
+      - VEXA_BOT_DEBUG_VIEW=${VEXA_BOT_DEBUG_VIEW:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Mirror of HOST_CLAUDE_CREDENTIALS (a DOCKER-HOST path — see .env.example) into THIS container,

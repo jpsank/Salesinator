@@ -18,6 +18,10 @@ export interface MeetingStatusFrame {
   native?: string;
   status: string;        // raw meeting-api status
   when?: string;
+  // Present only on a `needs_help` status, and only when the deployment opted into the dev-only
+  // bot debug view (runtime's VEXA_BOT_DEBUG_VIEW) — a 127.0.0.1-only noVNC URL a human can open to
+  // clear a join-time human-only gate (a CAPTCHA, a sign-in wall). Absent otherwise.
+  debug_view_url?: string;
 }
 
 type Listener = (f: MeetingStatusFrame) => void;
@@ -51,7 +55,8 @@ export function parseFrame(data: unknown): MeetingStatusFrame | null {
   const meeting_id = (o.meeting_id ?? meeting.id) as number | string | undefined;
   const native = (o.native ?? meeting.native_id) as string | undefined;
   const when = (o.when ?? o.ts) as string | undefined;
-  return { meeting_id, native, status, when };
+  const debug_view_url = (o.debug_view_url ?? payload.debug_view_url) as string | undefined;
+  return { meeting_id, native, status, when, debug_view_url };
 }
 
 /** Open the ONE shared socket. The `ws`/`starting` guards make this idempotent, so the many

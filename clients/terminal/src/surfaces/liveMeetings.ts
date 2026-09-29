@@ -231,7 +231,7 @@ async function snapshot() {
 /** Apply a `meeting.status` WS frame to the store: patch the matching row's status in place (the snapshot
  *  already seeded the row metadata). Match by native, falling back to meeting_id. Unknown rows trigger a
  *  re-snapshot so a freshly-created (scheduled/idle) meeting surfaces. */
-function applyFrame(f: { meeting_id?: number | string; native?: string; status: string; when?: string }) {
+function applyFrame(f: { meeting_id?: number | string; native?: string; status: string; when?: string; debug_view_url?: string }) {
   storeRevision += 1;
   // P0: match the ROW id first (`meeting_id`) — a native-only match would patch EVERY row sharing that
   // native (several distinct meetings), flipping the wrong rows' status. Fall back to native only when
@@ -255,6 +255,9 @@ function applyFrame(f: { meeting_id?: number | string; native?: string; status: 
     status: live ? "live" : "past",
     session_uid: live ? cur.id : undefined,  // subscribe by the ROW id (P0)
     scheduled_at: f.status === "scheduled" ? (f.when ?? cur.scheduled_at) : cur.scheduled_at,
+    // Only ever arrives on a `needs_help` frame — clear it on every OTHER transition so a stale link
+    // never lingers once the bot moves on (cleared itself, or a human cleared it and it joined).
+    debug_view_url: f.status === "needs_help" ? f.debug_view_url : undefined,
   };
   meetings = [...meetings.slice(0, i), nextRow, ...meetings.slice(i + 1)];
   subs.forEach((fn) => fn());

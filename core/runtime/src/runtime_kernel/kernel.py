@@ -217,9 +217,10 @@ class Runtime:
             raise StartFailed(spec.workloadId, str(exc)) from exc
         status.state = RuntimeState.running
         status.startedAt = _now()
-        status.ports = {}
+        handle_ports = self._handles[spec.workloadId].ports or {}
+        status.ports = handle_ports
         self._persist(spec, status)
-        self._emit(spec.workloadId, RuntimeState.running, ports={})
+        self._emit(spec.workloadId, RuntimeState.running, ports=handle_ports)
         return status
 
     def get(self, workload_id: str) -> WorkloadStatus:

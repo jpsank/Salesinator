@@ -828,6 +828,29 @@ def _mount_lifecycle(
                 import json as _json
                 from datetime import datetime, timezone
 
+                # `needs_help` alone tells an operator NOTHING actionable — surface where to actually
+                # go. The URL is looked up live (never cached/pushed from the bot itself) because only
+                # the DOCKER HOST's own `docker inspect` knows the real, externally-reachable published
+                # port (runtime's own dev-only VEXA_BOT_DEBUG_VIEW wiring); a container-local
+                # `localhost:6080` from the bot process would be meaningless outside it. Best-effort —
+                # absent on a deployment that never set VEXA_BOT_DEBUG_VIEW (`ports.novnc` unset) and
+                # never fails the status push either way.
+                debug_view_url = None
+                if rec.status.value == "needs_help" and runtime is not None:
+                    bot_container_id = meeting_row.get("bot_container_id")
+                    if bot_container_id:
+                        try:
+                            info = await runtime.get_workload(bot_container_id)
+                            port = ((info or {}).get("ports") or {}).get("novnc")
+                            if port:
+                                debug_view_url = f"http://127.0.0.1:{port}/vnc.html"
+                        except Exception as e:  # noqa: BLE001 — best-effort, status push must still land
+                            log_event("debug_view_url_lookup_failed", audience="system",
+                                      level="warning", span="lifecycle.callback", fields={"error": str(e)})
+
+                payload = {"status": rec.status.value}
+                if debug_view_url:
+                    payload["debug_view_url"] = debug_view_url
                 frame = {
                     "type": "meeting.status",
                     "meeting": {
@@ -835,7 +858,7 @@ def _mount_lifecycle(
                         "platform": meeting_row.get("platform"),
                         "native_id": meeting_row.get("native_meeting_id"),
                     },
-                    "payload": {"status": rec.status.value},
+                    "payload": payload,
                     "user_id": meeting_row.get("user_id"),
                     "ts": datetime.now(timezone.utc).isoformat(),
                 }
@@ -857,6 +880,8 @@ def _mount_lifecycle(
                         "status": rec.status.value,
                         "when": frame["ts"],
                     }
+                    if debug_view_url:
+                        user_frame["debug_view_url"] = debug_view_url
                     try:
                         await redis.publish(
                             f"u:{user_id}:meetings", _json.dumps(user_frame)

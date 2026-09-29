@@ -114,7 +114,12 @@ class TransitionSource(str, Enum):
 LEGAL_TRANSITIONS: Dict[Optional[BotStatus], frozenset[BotStatus]] = {
     None: frozenset({BotStatus.JOINING}),  # initial: a record's first event must be `joining`
     BotStatus.JOINING: frozenset(
-        {BotStatus.AWAITING_ADMISSION, BotStatus.ACTIVE, BotStatus.FAILED}
+        # NEEDS_HELP added here per #1251: a PRE-lobby blocker (a consent gate, a captcha) can
+        # escalate straight from `joining`, before the bot ever reaches `awaiting_admission` — see
+        # `_capture_join_evidence`'s docstring below for how `reached_lobby` stays correct once this
+        # edge is live (the join module now actually emits it — join.ts's captcha/sign-in-wall gate
+        # calls triggerEscalation, which previously had nowhere legal to land).
+        {BotStatus.AWAITING_ADMISSION, BotStatus.NEEDS_HELP, BotStatus.ACTIVE, BotStatus.FAILED}
     ),
     BotStatus.AWAITING_ADMISSION: frozenset(
         {BotStatus.ACTIVE, BotStatus.NEEDS_HELP, BotStatus.FAILED}

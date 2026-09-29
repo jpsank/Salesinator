@@ -30,6 +30,19 @@ _COMPOSE_LABEL = "com.docker.compose.project"
 logger = logging.getLogger("runtime_kernel.docker_backend")
 
 
+_DEBUG_VIEW_CONTAINER_PORT = "6080/tcp"
+
+
+def _debug_view_enabled() -> bool:
+    """VEXA_BOT_DEBUG_VIEW opts a dev deployment into publishing the bot image's noVNC debug view
+    (x11vnc+websockify, started by the join module's escalation.ts whenever a Zoom/etc. join hits a
+    human-only gate like a reCAPTCHA — see escalation.ts's startDebugView). Off by default: the
+    view is unauthenticated (x11vnc runs `-nopw`), so publishing it is a real exposure, never a
+    default-on convenience. Harmless to set for a non-bot profile too — nothing inside an agent
+    worker ever listens on 6080, so the binding is just inert there."""
+    return os.getenv("VEXA_BOT_DEBUG_VIEW", "").strip().lower() in ("1", "true", "yes")
+
+
 def _stop_grace_sec() -> int:
     """How long ``terminate`` lets a workload leave gracefully before the daemon SIGKILLs it.
 
@@ -259,12 +272,22 @@ class DockerBackend:
             if value and key not in spawn_env:
                 spawn_env[key] = value
 
+        debug_view = _debug_view_enabled()
+        if debug_view:
+            # Loopback-only, daemon-assigned ephemeral port — x11vnc runs `-nopw` inside the
+            # container (join module's escalation.ts), so binding to 0.0.0.0 would hand an
+            # unauthenticated view+control session of the bot's browser to anyone who can reach this
+            # host. A fixed host port would also collide across concurrent bot spawns.
+            host_config["PortBindings"] = {_DEBUG_VIEW_CONTAINER_PORT: [{"HostIp": "127.0.0.1", "HostPort": ""}]}
+
         payload: dict[str, Any] = {
             "Image": runnable.image,
             "Env": [f"{k}={v}" for k, v in spawn_env.items()],
             "Labels": {MANAGED_LABEL: "true", WORKLOAD_ID_LABEL: workload_id, **worker_labels},
             "HostConfig": host_config,
         }
+        if debug_view:
+            payload["ExposedPorts"] = {_DEBUG_VIEW_CONTAINER_PORT: {}}
         if runnable.command:
             payload["Cmd"] = list(runnable.command)
 
@@ -279,7 +302,26 @@ class DockerBackend:
         s = self._req("POST", f"/containers/{cid}/start")
         if s.status_code not in (204, 304):
             raise RuntimeError(f"docker start {name} failed ({s.status_code}): {s.text.strip()}")
-        return WorkloadHandle(id=workload_id, impl=name)
+
+        ports: Optional[dict[str, int]] = None
+        if debug_view:
+            # The daemon only assigns the actual ephemeral host port once the container is running —
+            # read it back via inspect. Best-effort: a workload that doesn't expose 6080 at all (an
+            # agent worker) simply reports no ports, never a start failure.
+            ports = self._debug_view_port(cid)
+        return WorkloadHandle(id=workload_id, impl=name, ports=ports)
+
+    def _debug_view_port(self, cid: str) -> Optional[dict[str, int]]:
+        i = self._req("GET", f"/containers/{cid}/json")
+        if i.status_code != 200:
+            return None
+        bindings = ((i.json().get("NetworkSettings") or {}).get("Ports") or {}).get(_DEBUG_VIEW_CONTAINER_PORT)
+        if not bindings:
+            return None
+        host_port = bindings[0].get("HostPort")
+        if not host_port:
+            return None
+        return {"novnc": int(host_port)}
 
     def find(self, workload_id: str) -> Optional[WorkloadHandle]:
         """Re-derive a live handle for a workload whose in-process handle was lost (restart): the

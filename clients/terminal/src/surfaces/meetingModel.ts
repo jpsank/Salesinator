@@ -15,6 +15,9 @@ export interface MeetingMock {
   when: string;
   status: "live" | "past";
   live_status?: string;       // the RAW meeting-api status — drives the status badge + action dropdown
+  debug_view_url?: string;    // set only on live_status "needs_help" (dev-only VEXA_BOT_DEBUG_VIEW
+                               // deployments) — a noVNC link a human opens to clear a join-time gate
+                               // (a CAPTCHA, a sign-in wall) the bot itself can never clear
   shared?: boolean;           // surfaced via a share/membership (not owned by the caller) — badged in the list
   scheduled_at?: string;      // when a `scheduled` meeting is due (data.scheduled_at)
   start_time?: string;        // when the run actually started (row start_time) — sorts recordings

@@ -10,11 +10,12 @@ from .profiles import Runnable
 
 class WorkloadHandle:
     """An opaque, backend-specific handle to a started workload."""
-    __slots__ = ("id", "_impl")
+    __slots__ = ("id", "_impl", "ports")
 
-    def __init__(self, id: str, impl: object) -> None:
+    def __init__(self, id: str, impl: object, ports: Optional[dict[str, int]] = None) -> None:
         self.id = id
         self._impl = impl
+        self.ports = ports
 
 
 class Backend(Protocol):

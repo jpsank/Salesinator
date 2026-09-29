@@ -389,12 +389,24 @@ export function actionsFor(m: MeetingMock): RowAction[] {
   }
 }
 
-function StatusBadge({ raw }: { raw?: string }) {
+function StatusBadge({ raw, debugViewUrl }: { raw?: string; debugViewUrl?: string }) {
   const b = badgeFor(raw);
   const dot = b.kind === "live" || b.kind === "needshelp";
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "1px 7px", borderRadius: 5, background: b.bg, color: b.color, fontSize: 10, fontWeight: 600, letterSpacing: ".02em", whiteSpace: "nowrap", flex: "none" }}>
-      {dot && <span style={{ width: 5, height: 5, borderRadius: "50%", background: b.color }} />}{b.label}
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flex: "none" }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "1px 7px", borderRadius: 5, background: b.bg, color: b.color, fontSize: 10, fontWeight: 600, letterSpacing: ".02em", whiteSpace: "nowrap" }}>
+        {dot && <span style={{ width: 5, height: 5, borderRadius: "50%", background: b.color }} />}{b.label}
+      </span>
+      {/* Only ever set on `needs_help` from a dev-only VEXA_BOT_DEBUG_VIEW deployment — the ONE
+          actionable thing this status can offer: where a human goes to actually clear the gate
+          (a CAPTCHA, a sign-in wall) the bot itself cannot. */}
+      {b.kind === "needshelp" && debugViewUrl && (
+        <a href={debugViewUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+          title="Open the bot's browser to clear the gate blocking it"
+          style={{ fontSize: 10, fontWeight: 600, color: "var(--warn)", textDecoration: "underline", whiteSpace: "nowrap" }}>
+          Open view →
+        </a>
+      )}
     </span>
   );
 }
@@ -413,7 +425,7 @@ function RowActions({ m, showBadge, reveal, onActionStart, onActionFailure }: { 
   }, [open]);
   return (
     <div ref={ref} style={{ position: "relative", flex: "none", display: "inline-flex", alignItems: "center", gap: 5 }} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-      {showBadge && <StatusBadge raw={m.live_status} />}
+      {showBadge && <StatusBadge raw={m.live_status} debugViewUrl={m.debug_view_url} />}
       {acts.length > 0 && (reveal || open) && (
         <button title="Actions" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
           style={{ background: "transparent", border: "1px solid var(--line2)", color: "var(--t2)", borderRadius: 6, padding: "1px 5px", fontSize: 11, lineHeight: 1.4, cursor: "pointer" }}>▾</button>
