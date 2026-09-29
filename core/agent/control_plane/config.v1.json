@@ -114,7 +114,8 @@
       "key": "VEXA_WORKER_REDIS_URL",
       "class": "defaulted",
       "default": "(empty — falls back to VEXA_REDIS_URL)",
-      "description": "the redis URL stamped into a DISPATCHED WORKER's own env; diverges from VEXA_REDIS_URL only when agent-api runs natively but the worker still spawns in Docker (agent-api's own redis URL is then host-facing, meaningless inside the worker's container)"
+      "description": "the redis URL stamped into a DISPATCHED WORKER's own env; diverges from VEXA_REDIS_URL only when agent-api runs natively but the worker still spawns in Docker (agent-api's own redis URL is then host-facing, meaningless inside the worker's container)",
+      "targets": []
     },
     {
       "key": "VEXA_WORKSPACES_DIR",
@@ -176,6 +177,15 @@
       "class": "defaulted",
       "default": "(adapter default)",
       "description": "llm-module deployment-default model forwarded into workers by dispatch",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
+      "key": "VEXA_LLM_TIMEOUT_SEC",
+      "class": "defaulted",
+      "default": "300",
+      "description": "openai-compat adapter's completion request budget, forwarded into workers by dispatch — local CPU-only inference routinely needs more than a hosted API's default",
       "targets": [
         "compose"
       ]
