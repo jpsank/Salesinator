@@ -27,21 +27,18 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 STAGE="$HOME/vexa-data/agent-api-native"
 WORKSPACES="$HOME/vexa-data/agent-workspaces"
 
-# Mirror the Docker image's contract layout with symlinks (idempotent) — contracts.py loads sealed
-# schemas BY PATH, walking up to find `meetings/contracts/...` and `agent/contracts/...` as siblings
-# of control_plane/, which only matches the image's vendored layout, not the real repo tree.
-mkdir -p "$STAGE/meetings/contracts/transcript.v1" "$STAGE/agent/contracts/workspace.v1" \
-  "$STAGE/agent/contracts/invoke.v1" "$STAGE/agent/contracts/unit.v1" \
-  "$STAGE/agent/contracts/routine.v1" "$STAGE/agent/contracts/event.v1" "$STAGE/agent/contracts/tool.v1"
+# Make the repo's agent packages importable as top-level modules under PYTHONPATH=$STAGE (idempotent).
+# contracts/loader.py finds its own schemas by walking UP from `Path(__file__).resolve()` — .resolve()
+# follows this symlink to the REAL file under core/agent/contracts/loader.py, whose real parents
+# already include the real core/ (holding both meetings/contracts/... and agent/contracts/... as they
+# actually sit in the repo tree) — so a bare symlink to the package is sufficient; no per-schema mirror
+# tree is needed. Verified live: _repo_root() resolves to the real core/ and a schema load succeeds
+# from a stage directory containing ONLY this one symlink.
+mkdir -p "$STAGE"
 ln -sfn "$REPO/core/agent/shared" "$STAGE/shared"
 ln -sfn "$REPO/core/agent/control_plane" "$STAGE/control_plane"
 ln -sfn "$REPO/core/agent/contracts" "$STAGE/contracts"
 ln -sfn "$REPO/core/agent/workspace-seeds" "$STAGE/workspace-seeds"
-ln -sfn "$REPO/core/meetings/contracts/transcript.v1/transcript.schema.json" "$STAGE/meetings/contracts/transcript.v1/transcript.schema.json"
-for d in workspace.v1 invoke.v1 unit.v1 routine.v1 event.v1 tool.v1; do
-  f=$(basename "$d" .v1)
-  ln -sfn "$REPO/core/agent/contracts/$d/$f.schema.json" "$STAGE/agent/contracts/$d/$f.schema.json"
-done
 
 cd "$STAGE"
 export PYTHONPATH="$STAGE"
