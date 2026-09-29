@@ -140,17 +140,19 @@ def test_token_never_persisted_and_errors_redacted(tmp_path):
     token-free and origin was never touched; a push failure's message is token-redacted."""
     root = tmp_path / "workspaces"
     ws = _workspace(root, "u1")
-    _run(ws, "remote", "add", "origin", "https://example.com/keep.git")
+    # A local path, not a real remote host: origin being a LOCAL path (the opted-in
+    # VEXA_ALLOW_LOCAL_REPO_ROOT self-host case) is exactly what makes publish proceed rather than
+    # refuse (see test_attached_workspace_is_refused for the refusal side, where origin is a real
+    # remote host instead) — this fixture stands in for that self-host case, not an external clone.
+    keep = tmp_path / "keep"
+    _run(ws, "remote", "add", "origin", str(keep))
     bare = _bare(tmp_path / "remote.git")
 
-    # A plain path, not `file://…`: an explicit file transport is refused everywhere now (it is one of
-    # the two git "URLs" that are not network fetches at all), while a path under an opted-in local
-    # root is exactly the self-host case this fixture stands in for.
     publish_workspace(root, "u1", token=TOKEN, remote_url=str(bare))
 
     cfg = (ws / ".git" / "config").read_text()
     assert TOKEN not in cfg
-    assert _run(ws, "remote", "get-url", "origin") == "https://example.com/keep.git"
+    assert _run(ws, "remote", "get-url", "origin") == str(keep)
     assert _run(ws, "remote", "get-url", PUBLISH_REMOTE) == str(bare)
 
     # a failing push (bogus remote) surfaces a token-free error
@@ -174,7 +176,12 @@ def test_create_failure_errors_are_token_free(tmp_path):
 
 
 def test_attached_workspace_is_refused(tmp_path):
-    """Vexa-born only: an ATTACHED external repo already has a home — publish refuses it."""
+    """Vexa-born only: an ATTACHED external (remote) repo already has a home — publish refuses it.
+    The origin used for the clone here is a local tmp_path (network-free test setup, same as every
+    other test in this file), but the origin's URL is REWRITTEN to a remote-shaped one afterward —
+    a local-path origin is deliberately NOT refused (see
+    test_local_origin_workspace_is_not_refused), so exercising the real "external repo" case needs
+    a remote-shaped host, not just a local clone source."""
     root = tmp_path / "workspaces"
     ws = _workspace(root, "u1")
     origin = tmp_path / "external"
@@ -186,11 +193,33 @@ def test_attached_workspace_is_refused(tmp_path):
     _run(origin, "add", "-A")
     _run(origin, "commit", "-q", "-m", "seed")
     swap_workspace(root, "u1", str(origin), "main")   # active workspace is now the attached repo
+    _run(ws, "remote", "set-url", "origin", "https://github.com/acme/external.git")
 
     with pytest.raises(PublishError) as ei:
         publish_workspace(root, "u1", token=TOKEN, repo_name="w",
                           create_repo=lambda *a: (_ for _ in ()).throw(AssertionError))
     assert "attached" in str(ei.value)
+
+
+def test_local_origin_workspace_is_not_refused(tmp_path):
+    """A workspace attached from a LOCAL PATH (the self-host VEXA_ALLOW_LOCAL_REPO_ROOT escape
+    hatch — see control_plane/repo_ref.py) isn't a GitHub home at all, so publish may add
+    `vexa-publish` to it additively — origin (the local path) is left untouched."""
+    root = tmp_path / "workspaces"
+    ws = _workspace(root, "u1")
+    origin = tmp_path / "external"
+    origin.mkdir()
+    _run(origin, "init", "-q", "-b", "main")
+    _run(origin, "config", "user.email", "t@t")
+    _run(origin, "config", "user.name", "t")
+    (origin / "CLAUDE.md").write_text("CUSTOM ROOT")
+    _run(origin, "add", "-A")
+    _run(origin, "commit", "-q", "-m", "seed")
+    swap_workspace(root, "u1", str(origin), "main")   # origin stays a local path — not rewritten
+
+    result = publish_workspace(root, "u1", token=TOKEN, remote_url=str(_bare(tmp_path / "remote.git")))
+    assert result.created is False
+    assert _run(ws, "remote", "get-url", "origin") == str(origin)   # origin untouched
 
 
 def test_bad_inputs_are_value_errors(tmp_path):

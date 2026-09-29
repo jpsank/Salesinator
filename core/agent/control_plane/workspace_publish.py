@@ -31,7 +31,7 @@ from shared.adapters import GitPushError, push_with_token
 from shared.gitenv import scrubbed_git_env
 
 from control_plane.repo_ref import assert_fetchable, host_of
-from control_plane.workspace_attach import SEED_SLOT, _safe_subject_dir, attached_workspaces
+from control_plane.workspace_attach import _safe_subject_dir
 
 log = logging.getLogger(__name__)
 
@@ -188,26 +188,22 @@ def publish_workspace(
     # escape hatch — see control_plane/repo_ref.py) isn't a GitHub home at all, so it's NOT refused
     # here: publish adds `vexa-publish` as an ADDITIVE remote (origin is never touched), giving a
     # locally-attached workspace a GitHub mirror too, not replacing its local origin as home.
-    if ws_dir is not None:
-        origin = subprocess.run(["git", "-C", str(ws), "remote", "get-url", "origin"],
-                                capture_output=True, text=True, env=scrubbed_git_env())
-        origin_url = origin.stdout.strip() if origin.returncode == 0 else ""
-        if origin_url and host_of(origin_url) is not None:
-            raise PublishError(
-                "this workspace is attached from an external repo — it already has a home; "
-                "push to that repo instead (publish is for vexa-born workspaces, or ones whose only "
-                "home so far is a local path)"
-            )
-    else:
-        state = attached_workspaces(rootp, subject)
-        active = state.get("active")
-        active_repo = state.get("slots", {}).get(active, {}).get("repo") if active not in (None, SEED_SLOT) else None
-        if active_repo and host_of(active_repo) is not None:
-            raise PublishError(
-                "the active workspace is attached from an external repo — it already has a home; "
-                "push to that repo instead (publish is for vexa-born workspaces, or ones whose only "
-                "home so far is a local path)"
-            )
+    #
+    # Reads the LIVE git remote (not swap-time bookkeeping, e.g. attached_workspaces()'s stored
+    # `repo` string) — `ws` is the same resolved directory whether `ws_dir` was given or not, so
+    # there's one real answer to "what is this workspace's origin right now", and the stored string
+    # can drift from it (a later `git remote set-url`, or any other direct git op, moves the real
+    # remote without updating swap-time metadata — a staleness bug a test surfaced, not a case
+    # deliberately worth two different, disagreeing code paths).
+    origin = subprocess.run(["git", "-C", str(ws), "remote", "get-url", "origin"],
+                            capture_output=True, text=True, env=scrubbed_git_env())
+    origin_url = origin.stdout.strip() if origin.returncode == 0 else ""
+    if origin_url and host_of(origin_url) is not None:
+        raise PublishError(
+            "this workspace is attached from an external repo — it already has a home; "
+            "push to that repo instead (publish is for vexa-born workspaces, or ones whose only "
+            "home so far is a local path)"
+        )
 
     # The branch to push: the workspace's current branch (full history rides along with it).
     branch = _git_out(ws, "rev-parse", "--abbrev-ref", "HEAD", token=token)
