@@ -203,6 +203,7 @@ def _dispatch_one(store: Store, settings: Settings, approval: PendingApproval) -
             subject=settings.product_repo_subject,
             title=approval.title, body=approval.body,
             signoff_name=settings.product_repo_signoff_name, signoff_email=settings.product_repo_signoff_email,
+            runner=settings.product_repo_runner,
         )
     except DispatchError:
         logger.exception("dispatch failed for approval id=%s title=%r", approval.id, approval.title)

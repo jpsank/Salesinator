@@ -7,9 +7,18 @@ import httpx
 import respx
 
 import sales_cycle.api as api_module
-from conftest import GATEWAY, client
+from conftest import AGENT_API, GATEWAY, client
 
 SECRET = "test-webhook-secret"
+
+
+def _mock_process_call() -> None:
+    """Every meeting.started payload in this file carries id/platform/native_meeting_id, so
+    webhook_meeting_started's new auto-processing background task (enable_copilot_processing)
+    always fires a POST here — under @respx.mock that call must be mocked like any other, or
+    respx's strict all-mocked check fails the test even though the assertion under test is
+    unrelated to this call."""
+    respx.post(f"{AGENT_API}/api/meeting/process").mock(return_value=httpx.Response(200, json={"processing": True}))
 
 
 def _sign(timestamp: str, body: bytes) -> str:
@@ -45,6 +54,7 @@ def test_meeting_started_resolves_and_binds(monkeypatch):
     monkeypatch.setenv("SALES_CYCLE_HUBSPOT_TOKEN", "test-token")
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_API_KEY", "vxa_rep_key")
 
+    _mock_process_call()
     respx.post("https://api.hubapi.com/crm/v3/objects/companies/search").mock(
         return_value=httpx.Response(200, json={"results": [
             {"id": "42", "properties": {"name": "Acme Corp", "domain": "acme.example.com"}},
@@ -69,6 +79,7 @@ def test_meeting_started_launches_the_live_card_watcher_as_the_meeting_owner(mon
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
     monkeypatch.setenv("SALES_CYCLE_HUBSPOT_TOKEN", "test-token")
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_API_KEY", "vxa_rep_key")
+    _mock_process_call()
     respx.post("https://api.hubapi.com/crm/v3/objects/companies/search").mock(
         return_value=httpx.Response(200, json={"results": []})
     )
@@ -91,6 +102,10 @@ def test_meeting_started_missing_owner_id_does_not_start_a_watcher(monkeypatch):
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
     calls = []
     monkeypatch.setattr(api_module, "watch_meeting", lambda **kw: calls.append(kw))
+    # Not what this test is about, but the payload still carries id/platform/native_meeting_id, so
+    # the auto-processing background task still fires — stub it out the same way watch_meeting is,
+    # rather than a real (failing, DNS-less-test-env) network call.
+    monkeypatch.setattr(api_module, "enable_copilot_processing", lambda **kw: None)
     resp = _post_webhook(_meeting_started_payload())  # no user_id override — payload lacks it
     assert resp.status_code == 200
     assert calls == []
@@ -122,6 +137,7 @@ def test_meeting_started_no_attendee_domain_match_reported_not_fatal(monkeypatch
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
     monkeypatch.setenv("SALES_CYCLE_HUBSPOT_TOKEN", "test-token")
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_API_KEY", "vxa_rep_key")
+    _mock_process_call()
     respx.post("https://api.hubapi.com/crm/v3/objects/companies/search").mock(
         return_value=httpx.Response(200, json={"results": []})
     )
@@ -136,6 +152,7 @@ def test_own_domain_is_excluded(monkeypatch):
     monkeypatch.setenv("SALES_CYCLE_HUBSPOT_TOKEN", "test-token")
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_API_KEY", "vxa_rep_key")
     monkeypatch.setenv("SALES_CYCLE_OWN_DOMAINS", "acme.example.com")
+    _mock_process_call()
     # The only attendee is on our own domain — nothing left to search for.
     resp = _post_webhook(_meeting_started_payload())
     assert resp.status_code == 200

@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     # main line. Change only if the product repo's default branch isn't "main".
     product_repo_default_branch: str = "main"
 
+    # Which agent CLI runner drives the implementation turn (unit.v1's own `runner` field —
+    # core/agent/llm/registry.py's HARNESS_RUNNERS). Defaults to "claude-code" (today's exact
+    # behavior, no regression). Set to "opencode" to run the feature-implementer against whatever
+    # local/open-source model VEXA_LLM_BASE_URL points at instead — see core/agent/llm/opencode.py.
+    product_repo_runner: str = "claude-code"
+
     # Attribution for every automated commit this add-on's AI turns make (core/agent's
     # workspace_worktree.py signoff mechanism — see CONTRIBUTOR_RIGHTS.md for why this exists: the
     # human who ships automated work owns full authorship/responsibility for it). Both empty

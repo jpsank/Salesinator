@@ -11,6 +11,7 @@ from sales_cycle.settings import get_settings
 
 client = TestClient(app)
 GATEWAY = get_settings().vexa_gateway_url.rstrip("/")
+AGENT_API = get_settings().agent_api_internal_url.rstrip("/")
 
 
 @pytest.fixture(autouse=True)

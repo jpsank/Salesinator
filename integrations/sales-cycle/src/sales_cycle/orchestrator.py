@@ -54,7 +54,7 @@ def branch_for(title: str) -> str:
 
 def submit_implementation(
     *, agent_api_url: str, subject: str, title: str, body: str,
-    signoff_name: str = "", signoff_email: str = "", timeout: float = 10.0,
+    signoff_name: str = "", signoff_email: str = "", runner: str = "claude-code", timeout: float = 10.0,
 ) -> dict:
     """Starts the AI agent working on this request. We don't wait around for it to finish — it runs
     in the background, and `push_if_ready` (below) checks on it later.
@@ -62,7 +62,12 @@ def submit_implementation(
     `signoff_name`/`signoff_email`, when BOTH given, ride as `identity.principal` — core/agent's
     existing internal-attribution field (unrelated to the unit.v1 wire schema; stripped before the
     contract check) that its own worktree-provisioning step uses to configure git identity + install
-    the signoff hook. Neither is a literal here — both come from the caller's own settings."""
+    the signoff hook. Neither is a literal here — both come from the caller's own settings.
+
+    `runner` selects which agent CLI actually drives the turn (unit.v1's own field — see
+    core/agent/llm/registry.py's HARNESS_RUNNERS); comes from the caller's settings.product_repo_runner,
+    never a literal here, so a deployment can point the feature-implementer at a different harness
+    (e.g. "opencode") without a code change."""
     branch = branch_for(title)
     prompt = (
         f"A customer explicitly asked for this product capability:\n\n"
@@ -80,7 +85,7 @@ def submit_implementation(
         "POST", f"{agent_api_url.rstrip('/')}/invocations",
         json={
             "identity": identity,
-            "runner": "claude-code",
+            "runner": runner,
             "workspaces": [{"id": subject, "mode": "rw"}],
             "trigger": "scheduled",
             "start": {"entrypoint": {"inline": prompt}},
