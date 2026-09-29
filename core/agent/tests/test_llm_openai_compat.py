@@ -85,3 +85,49 @@ def test_missing_model_fails_loud(monkeypatch):
     with pytest.raises(LLMConfigError) as exc:
         adapter.complete("p")
     assert "VEXA_LLM_MODEL" in str(exc.value)
+
+
+def test_response_schema_400_retries_without_it_per_completion_port_contract():
+    """CompletionPort's own contract: a provider that can't constrain to response_schema must just
+    ignore it, never error. A backend that 400s on response_format (not every openai-compat backend
+    is Ollama) must fall back to a plain completion instead of failing the whole beat."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body)
+        if "response_format" in body:
+            return httpx.Response(400, text="Unknown parameter: response_format")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "free-form ok"}}]})
+
+    result = _adapter(handler).complete("p", response_schema={"type": "object"})
+    assert result.text == "free-form ok"
+    assert len(calls) == 2
+    assert "response_format" in calls[0]
+    assert "response_format" not in calls[1]
+
+
+def test_response_schema_400_fallback_still_surfaces_a_real_second_failure():
+    """The retry-without-schema is a fallback for an UNSUPPORTED FIELD 400, not a blanket retry —
+    if the backend still 400s once response_format is gone, that's a real, different problem and
+    must still be reported, not swallowed."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="model not found")  # 400 either way — a real, unrelated error
+
+    with pytest.raises(LLMError) as exc:
+        _adapter(handler).complete("p", response_schema={"type": "object"})
+    assert "model not found" in str(exc.value)
+
+
+def test_400_with_no_response_schema_never_retries():
+    """A plain completion (no response_schema) that 400s has nothing to fall back from — must fail
+    immediately, not silently double-send."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(400, text="bad request")
+
+    with pytest.raises(LLMError):
+        _adapter(handler).complete("p")
+    assert len(calls) == 1

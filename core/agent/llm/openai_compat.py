@@ -58,20 +58,32 @@ class OpenAICompatCompletion:
         messages.append({"role": "user", "content": prompt})
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
         body: dict = {"model": target, "messages": messages}
+        used_response_format = False
         if response_schema is not None:
             # OpenAI's response_format shape — Ollama's OpenAI-compat layer honors it too (verified
             # live against a real local model: eliminates malformed/incomplete JSON at the token
-            # level, not just via a stricter prompt). A provider that doesn't understand this field
-            # at all would 400 on it, same as any other unsupported field — no separate try/except,
-            # consistent with every other error this method already surfaces.
+            # level, not just via a stricter prompt).
             body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"name": "response", "schema": response_schema},
             }
+            used_response_format = True
         try:
             r = self._client.post(f"{self._base}/chat/completions", json=body, headers=headers)
         except httpx.HTTPError as exc:
             raise LLMError(f"completion transport failure against {self._base}: {exc}") from exc
+        if r.status_code == 400 and used_response_format:
+            # CompletionPort's own contract: a provider that can't constrain to response_schema must
+            # just ignore it and return free-form text — never an error (ports.py). openai-compat
+            # covers every OpenAI-dialect backend, not just the one (Ollama) this field was verified
+            # against; a 400 here means THIS backend (vLLM, LM Studio, some gateways) doesn't
+            # understand response_format at all, so retry once without it rather than hard-failing
+            # every meeting-card beat for that deployment.
+            del body["response_format"]
+            try:
+                r = self._client.post(f"{self._base}/chat/completions", json=body, headers=headers)
+            except httpx.HTTPError as exc:
+                raise LLMError(f"completion transport failure against {self._base}: {exc}") from exc
         if r.status_code in (401, 403):
             raise LLMAuthError(f"{r.status_code} from {self._base}: {r.text[:300]}")
         if r.status_code >= 400:
