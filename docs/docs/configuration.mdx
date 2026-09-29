@@ -175,6 +175,26 @@ Point the agent at your own model so no inference leaves the network.
 | `VEXA_AGENT_DEFAULT_SUBJECT` | `u_live` | Fallback subject before the gateway fronts agent-api. |
 | `VEXA_ALLOW_LOCAL_REPO_ROOT` | — | `os.pathsep`-separated directories a workspace repo may be attached from as a local path (`POST /agent/workspace/swap`). Unset refuses local paths. |
 
+### Meeting copilot's live card-tagging model (`VEXA_LLM_*`)
+
+Separate from the coding-agent model above: the live meeting copilot's per-beat card-tagging call
+(`core/agent/llm/openai_compat.py`) is a cheap, stateless completion — no file access, no tools —
+so it's configured independently and defaults to a **local, open-source model via Ollama**, no
+external API key required out of the box.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VEXA_LLM_PROVIDER` | `openai-compat` | Which `CompletionPort` adapter the copilot's beats use: `openai-compat` (any OpenAI-wire-compatible host — Ollama, OpenRouter, vLLM, …), `anthropic` (direct Anthropic API), or `claude-cli` (reuses the Claude subscription credential above — no local model, no separate key either way). |
+| `VEXA_LLM_BASE_URL` | `http://ollama:11434/v1` | The `openai-compat` endpoint. Point this at a hosted provider instead (e.g. `https://openrouter.ai/api/v1`) to skip running a local model. |
+| `VEXA_LLM_API_KEY` | — | Bearer token for `VEXA_LLM_BASE_URL`, if it needs one (a local Ollama doesn't). |
+| `VEXA_LLM_MODEL` | `llama3.2:3b` | The model name, in whatever form the endpoint expects. |
+
+`docker-compose.yml`'s `ollama` service is what `VEXA_LLM_BASE_URL`'s default points at, and the
+one-shot `ollama-pull` service pulls `VEXA_LLM_MODEL` into it on `docker compose up` (a no-op on
+repeat runs — Ollama skips a model it already has). Swap `VEXA_LLM_MODEL` to any model Ollama
+supports; larger/better models trade off against how much RAM/CPU (or GPU) is available and how
+quickly a beat needs to come back.
+
 ### Claude subscription credentials (`HOST_CLAUDE_CREDENTIALS`)
 
 Setting `HOST_CLAUDE_CREDENTIALS=~/.claude/.credentials.json` mounts your Claude Code

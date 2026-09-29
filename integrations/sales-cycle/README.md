@@ -66,6 +66,15 @@ call, since a customer tag can land after the call — and its first few cards �
 approved: checking in on the AI agent's implementation turn and pushing the finished branch once
 it's done (there's no event for "the agent finished" to react to instead).
 
+**Two prerequisites this add-on doesn't control, both pre-existing Vexa machinery:** the meeting
+copilot only tags cards for a call when processing is turned ON for it — the Terminal's live-call
+view does this, but nothing in this add-on's own webhook handler does yet (a real gap: it should
+start it automatically the moment a call begins, not depend on someone having that view open). And
+the copilot's live card-tagging needs its own completion model configured — see
+`docs/docs/configuration.mdx`'s "Meeting copilot's live card-tagging model" section; it defaults to
+a local, open-source model via Ollama (already wired into `docker-compose.yml`), no external API
+key required out of the box.
+
 ## One-time setup: connecting HubSpot, Slack, and GitHub
 
 Every step below is also reachable interactively from Settings → Integrations in the Terminal UI

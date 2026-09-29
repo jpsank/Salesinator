@@ -26,6 +26,36 @@ services:
     networks: [vexa]
     restart: unless-stopped
 
+  # Local, open-source completion endpoint for the meeting copilot's live card-tagging beats
+  # (llm/openai_compat.py's VEXA_LLM_BASE_URL) — no external API key, no third-party dependency.
+  # Unrelated to the coding-agent turns (submit_implementation etc.), which still run through the
+  # Claude Code CLI harness (VEXA_RUNNER=claude-code, the only harness implemented today).
+  ollama:
+    image: ollama/ollama:latest
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - ollama-data:/root/.ollama
+    networks: [vexa]
+    restart: unless-stopped
+
+  # One-shot: pulls the meeting-copilot's default model into the ollama volume above, then exits.
+  # Re-running is a fast no-op (ollama skips a model it already has).
+  ollama-pull:
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${VEXA_LLM_MODEL:-llama3.2:3b} || true"]
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks: [vexa]
+    restart: "no"
+
   postgres:
     image: postgres:17-alpine
     command: ["postgres", "-c", "idle_in_transaction_session_timeout=60000"]
@@ -261,6 +291,18 @@ services:
       - ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-}
       - ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-}
       - ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}
+      # The meeting copilot's live card-tagging completion (llm/openai_compat.py) — separate from the
+      # coding-agent turns above, and separate from ANTHROPIC_*: a local, open-source model via Ollama
+      # (the `ollama`/`ollama-pull` services below) by default, so this needs no external API key. Set
+      # VEXA_LLM_PROVIDER=claude-cli instead to reuse the same Claude subscription credential as the
+      # coding turns, with zero local model to run, if you'd rather do that.
+      - VEXA_LLM_PROVIDER=${VEXA_LLM_PROVIDER:-openai-compat}
+      - VEXA_LLM_BASE_URL=${VEXA_LLM_BASE_URL:-http://ollama:11434/v1}
+      - VEXA_LLM_API_KEY=${VEXA_LLM_API_KEY:-}
+      - VEXA_LLM_MODEL=${VEXA_LLM_MODEL:-llama3.2:3b}
+      # CPU-only local inference over a real card prompt routinely runs past a hosted-API-sized
+      # budget — see core/agent/llm/openai_compat.py's docstring.
+      - VEXA_LLM_TIMEOUT_SEC=${VEXA_LLM_TIMEOUT_SEC:-300}
       - VEXA_LOG_LEVEL=${LOG_LEVEL:-info}
       # Stream primitive — the per-dispatch redis Streams the control plane relays (unit:<id>:out → SSE).
       - VEXA_REDIS_URL=redis://redis:6379/0
@@ -302,6 +344,8 @@ services:
     init: true
     depends_on:
       runtime:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     networks: [vexa]
     restart: unless-stopped
@@ -1097,6 +1141,7 @@ volumes:
   minio-data:
   agent-workspaces:
   sales-cycle-data:
+  ollama-data:
 
 networks:
   vexa:

@@ -1,8 +1,10 @@
 # deploy/compose — the v0.12 control-plane stack (P4)
 
 `docker-compose.yml` brings up the v0.12 control plane: the infra (`postgres:17-alpine`,
-`valkey/valkey:8-alpine`, `minio` + `minio-init`) and the long-running services below, each building its own
-slim image from `<service>/Dockerfile`:
+`valkey/valkey:8-alpine`, `minio` + `minio-init`, `ollama` + the one-shot `ollama-pull` — a local,
+open-source completion endpoint for the live meeting copilot's card-tagging beats, see
+`docs/docs/configuration.mdx`'s "Meeting copilot's live card-tagging model" section) and the
+long-running services below, each building its own slim image from `<service>/Dockerfile`:
 
 | service      | build context                          | host port | entrypoint                         |
 |--------------|----------------------------------------|-----------|------------------------------------|

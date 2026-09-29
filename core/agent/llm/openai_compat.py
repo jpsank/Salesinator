@@ -8,7 +8,11 @@ Config (constructor args win over env): ``VEXA_LLM_BASE_URL`` (required — e.g.
 ``https://openrouter.ai/api/v1``, ``http://ollama:11434/v1``; falls back to ``ANTHROPIC_BASE_URL``
 for deployments that already point one at a multi-protocol gateway), ``VEXA_LLM_API_KEY`` (falls
 back ``ANTHROPIC_AUTH_TOKEN`` → ``ANTHROPIC_API_KEY``; optional — local runtimes need none),
-``VEXA_LLM_MODEL`` (the deployment-default model).
+``VEXA_LLM_MODEL`` (the deployment-default model), ``VEXA_LLM_TIMEOUT_SEC`` (default 300 — a hosted
+API answers in seconds, but CPU-only local inference (Ollama, vLLM on a laptop) over a real,
+workspace-governed card prompt routinely runs past a naive 120s budget; this adapter is the one
+every local-model deployment goes through, so the default has to fit that case, not just a hosted
+API's).
 """
 from __future__ import annotations
 
@@ -25,7 +29,7 @@ class OpenAICompatCompletion:
     name = "openai-compat"
 
     def __init__(self, *, base_url: Optional[str] = None, api_key: Optional[str] = None,
-                 model: Optional[str] = None, timeout: float = 120.0,
+                 model: Optional[str] = None, timeout: Optional[float] = None,
                  transport: Optional[httpx.BaseTransport] = None) -> None:
         self._base = (base_url or os.environ.get("VEXA_LLM_BASE_URL")
                       or os.environ.get("ANTHROPIC_BASE_URL") or "").rstrip("/")
@@ -33,6 +37,8 @@ class OpenAICompatCompletion:
                      or os.environ.get("ANTHROPIC_AUTH_TOKEN")
                      or os.environ.get("ANTHROPIC_API_KEY") or "")
         self._model = model or os.environ.get("VEXA_LLM_MODEL") or ""
+        if timeout is None:
+            timeout = float(os.environ.get("VEXA_LLM_TIMEOUT_SEC") or 300.0)
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     def complete(self, prompt: str, *, system: Optional[str] = None,
