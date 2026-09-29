@@ -13,8 +13,10 @@ from pathlib import Path
 import pytest
 
 from control_plane.workspace_git_sync import (
+    MergeError,
     RemoteSyncError,
     home_remote,
+    merge_branch,
     pull_origin,
     push_origin,
     remote_status,
@@ -146,3 +148,56 @@ def test_push_requires_a_token(tmp_path):
     ws = _clone(bare, tmp_path / "ws", seed=True)
     with pytest.raises(ValueError):
         push_origin(ws, token="  ")
+
+
+def _local_repo(tmp_path: Path) -> Path:
+    """A plain local-only repo — merge_branch never touches a remote, so no bare/clone needed."""
+    ws = tmp_path / "local"
+    ws.mkdir()
+    _run(ws, "init", "-q", "-b", "main")
+    _run(ws, "config", "user.email", "t@t")
+    _run(ws, "config", "user.name", "t")
+    _commit(ws, "init")
+    return ws
+
+
+def test_merge_branch_merges_cleanly(tmp_path):
+    ws = _local_repo(tmp_path)
+    _run(ws, "checkout", "-q", "-b", "feature")
+    sha = _commit(ws, "feature work")
+    _run(ws, "checkout", "-q", "main")
+    head = merge_branch(ws, branch="feature", into="main")
+    assert head != sha  # a real --no-ff merge commit, not a fast-forward onto feature's own sha
+    assert _run(ws, "log", "-1", "--format=%P").count(" ") == 1  # two parents == a merge commit
+
+
+def test_merge_branch_rejects_a_flag_like_branch_name(tmp_path):
+    """A branch/into value that LOOKS like a git flag (a leading '-') must never reach the git
+    subprocess as an argument — it would be interpreted as a flag instead of a ref name."""
+    ws = _local_repo(tmp_path)
+    with pytest.raises(MergeError) as exc:
+        merge_branch(ws, branch="--abort", into="main")
+    assert "invalid branch name" in str(exc.value)
+    # never even attempted — the workspace is untouched, still on its original branch
+    assert _run(ws, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+
+
+def test_merge_branch_restores_original_branch_on_conflict(tmp_path):
+    """A caller working on some OTHER branch must find it exactly as they left it after a failed
+    merge — not silently stranded on `into` because the merge needed to check it out first."""
+    ws = _local_repo(tmp_path)
+    _run(ws, "checkout", "-q", "-b", "feature")
+    (ws / "note.md").write_text("feature version")
+    _run(ws, "add", "-A"); _run(ws, "commit", "-q", "-m", "feature edits note.md")
+    _run(ws, "checkout", "-q", "main")
+    (ws / "note.md").write_text("main version")  # conflicting edit to the same file
+    _run(ws, "add", "-A"); _run(ws, "commit", "-q", "-m", "main edits note.md")
+    _run(ws, "checkout", "-q", "-b", "working-on-something-else")
+
+    with pytest.raises(MergeError):
+        merge_branch(ws, branch="feature", into="main")
+
+    # left exactly where the caller was, not stranded on `main`
+    assert _run(ws, "rev-parse", "--abbrev-ref", "HEAD") == "working-on-something-else"
+    # and no half-finished merge state left behind either
+    assert not (ws / ".git" / "MERGE_HEAD").exists()

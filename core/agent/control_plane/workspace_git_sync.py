@@ -243,6 +243,9 @@ class MergeError(RuntimeError):
     and fixes it like any merge conflict, or picks a different branch."""
 
 
+_REF_RE = re.compile(r"^[A-Za-z0-9._/][A-Za-z0-9._/-]{0,199}$")
+
+
 def merge_branch(ws: str | Path, *, branch: str, into: str) -> str:
     """Merge ``branch`` into ``into`` — LOCALLY, no push, no token, no network, no GitHub. The write
     half of the fully-local review flow (``workspace_reader.git_range_diff_at`` is the read half):
@@ -251,9 +254,17 @@ def merge_branch(ws: str | Path, *, branch: str, into: str) -> str:
     Always ``--no-ff`` (a real merge commit — a fast-forward would silently disappear ``branch``'s
     own history from the log) and never force: a real conflict raises ``MergeError`` with git's own
     message, and the half-finished merge is aborted so the tree is never left in a conflicted state
-    for the caller to stumble into on the next read."""
+    for the caller to stumble into on the next read. On ANY failure — a bad ref, a failed checkout,
+    or a real conflict — the workspace is restored to whatever branch it was actually on before this
+    call, never left stranded on ``into``: a caller mid-work on some other branch must find it
+    exactly as they left it, not silently moved."""
     wsp = Path(ws)
     current = _current_branch(wsp)
+    # A ref that doesn't look like a ref never reaches git (mirrors workspace_reader.git_range_diff_at's
+    # own guard) — without this, a value like "--abort" or "--orphan" is interpreted as a flag by the
+    # checkout/merge calls below instead of a branch name.
+    if not _REF_RE.match(branch or "") or not _REF_RE.match(into or ""):
+        raise MergeError(f"invalid branch name: {branch!r} / {into!r}")
     if current != into:
         co = _git(wsp, "checkout", into, check=False)
         if co.returncode != 0:
@@ -261,5 +272,7 @@ def merge_branch(ws: str | Path, *, branch: str, into: str) -> str:
     merged = _git(wsp, "merge", "--no-ff", "--no-edit", branch, check=False)
     if merged.returncode != 0:
         _git(wsp, "merge", "--abort", check=False)  # never leave a half-merged tree behind
+        if current and current != into:
+            _git(wsp, "checkout", current, check=False)  # never leave the workspace stranded on `into`
         raise MergeError(f"merge of {branch!r} into {into!r} failed: {merged.stderr.strip()}")
     return _git(wsp, "rev-parse", "HEAD").stdout.strip()
