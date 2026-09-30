@@ -1466,6 +1466,39 @@ class SqlAlchemyTranscriptStore:
             await db.refresh(meeting)
             return self._planned_row(meeting)
 
+    async def set_feature_request_post_error(self, user_id, meeting_id, error) -> "Optional[dict]":
+        """Set/clear data.feature_request_post_error — see ports.set_feature_request_post_error.
+        Single-field set/clear, no merge needed (unlike annotate_meeting's metadata): the caller
+        (one service, the live card watcher) is the only writer of this key."""
+        from sqlalchemy import bindparam, select, text
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from .models import Meeting
+
+        async with self._session_factory() as db:
+            await db.execute(
+                text("SELECT pg_advisory_xact_lock(:uid)").bindparams(bindparam("uid", user_id))
+            )
+            meeting = (await db.execute(
+                select(Meeting).where(Meeting.id == meeting_id, Meeting.user_id == user_id)
+                .with_for_update()
+            )).scalars().first()
+            if meeting is None:
+                return None
+
+            data = dict(meeting.data) if isinstance(meeting.data, dict) else {}
+            cleaned = (error or "").strip()[:1024]
+            if cleaned:
+                data["feature_request_post_error"] = cleaned
+            else:
+                data.pop("feature_request_post_error", None)
+            meeting.data = data
+            flag_modified(meeting, "data")
+
+            await db.commit()
+            await db.refresh(meeting)
+            return self._planned_row(meeting)
+
     async def update_planned_meeting(self, user_id, meeting_id, updates) -> "Optional[dict]":
         """ROW-id-addressed PATCH of a planned row (intent status only). ``updates`` carries only
         the keys the caller sent — presence means apply (None clears where documented)."""

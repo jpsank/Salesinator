@@ -325,6 +325,21 @@ class TranscriptStore(Protocol):
         row (→ 404). Never returns a conflict: there is no state in which annotating is refused."""
         ...
 
+    async def set_feature_request_post_error(
+        self, user_id: int, meeting_id: int, error: Optional[str],
+    ) -> Optional[dict]:
+        """Set (or, with ``error=None``, clear) ``data.feature_request_post_error`` on a row in ANY
+        status — the sibling of ``annotate_meeting`` (same ownership scope, same "nothing here fights
+        the FSM" reasoning), but SYSTEM-set rather than caller-owned: an external service (the
+        SalesCycle add-on's live card watcher) reports a KNOWN, human-fixable reason a
+        ``feature_request`` card failed to reach Slack (the app isn't in the channel, the connection
+        was revoked, …) — see ``auto_join_error``'s same shape for a planned row's own failure class,
+        which this mirrors for a LIVE one's.
+
+        Returns the updated row (``list_meetings`` shape), or ``None`` when the user owns no such
+        row (→ 404)."""
+        ...
+
     async def delete_planned_meeting(self, user_id: int, meeting_id: int) -> Optional[bool]:
         """OWNER-scoped delete of a PLANNED (``idle``/``scheduled``) row. Returns ``True`` on
         delete, ``None`` when the user owns no such row (→ 404), ``False`` when the row is

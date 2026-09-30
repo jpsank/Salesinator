@@ -620,6 +620,19 @@ class InMemoryTranscriptStore:
             data["metadata"] = merged
         return self._planned_row(meeting_id)
 
+    async def set_feature_request_post_error(self, user_id, meeting_id, error):
+        """Mirrors the adapter: single-field set/clear, no status check (no FSM to fight)."""
+        m = self._meetings.get(meeting_id)
+        if m is None or m["user_id"] != user_id:
+            return None
+        data = m["data"]
+        cleaned = (error or "").strip()[:1024]
+        if cleaned:
+            data["feature_request_post_error"] = cleaned
+        else:
+            data.pop("feature_request_post_error", None)
+        return self._planned_row(meeting_id)
+
     async def update_planned_meeting(self, user_id, meeting_id, updates):
         m = self._meetings.get(meeting_id)
         if m is None or m["user_id"] != user_id:

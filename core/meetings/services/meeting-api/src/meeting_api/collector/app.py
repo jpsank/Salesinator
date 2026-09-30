@@ -767,6 +767,38 @@ def build_router(
         row = await store.annotate_meeting(user_id, meeting_id, title=title, metadata=metadata)
         return _annotate_result(row, user_id, meeting_id, title, metadata)
 
+    # --- PUT /meetings/{meeting_id}/feature-request-post-error → SYSTEM-set (not caller-owned like
+    # annotate), reported by an EXTERNAL service (the SalesCycle add-on's live card watcher) when a
+    # feature_request card fails to reach Slack for a KNOWN, human-fixable reason (the app isn't in
+    # the channel, the connection was revoked, …). Mirrors auto_join_error's shape (a planned row's
+    # own failure class) for a LIVE row's. {"error": "<string>"} sets it; {"error": null} (or an
+    # empty/whitespace string) clears it — the watcher clears it the next time a post succeeds, so a
+    # fixed problem doesn't leave a stale warning behind. ---
+    @router.put("/meetings/{meeting_id}/feature-request-post-error")
+    async def set_feature_request_post_error(
+        meeting_id: int,
+        request: Request,
+        x_user_id: Optional[str] = Header(default=None),
+    ):
+        user_id = _resolve_user_id(x_user_id)
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=422, detail="invalid JSON body")
+        if not isinstance(payload, dict) or "error" not in payload:
+            raise HTTPException(status_code=422, detail="body must be an object with an 'error' key")
+        error = payload["error"]
+        if error is not None and not isinstance(error, str):
+            raise HTTPException(status_code=422, detail="'error' must be a string or null")
+        row = await store.set_feature_request_post_error(user_id, meeting_id, error)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        log_event(
+            "feature_request_post_error_set", audience="system", span="meetings.feature_request_post_error",
+            user_id=user_id, meeting_id=str(meeting_id), fields={"cleared": not bool(error)},
+        )
+        return JSONResponse(content=row)
+
     @router.patch("/meetings/{platform}/{native_meeting_id}")
     async def patch_native_meeting(
         platform: str,
