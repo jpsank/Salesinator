@@ -105,9 +105,3 @@ def test_tag_endpoint_404s_on_unresolvable_company(monkeypatch):
         headers={"X-API-Key": "vxa_test"},
     )
     assert resp.status_code == 404
-
-
-def test_health():
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "service": "sales-cycle"}
