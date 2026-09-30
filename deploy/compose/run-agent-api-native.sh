@@ -48,6 +48,12 @@ export VEXA_MEETING_API_URL=http://localhost:18080
 export VEXA_AGENT_API_SELF_URL=http://localhost:18100
 export VEXA_AGENT_PROFILE=agent
 export VEXA_WORKSPACES_DIR="$WORKSPACES"
+# shared/seeding.py's resolve_seed_dir() defaults to /app/workspace-seeds — the Docker image's own
+# baked-in path, meaningless on this host. Reproduced live: "invalid workspace seed: seed path is
+# not a directory: /app/workspace-seeds/default" the moment a real ws_init call (attaching a repo)
+# actually exercised seed resolution — the $STAGE/workspace-seeds symlink above covers PYTHONPATH
+# package imports, not this separate hardcoded-absolute-path default.
+export VEXA_WORKSPACE_SEEDS_DIR="$REPO/core/agent/workspace-seeds"
 export VEXA_ADMIN_API_URL=http://localhost:18057
 export VEXA_AGENT_DEFAULT_SUBJECT=u_live
 export VEXA_LLM_PROVIDER=openai-compat
