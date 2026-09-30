@@ -196,6 +196,34 @@ def test_dispatch_with_isolation_worktree_uses_an_isolated_path(tmp_path):
     assert (tmp_path / "u_jane" / "README.md").read_text() == "baseline\n"
 
 
+def test_dispatch_with_isolation_worktree_carries_the_baseline_gitdir(tmp_path):
+    """Reproduced live: a linked worktree's .git file points at an absolute path inside the
+    baseline's .git/worktrees/<unit_id> — the baseline dir is otherwise never mounted (strict
+    per-mount isolation drops it when the primary mount is overridden to the worktree path), so
+    every git command in the worktree failed `fatal: not a git repository`. VEXA_WORKTREE_GITDIR
+    is the runtime-facing fix; it must NOT leak into VEXA_MOUNTS (the model-declared set)."""
+    _seed_baseline_repo(tmp_path, "u_jane")
+    settings = load_settings(workspaces_dir=str(tmp_path))
+    rt = _FakeRuntime()
+    d = dispatch.Dispatcher(settings, rt, _FakeIdentity())
+    inv = {**VALID_INV, "isolation": {"mode": "worktree"}}
+
+    d.dispatch(inv)
+
+    _, _profile, env = rt.spawned[0]
+    assert env["VEXA_WORKTREE_GITDIR"] == str(tmp_path / "u_jane" / ".git")
+    assert "VEXA_WORKTREE_GITDIR" not in json.dumps(json.loads(env["VEXA_MOUNTS"]))
+
+
+def test_dispatch_without_isolation_carries_no_gitdir_env():
+    settings = load_settings()
+    rt = _FakeRuntime()
+    d = dispatch.Dispatcher(settings, rt, _FakeIdentity())
+    d.dispatch(VALID_INV)
+    _, _profile, env = rt.spawned[0]
+    assert "VEXA_WORKTREE_GITDIR" not in env
+
+
 def test_dispatch_with_isolation_worktree_raises_loudly_on_missing_baseline(tmp_path):
     settings = load_settings(workspaces_dir=str(tmp_path))  # no baseline ever seeded
     rt = _FakeRuntime()

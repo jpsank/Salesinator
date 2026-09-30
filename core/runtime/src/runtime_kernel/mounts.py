@@ -71,7 +71,13 @@ def workspace_binds(env: Mapping[str, str]) -> list[MountBind]:
     An in-store mount is exposed as the store's subpath: a host-path store joins the path; a
     named-volume store rides ``volume_subpath`` (docker ``VolumeOptions.Subpath`` — REQUIRES engine
     ≥ v26; older engines fail the container create loudly). Read-only roles bind ``:ro`` — enforced.
-    De-duplicated, order-preserving."""
+    De-duplicated, order-preserving.
+
+    ``VEXA_WORKTREE_GITDIR`` (control_plane/dispatch.py's ``_worktree_gitdir_env``): a linked git
+    worktree's ``.git`` file points at an absolute path inside this baseline dir — plumbing the
+    worktree mechanism itself needs, not a declared workspace (never appears in ``VEXA_MOUNTS`` /
+    ``mount_set`` — the model never reasons about it). Always bound read-write: `git commit` /
+    `checkout -b` in the worktree write new objects and update branch refs into this shared dir."""
     binds: list[MountBind] = []
     seen: set[tuple[str, str]] = set()
 
@@ -84,26 +90,30 @@ def workspace_binds(env: Mapping[str, str]) -> list[MountBind]:
     src = env.get("VEXA_WORKSPACE_MOUNT_SOURCE")
     root = env.get("VEXA_WORKSPACE_MOUNT_TARGET")
 
-    for m in mount_set(env):
-        path = m["path"]
-        source = m.get("source")
-        read_only = not m.get("write", True)
+    def add_under_root_or_direct(path: str, source: Optional[str], read_only: bool) -> None:
         if not source and root and _under(path, root):
             if not src:
-                continue  # no store backing declared (process backend env) — nothing to bind
+                return  # no store backing declared (process backend env) — nothing to bind
             rel = os.path.relpath(os.path.normpath(path), os.path.normpath(root))
             if rel == ".":
-                continue  # a mount AT the root would re-expose the whole store — never emit it
+                return  # a mount AT the root would re-expose the whole store — never emit it
             if src.startswith("/"):
                 # host-path store: expose exactly this workspace by joining the subpath
                 add(os.path.join(src, rel), path, read_only)
             else:
                 # named-volume store: the backend mounts the volume's subpath (docker ≥ v26)
                 add(src, path, read_only, volume_subpath=rel)
-            continue
+            return
         # A mount with its OWN host source (the _global GLOBAL SYSTEM tier, a future cross-store shared
         # workspace) — or one outside the store root — binds source→target directly.
         add(source or path, path, read_only)
+
+    for m in mount_set(env):
+        add_under_root_or_direct(m["path"], m.get("source"), not m.get("write", True))
+
+    gitdir = env.get("VEXA_WORKTREE_GITDIR")
+    if gitdir:
+        add_under_root_or_direct(gitdir, None, False)
 
     return binds
 
@@ -140,16 +150,27 @@ def k8s_volume_mounts(env: Mapping[str, str], *, pvc_name: str, store_target: st
     volumes = [{"name": vol_name, "persistentVolumeClaim": {"claimName": pvc_name}}]
     volume_mounts: list[dict] = []
     seen: set[str] = set()
-    for m in mount_set(env):
-        path = m["path"]
-        if m.get("source") or not _under(path, store_target):
-            logger.warning("k8s: mount %s has its own source / sits outside the store — not exposed "
-                           "(hostPath is never emitted; give it a PVC in a later WP)", m.get("slug"))
-            continue
+
+    def add(path: str, read_only: bool, slug: str) -> None:
+        if not _under(path, store_target):
+            logger.warning("k8s: mount %s sits outside the store — not exposed "
+                           "(hostPath is never emitted; give it a PVC in a later WP)", slug)
+            return
         rel = os.path.relpath(os.path.normpath(path), os.path.normpath(store_target))
         if rel == "." or path in seen:
-            continue  # never re-expose the whole store; de-dup targets
+            return  # never re-expose the whole store; de-dup targets
         seen.add(path)
-        volume_mounts.append({"name": vol_name, "mountPath": path, "subPath": rel,
-                              "readOnly": not m.get("write", True)})
+        volume_mounts.append({"name": vol_name, "mountPath": path, "subPath": rel, "readOnly": read_only})
+
+    for m in mount_set(env):
+        if m.get("source"):
+            logger.warning("k8s: mount %s has its own source — not exposed "
+                           "(hostPath is never emitted; give it a PVC in a later WP)", m.get("slug"))
+            continue
+        add(m["path"], not m.get("write", True), m.get("slug", ""))
+
+    gitdir = env.get("VEXA_WORKTREE_GITDIR")  # see workspace_binds's docstring — same plumbing, k8s parity
+    if gitdir:
+        add(gitdir, False, "_worktree_gitdir")
+
     return volumes, volume_mounts

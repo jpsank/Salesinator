@@ -95,6 +95,49 @@ def test_no_store_configured_yields_direct_binds_only():
     assert workspace_binds({}) == []
 
 
+# ── VEXA_WORKTREE_GITDIR: a linked worktree's structural dependency on its baseline ───────────
+
+def test_worktree_gitdir_is_bound_read_write_alongside_the_worktree():
+    """A linked git worktree's .git file points at an absolute path inside the baseline's
+    .git/worktrees/<id> — reproduced live: without this bind, every git command in the worktree
+    fails `fatal: not a git repository` (the baseline dir is otherwise never mounted — strict
+    per-mount isolation). Read-write: `git commit` / `checkout -b` write into the shared object
+    store, not just read from it."""
+    mounts = [{"slug": "u1", "path": "/workspaces/.worktrees/sub/u1", "role": "private",
+               "write": True, "primary": True}]
+    e = _env(mounts)
+    e["VEXA_WORKTREE_GITDIR"] = "/workspaces/sub/.git"
+    binds = workspace_binds(e)
+    assert MountBind("agent-workspaces", "/workspaces/sub/.git", read_only=False,
+                     volume_subpath="sub/.git") in binds
+    assert len(binds) == 2  # the worktree mount itself, plus the gitdir — not folded into VEXA_MOUNTS
+
+
+def test_worktree_gitdir_absent_emits_no_extra_bind():
+    """The common case (no worktree isolation for this dispatch) — no VEXA_WORKTREE_GITDIR, no change."""
+    mounts = [{"slug": "u1", "path": "/workspaces/u1", "role": "private", "write": True, "primary": True}]
+    assert workspace_binds(_env(mounts)) == [
+        MountBind("agent-workspaces", "/workspaces/u1", read_only=False, volume_subpath="u1")
+    ]
+
+
+def test_worktree_gitdir_outside_store_root_binds_its_own_source():
+    """A gitdir path that isn't under the bound store root still gets a direct source→target bind
+    (mirrors how an out-of-store VEXA_MOUNTS entry binds today) rather than being silently dropped."""
+    e = _env([{"slug": "u1", "path": "/workspaces/.worktrees/sub/u1", "primary": True, "write": True}])
+    e["VEXA_WORKTREE_GITDIR"] = "/elsewhere/sub/.git"
+    binds = workspace_binds(e)
+    assert MountBind("/elsewhere/sub/.git", "/elsewhere/sub/.git", read_only=False) in binds
+
+
+def test_k8s_worktree_gitdir_gets_its_own_readwrite_subpath_mount():
+    e = _env([{"slug": "u1", "path": "/workspaces/.worktrees/sub/u1", "primary": True, "write": True}])
+    e["VEXA_WORKTREE_GITDIR"] = "/workspaces/sub/.git"
+    _, vmounts = k8s_volume_mounts(e, pvc_name="vexa-agent-workspaces", store_target="/workspaces")
+    assert {"name": "workspace-store", "mountPath": "/workspaces/sub/.git",
+            "subPath": "sub/.git", "readOnly": False} in vmounts
+
+
 def test_mount_set_falls_back_to_the_private_baseline():
     """A dispatch predating VEXA_MOUNTS → the single private baseline from VEXA_WORKSPACE_PATH."""
     assert mount_set(_env()) == [

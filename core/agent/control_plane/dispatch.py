@@ -16,6 +16,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import contracts
@@ -208,6 +209,25 @@ def _worker_cwd(root: str, subject: str, mounts: list[dict]) -> str:
     return normal["path"] if normal else f"{root}/{subject}"
 
 
+def _worktree_gitdir_env(root: str, subject: str, primary_override: Optional[str]) -> dict[str, str]:
+    """A linked git worktree (workspace_worktree.py) is not self-contained: its ``.git`` file points at
+    an ABSOLUTE path inside the baseline clone's ``.git/worktrees/<unit_id>`` — the admin dir git needs
+    for every operation (checkout, commit, log), which in turn shares the baseline's object store/refs
+    (that sharing is the whole point of a worktree — cheap, no re-clone). ``VEXA_MOUNTS`` swaps the
+    PRIMARY mount to the worktree path and drops the baseline entirely (strict per-mount isolation,
+    runtime_kernel/mounts.py), so without this the worktree is unreachable as a git repo from inside the
+    container: every git command in it fails ``fatal: not a git repository`` (reproduced live).
+
+    Deliberately a SEPARATE env var, not folded into ``VEXA_MOUNTS``: this is plumbing the worktree
+    mechanism itself needs, not a workspace for the model to reason about — engine.py's prompt-facing
+    mount declarations never read it. runtime_kernel.mounts.workspace_binds binds it read-write (not
+    read-only): `git commit` / `checkout -b` write new objects and update branch refs into this shared
+    dir, not just read from it."""
+    if not primary_override:
+        return {}
+    return {"VEXA_WORKTREE_GITDIR": str(Path(root) / subject / ".git")}
+
+
 def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token: str,
                    memberships: Optional[list[dict]] = None,
                    model_config: Optional[dict] = None,
@@ -226,8 +246,10 @@ def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token:
     # backing store (a host path / named volume) at <root>, and the worker works in the subject subdir.
     root = settings.workspaces_dir
     # The ORDERED mount set (WP-A1.1 + WP-A2.1): the private baseline first, then every activated extra.
-    # The whole store root is already bound by the runtime, so this is a WORKER-FACING contract (the paths
-    # + roles the turn respects), not a per-mount bind — it generalizes uniformly across all three backends.
+    # Each entry becomes its OWN bind (runtime_kernel.mounts.workspace_binds) — the worker's filesystem
+    # contains ONLY the dispatch's declared workspaces, never the whole store root (tenant isolation is
+    # enforced by this table, not by prompt instructions) — so this is a WORKER-FACING contract (the
+    # paths + roles the turn respects), not a stand-in for a bind.
     mounts = build_mount_set(settings, subject, memberships)
     if primary_override:
         mounts = [{**m, "path": primary_override} if m.get("primary") else m for m in mounts]
@@ -248,6 +270,7 @@ def build_unit_env(settings: Settings, invocation: dict, *, unit_id: str, token:
         "VEXA_MOUNTS": json.dumps(mounts),                       # the ordered active mount set [{slug,path,role,write,primary}]
         "VEXA_WORKSPACE_STORE_URL": settings.workspace_store_url,
         "REDIS_URL": settings.worker_redis_url or settings.redis_url,
+        **_worktree_gitdir_env(root, subject, primary_override),
     }
     # Attribution (D4 / WP-A1.2): the per-mount turn commit is authored by the dispatch PRINCIPAL (the
     # authenticated human whose input drives the turn), committer stays the platform. Until membership/
