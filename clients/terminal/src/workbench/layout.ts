@@ -27,6 +27,17 @@ export interface LayoutState {
   activeTab: ActiveTab | null;
   /** which chat session the persistent right rail is showing */
   activeSession: string;
+  /** Single-pane (mobile) width tier shows exactly ONE of left/center/right at a time, chosen by
+   *  this field — null means no explicit choice yet, so Workbench falls back to its own
+   *  content-based default (center if there's an active tab, else right). leftCollapsed/
+   *  rightCollapsed keep their existing, SEPARATE meaning for the two-or-three-pane desktop
+   *  tiers; this field only matters at single-pane width. */
+  mobileFocus: "left" | "center" | "right" | null;
+  /** The current responsive width tier, pushed in by Workbench (the one place that watches
+   *  window width) so toggleLeft/toggleRight can behave correctly for EVERY caller — header
+   *  buttons, ChatHeader's close (X), anything added later — without each one needing to
+   *  duplicate tier-detection itself. See toggleLeft/toggleRight below. */
+  tier: "full" | "narrow" | "single";
 }
 
 export interface LayoutService {
@@ -62,6 +73,11 @@ export interface LayoutService {
   toggleRight(): void;
   showRight(): void;
   showLeft(): void;
+  /** Sets which pane the single-pane (mobile) width tier shows; null returns to the automatic,
+   *  content-based default. See LayoutState.mobileFocus. */
+  setMobileFocus(pane: "left" | "center" | "right" | null): void;
+  /** Workbench pushes its computed responsive tier in here on every change. See LayoutState.tier. */
+  setTier(tier: LayoutState["tier"]): void;
   resetLayout(): void;
 }
 
@@ -81,6 +97,8 @@ export function createLayoutService(defaultList: string): LayoutService {
     context: null,
     activeTab: null,
     activeSession: readLS(LS_SESSION) || "main",
+    mobileFocus: null,
+    tier: "full",
   });
   let api: DockviewApi | null = null;
   // the single shared preview slot. We keep one dockview panel (fixed id) and swap its
@@ -261,10 +279,33 @@ export function createLayoutService(defaultList: string): LayoutService {
       if (store.getState().activeList !== id) histPush();
       store.set((s) => ({ ...s, activeList: id })); writeLS(LS_LIST, id);
     },
-    toggleLeft() { store.set((s) => ({ ...s, leftCollapsed: !s.leftCollapsed })); },
-    toggleRight() { store.set((s) => ({ ...s, rightCollapsed: !s.rightCollapsed })); },
-    showRight() { store.set((s) => ({ ...s, rightCollapsed: false })); },
-    showLeft() { store.set((s) => ({ ...s, leftCollapsed: false })); },
+    // Single-pane (mobile) width shows exactly one of left/center/right, chosen by mobileFocus —
+    // leftCollapsed/rightCollapsed only drive visibility at wider tiers (Workbench). Reproduced
+    // live: every caller of toggleLeft/toggleRight (the header's own buttons, ChatHeader's close
+    // button) looked broken on a phone, because they all flipped flags the single-pane renderer
+    // never reads. Branching on tier HERE, once, means every current and future caller gets
+    // correct mobile behavior for free, instead of each one needing its own tier check.
+    toggleLeft() {
+      store.set((s) => s.tier === "single"
+        ? { ...s, mobileFocus: s.mobileFocus === "left" ? null : "left" }
+        : { ...s, leftCollapsed: !s.leftCollapsed });
+    },
+    toggleRight() {
+      store.set((s) => s.tier === "single"
+        ? { ...s, mobileFocus: s.mobileFocus === "right" ? null : "right" }
+        : { ...s, rightCollapsed: !s.rightCollapsed });
+    },
+    // "Ensure visible" (unlike toggle, never hides it) — same tier branch as above, needed by
+    // callers like chat.tsx's onAsk/onboarding listeners that must GUARANTEE the chat rail is
+    // showing, not just flip whatever state it's currently in.
+    showRight() {
+      store.set((s) => s.tier === "single" ? { ...s, mobileFocus: "right" } : { ...s, rightCollapsed: false });
+    },
+    showLeft() {
+      store.set((s) => s.tier === "single" ? { ...s, mobileFocus: "left" } : { ...s, leftCollapsed: false });
+    },
+    setMobileFocus(pane) { store.set((s) => ({ ...s, mobileFocus: pane })); },
+    setTier(tier) { store.set((s) => (s.tier === tier ? s : { ...s, tier })); },
     resetLayout() {
       histPush();
       try { localStorage.removeItem(LS_DOCK); } catch { /* noop */ }

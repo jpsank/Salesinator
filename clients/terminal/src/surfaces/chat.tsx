@@ -856,7 +856,7 @@ export function Chat({ params = {} }: ChatProps) {
       const detail = (e as CustomEvent<{ prompt?: string; hidden?: boolean; ground?: boolean }>).detail;
       const prompt = detail?.prompt;
       if (!prompt) return;
-      if (layout.store.getState().rightCollapsed) layout.toggleRight();
+      layout.showRight();
       void sendRef.current(prompt, prompt, prompt, { hidden: detail?.hidden, ground: detail?.ground });
     };
     window.addEventListener(ASK_CHAT_EVENT, onAsk);
@@ -868,7 +868,7 @@ export function Chat({ params = {} }: ChatProps) {
   const onboardingArmedRef = useRef(false);
   useEffect(() => {
     const onSeed = () => {
-      if (layout.store.getState().rightCollapsed) layout.toggleRight();
+      layout.showRight();
       const key = chatKey;
       updateChatState(key, (s) => (
         s.turns.length

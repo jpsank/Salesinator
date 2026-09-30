@@ -271,7 +271,7 @@ function RightPane() {
 export function Workbench() {
   const layout = useService(LayoutServiceId);
   const keybindings = useService(KeybindingServiceId);
-  const { leftCollapsed, rightCollapsed, activeList, activeTab } = useStore(layout.store);
+  const { leftCollapsed, rightCollapsed, activeList, activeTab, mobileFocus } = useStore(layout.store);
   // ── responsive tiers — derived from window width, never mutating the user's saved
   //    collapse state (widening the window restores exactly what was there).
   //    full ≥900: three panes · narrow <900: left sidebar hides · single <560 (≈¼ screen):
@@ -283,6 +283,10 @@ export function Workbench() {
     return () => window.removeEventListener("resize", on);
   }, []);
   const tier = winW < 560 ? "single" : winW < 900 ? "narrow" : "full";
+  // toggleLeft/toggleRight live in the shared layout service (every caller — this header's own
+  // buttons, ChatHeader's close button — goes through them), so the service needs to know the
+  // current tier too; Workbench is the one place that actually watches window width.
+  useEffect(() => { layout.setTier(tier); }, [layout, tier]);
   // Meetings-only mode: no agent chat rail at all — 2-pane shell.
   // NOTE: `chatOnly` is now INERT — the Sessions list was retired (createLayoutService migrates any
   // persisted "sessions" → the default), so `activeList` is never "sessions" and the chat-only branch
@@ -433,13 +437,24 @@ export function Workbench() {
         {/* chat-only (Sessions) gets its own sizes — the freed center space goes to the CHAT (right), with a
             narrow left sidebar; full mode keeps the user's saved 3-pane sizes. The `key` re-lays-out on switch. */}
         {(() => {
-          // single-pane resolution: center wins when it has content, else chat.
           const centerHasContent = !chatOnly && activeTab != null;
-          const showLeft = !leftCollapsed && tier === "full";
-          const showCenter = !chatOnly && (tier !== "single" || centerHasContent || meetOnly);
-          const showRight = !meetOnly && (tier === "single"
-            ? !(showCenter)                                   // ¼-width: exactly one pane
-            : (chatOnly || !rightCollapsed));
+          let showLeft: boolean, showCenter: boolean, showRight: boolean;
+          if (tier === "single") {
+            // ¼-width: exactly one pane, chosen by mobileFocus (an explicit tap on the header's
+            // toggle buttons) — else the same content-based default as before (center wins when
+            // it has content, else chat). Clamped so a stale focus never points at a pane this
+            // mode doesn't render at all (chatOnly has no center pane; meetOnly has no right one).
+            let focus = mobileFocus ?? (centerHasContent || meetOnly ? "center" : "right");
+            if (chatOnly && focus === "center") focus = "right";
+            if (meetOnly && focus === "right") focus = "center";
+            showLeft = focus === "left";
+            showCenter = !chatOnly && focus === "center";
+            showRight = !meetOnly && focus === "right";
+          } else {
+            showLeft = !leftCollapsed && tier === "full";
+            showCenter = !chatOnly;
+            showRight = !meetOnly && (chatOnly || !rightCollapsed);
+          }
           return (
             <Allotment
               key={`${chatOnly ? "chat-only" : "full"}-${tier}`}
