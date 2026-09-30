@@ -305,3 +305,16 @@ calendar" flow now does this automatically the first time a rep connects a calen
 `SALES_CYCLE_CALENDAR_WEBHOOK_SECRET` as the shared secret. It never overwrites a webhook a rep
 already has configured for something else — it only fills the setting in when it's empty or
 already points here.
+
+**Gotcha — this URL lives in Postgres, not `.env`.** It's stored per-account in `users.data.webhook_url`
+the ONE time "Connect calendar" runs; changing `SALES_CYCLE_TERMINAL_URL` / your public domain
+afterward does nothing to it. Reproduced live: after moving from a quick Cloudflare tunnel to a
+stable named one, every `meeting.started` delivery kept silently POSTing to the OLD dead tunnel
+URL — no error anywhere in the chain, the meeting-copilot tagged real `feature_request` cards
+correctly, they just never reached the watcher that posts them to Slack. There's no UI to fix
+this today; update it directly:
+```sql
+UPDATE users SET data = jsonb_set(data, '{webhook_url}', '"https://<new-public-host>/webhooks/meeting-started"') WHERE id = <user_id>;
+```
+If you change your public domain, do this for every account that already ran "Connect calendar" —
+don't assume a fresh deploy or a new tunnel carries it forward.
