@@ -7,7 +7,13 @@ from sales_cycle._http import call
 
 
 class SlackError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, error_code: str | None = None) -> None:
+        super().__init__(message)
+        # Slack's own machine-readable `error` field from a rejected chat.postMessage response
+        # (e.g. "not_in_channel", "channel_not_found") — None for a transport-level failure (no
+        # response body to read a code from). A caller that wants an ACTIONABLE message for a
+        # specific, known cause branches on this instead of parsing the exception string.
+        self.error_code = error_code
 
 
 class SlackClient:
@@ -28,5 +34,6 @@ class SlackClient:
         )
         body = resp.json()
         if not body.get("ok"):
-            raise SlackError(f"chat.postMessage rejected: {body.get('error')}")
+            code = body.get("error")
+            raise SlackError(f"chat.postMessage rejected: {code}", error_code=code)
         return body["ts"]

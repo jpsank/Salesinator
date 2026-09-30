@@ -134,6 +134,50 @@ def test_slack_failure_does_not_mark_seen_so_a_later_reoccurrence_can_retry():
 
 
 @respx.mock
+def test_not_in_channel_logs_an_actionable_fix_not_just_a_stack_trace(caplog):
+    """A Slack error with a KNOWN, human-fixable cause (the app isn't in the channel, a bad channel
+    ID, a revoked token, …) will keep failing the SAME way for every future card until someone acts
+    on it — the log has to say what to do, not just that chat.postMessage was rejected."""
+    respx.get(STREAM_URL).mock(return_value=httpx.Response(
+        200, content=_sse(_card("feature_request", "CSV export"), {"type": "meeting-end"}),
+    ))
+    respx.get(f"{MEETING_API}/meetings/1").mock(
+        return_value=httpx.Response(200, json={"data": {"workspace_id": "cust-42"}})
+    )
+    respx.post("https://slack.com/api/chat.postMessage").mock(
+        return_value=httpx.Response(200, json={"ok": False, "error": "not_in_channel"})
+    )
+
+    store = Store(":memory:")
+    _run(**_watcher_kwargs(store))
+
+    assert store.is_seen("live:1:csv export") is False
+    assert "invite @<the app's bot name>" in caplog.text
+    assert "not_in_channel" in caplog.text
+
+
+@respx.mock
+def test_unrecognized_slack_error_still_logs_without_a_tailored_fix(caplog):
+    """An error code this module doesn't recognize gets the ORIGINAL generic message (still worth a
+    human's attention, just not one this module can direct with confidence) — never silently dropped."""
+    respx.get(STREAM_URL).mock(return_value=httpx.Response(
+        200, content=_sse(_card("feature_request", "CSV export"), {"type": "meeting-end"}),
+    ))
+    respx.get(f"{MEETING_API}/meetings/1").mock(
+        return_value=httpx.Response(200, json={"data": {"workspace_id": "cust-42"}})
+    )
+    respx.post("https://slack.com/api/chat.postMessage").mock(
+        return_value=httpx.Response(200, json={"ok": False, "error": "some_new_slack_error"})
+    )
+
+    store = Store(":memory:")
+    _run(**_watcher_kwargs(store))
+
+    assert store.is_seen("live:1:csv export") is False
+    assert "Slack post failed for live card" in caplog.text
+
+
+@respx.mock
 def test_never_raises_when_the_stream_itself_is_unreachable(monkeypatch):
     monkeypatch.setattr(watcher_module, "_RECONNECT_DELAY_SEC", 0)
     monkeypatch.setattr(watcher_module, "_MAX_RECONNECTS", 1)

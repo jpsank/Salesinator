@@ -43,6 +43,25 @@ _MAX_RECONNECTS = 20
 _WORKSPACE_CACHE_TTL_SEC = 5.0
 
 
+# Slack's own machine-readable chat.postMessage error codes that mean "this will keep failing on
+# every future card too until a human fixes something in Slack" — worth a message that says WHAT to
+# do, not just that it failed. Anything not in this dict still logs (via .exception below), just
+# without a tailored fix — an unrecognized code is still worth a human's attention, just not one
+# this module can direct with confidence.
+_ACTIONABLE_SLACK_ERRORS = {
+    "not_in_channel": "the connected Slack app has not been invited into the target channel — "
+                       "in Slack, open that channel and run `/invite @<the app's bot name>`",
+    "channel_not_found": "SALES_CYCLE_SLACK_CHANNEL_ID does not match a channel the app can see — "
+                          "check the configured channel ID is correct and the app can access it",
+    "invalid_auth": "the connected Slack token is invalid or expired — reconnect Slack",
+    "token_revoked": "the Slack connection was revoked — reconnect Slack",
+    "account_inactive": "the Slack account behind this connection is deactivated — reconnect Slack "
+                         "with an active account",
+    "missing_scope": "the connected Slack app lacks the chat:write permission — add that scope and "
+                      "reinstall the app, then reconnect",
+}
+
+
 def _format_message(workspace_id: str, title: str, body: str) -> str:
     return (
         f":bulb: *Feature request* — `{workspace_id}`\n"
@@ -189,11 +208,23 @@ async def watch_meeting(
                     ts = await asyncio.to_thread(
                         slack.post_message, channel=channel, text=_format_message(workspace_id, title, body),
                     )
-                except SlackError:
-                    logger.exception(
-                        "Slack post failed for live card %r on meeting_id=%s — not marked seen, "
-                        "will retry if the copilot re-surfaces it", title, meeting_id,
-                    )
+                except SlackError as exc:
+                    fix = _ACTIONABLE_SLACK_ERRORS.get(exc.error_code or "")
+                    if fix:
+                        # A known, human-fixable cause: every future card will fail the SAME way
+                        # until someone acts on it, so say exactly what to do — not just that it
+                        # failed. .error (not .exception): the cause is already fully explained,
+                        # a stack trace on top would bury the actionable part.
+                        logger.error(
+                            "Slack post failed for live card %r on meeting_id=%s (%s) — %s. "
+                            "Not marked seen; will retry once fixed.",
+                            title, meeting_id, exc.error_code, fix,
+                        )
+                    else:
+                        logger.exception(
+                            "Slack post failed for live card %r on meeting_id=%s — not marked seen, "
+                            "will retry if the copilot re-surfaces it", title, meeting_id,
+                        )
                     continue
                 store.record_pending_approval(
                     slack_channel=channel, slack_ts=ts, workspace_id=workspace_id, source_key=key,
