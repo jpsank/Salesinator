@@ -36,6 +36,30 @@
       "license": "AGPL-3.0-or-later",
       "disposition": "sidecar",
       "reason": "MinIO client, used only by the compose/helm bucket-init Job. Same disposition as minio/minio: operator-pulled, never redistributed inside a vexaai/* artifact (ADR-0004)."
+    },
+    {
+      "name": "bitnamilegacy/minio",
+      "license": "AGPL-3.0-or-later",
+      "disposition": "sidecar",
+      "reason": "compose's own local-only substitute for minio/minio (docker-compose.yml: minio/minio:latest and minio/mc:latest are no longer pullable from any registry — MinIO discontinued free community distribution; bitnamilegacy mirrors the same AGPLv3 MinIO build). Same disposition as minio/minio: operator-pulled, never redistributed inside a vexaai/* artifact (ADR-0004). Revert once upstream repins."
+    },
+    {
+      "name": "bitnamilegacy/minio-client",
+      "license": "AGPL-3.0-or-later",
+      "disposition": "sidecar",
+      "reason": "compose's own local-only substitute for minio/mc, for the same reason as bitnamilegacy/minio above. Operator-pulled, never redistributed inside a vexaai/* artifact (ADR-0004)."
+    },
+    {
+      "name": "ollama/ollama",
+      "license": "MIT",
+      "disposition": "sidecar",
+      "note": "Local completion endpoint for the meeting copilot's live card-tagging beats (docs/docs/configuration.mdx). MIT — Category A."
+    },
+    {
+      "name": "curlimages/curl",
+      "license": "curl",
+      "disposition": "sidecar",
+      "note": "sales-cycle-cron's poll loop (process-approved / sweep-live-watchers). The `curl` SPDX licence is an OSI-approved MIT variant — Category A."
     }
   ],
   "bundled": [

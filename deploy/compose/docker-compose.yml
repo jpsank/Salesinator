@@ -376,7 +376,7 @@ services:
     build:
       context: ../..
       dockerfile: integrations/sales-cycle/Dockerfile
-    image: vexa-sales-cycle:${IMAGE_TAG:-dev}
+    image: vexaai/v012-sales-cycle:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${SALES_CYCLE_PORT:-18300}:8200"
     env_file:
