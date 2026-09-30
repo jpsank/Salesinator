@@ -40,6 +40,21 @@ export async function setOAuthToken(provider: string, token: string): Promise<OA
   }));
 }
 
+export interface SlackChannelStatus {
+  configured: boolean;
+  channel_id?: string | null;
+  channel_name?: string | null;
+  is_member?: boolean | null;
+  error?: string | null;
+}
+
+/** Live-checks whether the connected Slack app can ACTUALLY post feature-request cards to the
+ *  configured channel — not just whether OAuth succeeded. A connected-but-never-invited app looks
+ *  identical to a working one from OAuth status alone. */
+export async function getSlackChannelStatus(): Promise<SlackChannelStatus> {
+  return jsonOrThrow(await fetch("/api/sales-cycle/slack/channel-status", { cache: "no-store" }));
+}
+
 /** A "Connect X" link's target. A real cross-origin navigation (the browser leaves the Terminal
  *  entirely, via the sales-cycle service and then the provider's own consent screen, before
  *  landing back here) — not a fetch, so this is the one place in the sales-cycle integration that
