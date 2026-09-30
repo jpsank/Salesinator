@@ -172,6 +172,37 @@ def test_meeting_started_restarts_a_watcher_whose_task_already_finished(monkeypa
         api_module._watch_meeting_tasks.pop("56", None)
 
 
+def test_watcher_task_finished_does_not_delete_a_newer_tasks_entry():
+    """Found by code review, not live yet: a task's done-callback fires asynchronously, so an OLDER
+    task's (now-finished) callback can run AFTER a crash-restart has already registered a NEWER task
+    for the same meeting_id. Popping the dict entry unconditionally by key would delete the new
+    task's live entry out from under it — reintroducing "two watchers, neither posts" through the
+    cleanup path instead of the start path this session's earlier fix closed. The stale callback
+    must check it's still the tracked task before popping anything."""
+    class _Task:
+        pass
+
+    task_a, task_b = _Task(), _Task()
+    api_module._watch_meeting_tasks["77"] = task_b  # a newer task already replaced task_a's entry
+
+    api_module._watcher_task_finished("77", task_a)  # task_a's own stale callback fires
+
+    assert api_module._watch_meeting_tasks.get("77") is task_b
+    api_module._watch_meeting_tasks.pop("77", None)
+
+
+def test_watcher_task_finished_pops_when_it_is_still_the_tracked_task():
+    class _Task:
+        pass
+
+    task_a = _Task()
+    api_module._watch_meeting_tasks["78"] = task_a
+
+    api_module._watcher_task_finished("78", task_a)
+
+    assert "78" not in api_module._watch_meeting_tasks
+
+
 def test_meeting_started_missing_owner_id_does_not_start_a_watcher(monkeypatch):
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
     calls = []

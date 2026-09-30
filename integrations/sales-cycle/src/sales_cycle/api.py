@@ -80,11 +80,16 @@ _watch_meeting_tasks: dict[str, asyncio.Task] = {}
 
 def _start_watcher(*, agent_api_url: str, meeting_api_url: str, subject: str, meeting_id: str) -> None:
     """Persist that this meeting should have a live watcher (survives a restart), then actually
-    start one. Idempotent-ish: calling it again for a meeting_id already in _watch_meeting_tasks
-    would spawn a SECOND concurrent watcher on the same SSE stream — callers (the webhook handler,
-    the sweep) are each responsible for checking first; this function itself doesn't guard it, since
-    the two callers have different, already-correct guards (a fresh meeting_id vs. sweep_live_watchers'
-    own liveness check)."""
+    start one — unless one is already tracked and still running, in which case this is a no-op.
+
+    The guard lives HERE, not in each caller: it used to be each caller's own job (a fresh
+    meeting_id's check vs. sweep_live_watchers' liveness check), and the webhook handler was the one
+    caller that didn't have one. Reproduced live: Vexa delivered meeting.started twice for the same
+    meeting, both calls raced the same copilot SSE feed, and NEITHER posted a single card for the
+    rest of the meeting. One shared check here covers every current and future caller — a caller
+    forgetting to guard is no longer a way to reintroduce that bug."""
+    if meeting_id in _watch_meeting_tasks and not _watch_meeting_tasks[meeting_id].done():
+        return
     settings = get_settings()
     store = get_store()
     store.record_watcher_started(meeting_id, subject)
@@ -94,7 +99,20 @@ def _start_watcher(*, agent_api_url: str, meeting_api_url: str, subject: str, me
         channel=settings.slack_channel_id, unmapped_slug=settings.unmapped_workspace_slug,
     ))
     _watch_meeting_tasks[meeting_id] = task
-    task.add_done_callback(lambda _t: _watch_meeting_tasks.pop(meeting_id, None))
+    task.add_done_callback(lambda finished, _mid=meeting_id: _watcher_task_finished(_mid, finished))
+
+
+def _watcher_task_finished(meeting_id: str, finished: asyncio.Task) -> None:
+    """A watcher task's done-callback. Pops the tracked entry only if `finished` is STILL the
+    tracked task for this meeting_id — a done-callback fires asynchronously, so a crash or a fresh
+    restart can register a NEWER task for the same meeting_id before this (older, now-finished)
+    task's own callback gets scheduled. Popping unconditionally by key would delete the new task's
+    live entry out from under it, and the next sweep/webhook, finding meeting_id gone from the dict,
+    would start a THIRD task racing the second — the exact "two watchers, neither posts" bug
+    _start_watcher's own guard exists to prevent, reintroduced through the cleanup path instead of
+    the start path."""
+    if _watch_meeting_tasks.get(meeting_id) is finished:
+        _watch_meeting_tasks.pop(meeting_id, None)
 
 
 # Mirrors meeting-api's own _RUNNING_STATUSES (collector/app.py) — a meeting in any of these is
@@ -496,20 +514,14 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
         # (at the time) been registered first. A real fix decouples the hazard, not just this one
         # ordering of it — watch_meeting now runs fully independently of BackgroundTasks.
         #
-        # Guard against a SECOND concurrent watcher: Vexa can (and did, live) deliver meeting.started
-        # more than once for the same meeting (e.g. one delivery per lifecycle transition, or a retry).
-        # _start_watcher itself doesn't guard — each caller owns its own liveness check (see its
-        # docstring) — and this was the one caller that didn't have one, unlike sweep_live_watchers'
-        # matching check below. Two SSE readers racing the same feed meant NEITHER posted a single
-        # card for the rest of the meeting: reproduced live, a real "change the UI to purple" request
-        # was tagged correctly by the copilot but silently never reached Slack.
-        mid = str(meeting_id)
-        if mid not in _watch_meeting_tasks or _watch_meeting_tasks[mid].done():
-            _start_watcher(
-                agent_api_url=settings.agent_api_internal_url,
-                meeting_api_url=settings.meeting_api_internal_url,
-                subject=str(subject), meeting_id=mid,
-            )
+        # _start_watcher no-ops if this meeting already has a live tracked watcher (its own guard,
+        # not this caller's) — Vexa can (and did, live) deliver meeting.started more than once for
+        # the same meeting.
+        _start_watcher(
+            agent_api_url=settings.agent_api_internal_url,
+            meeting_api_url=settings.meeting_api_internal_url,
+            subject=str(subject), meeting_id=str(meeting_id),
+        )
     else:
         logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
 
