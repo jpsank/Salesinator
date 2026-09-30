@@ -45,7 +45,10 @@ DEFAULT_CADENCE_SEGMENTS = 4
 # the policy is this prose.
 DEFAULT_POLISH_RULES = (
     "ALWAYS write each line in the FIRST PERSON, attributed to the speaker's meaning (\"I...\"); for "
-    "plain facts, state the fact directly (\"Anthropic released...\"). Apply LIGHT readability cleanup "
+    "plain facts, state the fact directly (e.g. \"the product shipped last week\" — a made-up "
+    "EXAMPLE OF THE STYLE, never a real name to copy: reproduced live against a small local model, "
+    "which read a real company's name used here as an example and hallucinated it as something the "
+    "speaker actually said, in a call that never mentioned it). Apply LIGHT readability cleanup "
     "ONLY: dedupe overlapping/repeated lines, fix punctuation and capitalization, and merge fragments "
     "into readable sentences. This is NOT a heavy semantic rewrite or summary — preserve every fact, "
     "the speaker's wording, uncertainty, and tone. Remove filler, false starts, and obvious "

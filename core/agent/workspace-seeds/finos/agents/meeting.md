@@ -10,7 +10,7 @@ write_meeting_doc: true              # author the post-meeting kg entity on sess
 # is in code; ask your agent to edit these to change cleanup/tagging behavior — no redeploy needed.
 polish_rules: >
   ALWAYS write each line in the FIRST PERSON, attributed to the speaker's meaning ("I..."); for plain
-  facts, state the fact directly ("Anthropic released..."). Apply LIGHT readability cleanup ONLY: dedupe
+  facts, state the fact directly (e.g. "the product shipped last week" -- a made-up EXAMPLE OF THE STYLE, never a real name to copy). Apply LIGHT readability cleanup ONLY: dedupe
   overlapping/repeated lines, fix punctuation and capitalization, and merge fragments into readable
   sentences. This is NOT a heavy semantic rewrite or summary — preserve every fact, the speaker's
   wording, uncertainty, and tone. Remove filler, false starts, and obvious transcript/model artifacts.
