@@ -131,11 +131,10 @@ def test_git_state_for_a_provisioned_unit_reports_its_own_branch(tmp_path):
 
 
 def test_push_via_unit_pushes_the_worktrees_branch_without_releasing_it(tmp_path):
-    """Reproduced live: /api/workspace/pull-request is a SEPARATE, later call (sales_cycle's
-    orchestrator always pushes, then opens a PR — sometimes across sweeps) that needs this SAME
-    worktree directory to resolve the branch/remote. Releasing it here (the old behavior) left every
-    PR-open call 400ing forever against an already-deleted directory. The worktree now survives push
-    and is released by ws_pull_request instead (see the test below)."""
+    """/api/workspace/pull-request is a SEPARATE, later call (sales_cycle's orchestrator always
+    pushes, then opens a PR — sometimes across sweeps) that needs this SAME worktree directory to
+    resolve the branch/remote, so push must leave it in place; ws_pull_request releases it instead,
+    on success (see the test below) — the last step of the isolated-turn lifecycle, not this one."""
     from control_plane.workspace_worktree import provision_worktree
     root = tmp_path
     _seed_primary(root, "u_jane", with_origin=True)
