@@ -139,6 +139,31 @@ def test_chat_streams_sse_and_records_session():
     assert r.headers["X-Unit-Id"] == "agent-u_jane-chat-s1"  # the per-thread warm unit id
 
 
+def test_chat_defaults_to_claude_code_runner():
+    """units.RUNNER's own default — unaffected when VEXA_AGENT_RUNNER is unset (every deployment
+    with a real Claude subscription/API key needs no change)."""
+    runtime = _FakeRuntime()
+    c = TestClient(create_app(
+        Dispatcher(load_settings(), runtime, _FakeIdentity()), stream_reader=_FakeReader(),
+    ))
+    c.post("/api/chat", json={"prompt": "hi", "subject": "u_jane"})
+    assert runtime.spawned[0][2]["VEXA_RUNNER"] == "claude-code"
+
+
+def test_chat_uses_the_configured_agent_runner():
+    """Reproduced live: a deployment with no working Claude credentials but a real local completion
+    endpoint (VEXA_LLM_BASE_URL) still hit claude-code's own auth failure on every /api/chat turn,
+    because nothing could ever choose a different harness — Settings → Models only overlays
+    model/base_url onto whichever harness was already picked. VEXA_AGENT_RUNNER is that choice."""
+    runtime = _FakeRuntime()
+    c = TestClient(create_app(
+        Dispatcher(load_settings(agent_runner="opencode"), runtime, _FakeIdentity()),
+        stream_reader=_FakeReader(),
+    ))
+    c.post("/api/chat", json={"prompt": "hi", "subject": "u_jane"})
+    assert runtime.spawned[0][2]["VEXA_RUNNER"] == "opencode"
+
+
 # ── chat credential preflight (config.v1 model_inference) ────────────────────────────────────────
 
 class _FakeModelConfig:

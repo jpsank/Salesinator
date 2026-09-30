@@ -78,6 +78,18 @@ class Settings(BaseSettings):
     global_system_workspace_ref: str = ""
     agent_model: str = ""
     meeting_model: str = ""
+    # Deployment-default HARNESS for /api/chat (the terminal's own agent chat — NOT sales-cycle's
+    # product-repo dispatch, which already has its own runner setting). Empty keeps units.RUNNER's
+    # default ("claude-code"): a deployment with a real Claude subscription/API key needs no change.
+    # Reproduced live: a deployment with NO working Claude credentials (expired subscription token,
+    # no ANTHROPIC_API_KEY) but a real local completion endpoint (VEXA_LLM_BASE_URL) still hit
+    # claude-code's own auth failure on every chat turn, because nothing here could ever choose a
+    # different harness — Settings → Models (agent_model above) only overlays MODEL/base_url onto
+    # whichever harness is already selected; ANTHROPIC_BASE_URL pointed at a non-Anthropic
+    # OpenAI-compatible endpoint (e.g. Ollama) does not reliably work, since claude-code speaks
+    # Anthropic's own Messages API shape, not OpenAI's. Set to "opencode" to route chat through the
+    # OpenCode harness instead, which speaks OpenAI-compatible completions directly.
+    agent_runner: str = ""
     # ── llm module dials (provider-agnostic; see core/agent/llm/README.md) ────
     # Non-secret operator config forwarded into workers by dispatch. The SECRETS
     # (VEXA_LLM_API_KEY / VEXA_LLM_BASE_URL) deliberately have no Settings field — they travel by

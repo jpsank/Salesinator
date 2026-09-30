@@ -104,6 +104,7 @@ models:
   anthropicSonnetModel: ""
   anthropicHaikuModel: ""
   agentModel: ""        # VEXA_AGENT_MODEL
+  agentRunner: ""       # VEXA_AGENT_RUNNER — empty keeps units.RUNNER's default (claude-code)
   meetingModel: ""      # VEXA_MEETING_MODEL
 
 # ============ Components ============

@@ -1285,6 +1285,7 @@ def create_app(
             subject=subject, trigger="message",
             start=units.entrypoint(inline=prompt), context=ctx, tools=tools,
             principal={"name": _email} if _email else None,
+            runner=dispatcher.settings.agent_runner or units.RUNNER,
         )
         if resume:
             # Re-attach only — the warm unit id is deterministic from (subject, session); resume reads

@@ -158,6 +158,12 @@
       "description": "the claude model alias/name for chat + workspace turns"
     },
     {
+      "key": "VEXA_AGENT_RUNNER",
+      "class": "defaulted",
+      "default": "claude-code",
+      "description": "the harness /api/chat dispatches through (units.RUNNER's default); set to opencode for a deployment with no working Claude credentials but a real local/custom completion endpoint"
+    },
+    {
       "key": "VEXA_MEETING_MODEL",
       "class": "defaulted",
       "default": "(subscription/provider default)",

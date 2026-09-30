@@ -84,6 +84,10 @@ export HOST_CLAUDE_CREDENTIALS="${HOST_CLAUDE_CREDENTIALS:-$HOME/.claude/.creden
 # Secrets/tokens: read from deploy/compose/.env at run time rather than hardcoded here (never commit
 # real values — this script itself has none).
 env_val() { grep "^$1=" "$REPO/deploy/compose/.env" 2>/dev/null | tail -1 | cut -d= -f2-; }
+# /api/chat's harness — empty keeps units.RUNNER's default (claude-code). Reproduced live: a
+# subscription token can expire independently of anything in THIS script, so this reads .env fresh
+# on every restart rather than hardcoding a value here the way VEXA_LLM_MODEL's shell default does.
+export VEXA_AGENT_RUNNER="${VEXA_AGENT_RUNNER:-$(env_val VEXA_AGENT_RUNNER)}"
 export VEXA_INTERNAL_API_SECRET="${VEXA_INTERNAL_API_SECRET:-$(env_val INTERNAL_API_SECRET)}"
 export VEXA_BOT_API_KEY="${VEXA_BOT_API_KEY:-$(env_val VEXA_BOT_API_KEY)}"
 export VEXA_GITHUB_OAUTH_CLIENT_ID="${VEXA_GITHUB_OAUTH_CLIENT_ID:-$(env_val VEXA_GITHUB_OAUTH_CLIENT_ID)}"
