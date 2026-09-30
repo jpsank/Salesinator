@@ -195,12 +195,24 @@ def _workspace_resolve_enabled() -> bool:
 
 
 def _resolve_workspace_subject(meeting_id: str, default: str) -> str:
-    """Best-effort: the meeting's bound `workspace_id`, else `default` (the pre-M2 placeholder or the
-    sales-cycle unmapped slug, whichever the caller passes). Never raises — a lookup failure degrades to
-    `default`, exactly like a native-id resolve miss degrades to numeric-key display (P18: fail soft, but
-    the fault is still typed and reported so a stuck resolver is observable, not silently wrong forever)."""
-    if not _workspace_resolve_enabled():
-        return default
+    """Best-effort resolution chain for which workspace/subject a meeting's copilot doc and dispatch
+    are attributed to, preferring the MOST SPECIFIC binding available:
+
+      1. the meeting's bound customer `workspace_id` (sales-cycle's HubSpot tag) — gated behind
+         SALES_CYCLE_WORKSPACE_RESOLVE, since it's that feature's own concept (a call bound to a
+         customer's dedicated workspace, not the rep's own).
+      2. the meeting's real OWNER (`user_id` — the account that actually ran the call). ALWAYS
+         attempted, independent of the sales-cycle flag: M2 was never wired up, so EVERY meeting's
+         copilot doc landed in `default` (the pre-M2 placeholder) regardless of who ran the call —
+         reproduced live, a real user's own meetings were invisible from their own workspace, only
+         found by grepping every subject's kg/ on disk.
+      3. `default` (the placeholder), only when neither of the above resolves (gateway unreachable,
+         meeting record not yet visible, or no owner on it yet — a real race, not a fault).
+
+    One shared HTTP fetch serves both (1) and (2). Never raises — a lookup failure degrades to
+    `default`, exactly like a native-id resolve miss degrades to numeric-key display (P18: fail soft,
+    but the fault is still typed and reported so a stuck resolver is observable, not silently wrong
+    forever)."""
     if meeting_id in _workspace_subject:
         return _workspace_subject[meeting_id]
     now = time.monotonic()
@@ -227,13 +239,20 @@ def _resolve_workspace_subject(meeting_id: str, default: str) -> str:
                       f"GET {gw}/meetings/{meeting_id} failed: {type(e).__name__}: {e}")
         _workspace_miss_at[meeting_id] = now
         return default
-    workspace_id = (data.get("data") or {}).get("workspace_id")
-    if not workspace_id:
-        _workspace_miss_at[meeting_id] = now  # not tagged yet — retry shortly, not a fault
+    # workspace_id lives in the meeting row's OWN nested data JSONB (meetings.data.workspace_id —
+    # meeting_api/collector/app.py's own comment confirms this); user_id is a top-level column on
+    # the row itself, sibling to id/platform/status — confirmed live against a real meeting record.
+    # Conflating the two (reading both through the same inner unwrap) would have silently broken
+    # owner resolution the same way workspace resolution apparently never got live-verified either.
+    workspace_id = (data.get("data") or {}).get("workspace_id") if _workspace_resolve_enabled() else None
+    owner = data.get("user_id")
+    resolved = workspace_id or (str(owner) if owner is not None else None)
+    if not resolved:
+        _workspace_miss_at[meeting_id] = now  # not tagged/owned yet — retry shortly, not a fault
         return default
-    _workspace_subject[meeting_id] = str(workspace_id)
+    _workspace_subject[meeting_id] = str(resolved)
     _clear_fault("workspace_resolve")
-    return str(workspace_id)
+    return str(resolved)
 
 
 def _record_meeting_doc(native: str, platform: str, subject: str) -> None:

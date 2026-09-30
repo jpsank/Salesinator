@@ -439,16 +439,45 @@ def test_arm_omits_numeric_meeting_id_when_key_is_not_numeric(monkeypatch):
 
 # ── sales-cycle: optional per-meeting subject resolution (off by default) ────────────────────────────
 
-def test_workspace_resolve_disabled_by_default_returns_placeholder(monkeypatch):
-    """The flag is unset in a normal test/deploy env — must be a no-op, zero network calls."""
+def test_workspace_resolve_finds_the_real_owner_even_when_sales_cycle_flag_is_off(monkeypatch):
+    """M2: the meeting's real owner (user_id) is ALWAYS resolved, independent of
+    SALES_CYCLE_WORKSPACE_RESOLVE — that flag only gates the sales-cycle-specific customer
+    workspace_id binding, a separate, more specific concept. Reproduced live: every meeting's
+    copilot doc landed in the pre-M2 placeholder regardless of who actually ran the call, because
+    this whole function used to no-op whenever sales-cycle's own flag was off — a real user's own
+    meetings were invisible from their own workspace, only found by grepping every subject's kg/
+    on disk."""
     _reset_module_caches()
     monkeypatch.delenv("SALES_CYCLE_WORKSPACE_RESOLVE", raising=False)
+    monkeypatch.setenv("VEXA_BOT_API_KEY", "k")
 
-    def _boom(req, timeout=5):
-        raise AssertionError("must not call the network when the flag is off")
+    class _Resp:
+        # user_id is a TOP-LEVEL column on the meeting row; workspace_id lives in its nested data
+        # JSONB (meetings.data.workspace_id) — confirmed live against a real meeting record, NOT
+        # symmetric the way an easy mock might assume.
+        def read(self): return json.dumps({"id": 42, "user_id": 7, "data": {"workspace_id": "cust-42"}}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
 
-    monkeypatch.setattr(w.urllib.request, "urlopen", _boom)
-    assert w._resolve_workspace_subject("42", "u_live") == "u_live"
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
+    # workspace_id IS present, but the sales-cycle flag is off, so it must be ignored — owner wins.
+    assert w._resolve_workspace_subject("42", "u_live") == "7"
+
+
+def test_workspace_resolve_prefers_the_sales_cycle_workspace_over_the_plain_owner(monkeypatch):
+    """When the flag IS on and the meeting is ALSO tagged to a customer workspace, that binding
+    still wins over the plain owner — sales-cycle's own customer routing is the more specific one."""
+    _reset_module_caches()
+    monkeypatch.setenv("SALES_CYCLE_WORKSPACE_RESOLVE", "true")
+    monkeypatch.setenv("VEXA_BOT_API_KEY", "k")
+
+    class _Resp:
+        def read(self): return json.dumps({"id": 42, "user_id": 7, "data": {"workspace_id": "cust-42"}}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
+    assert w._resolve_workspace_subject("42", "u_live") == "cust-42"
 
 
 def test_workspace_resolve_enabled_returns_bound_workspace(monkeypatch):
