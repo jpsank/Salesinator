@@ -285,11 +285,29 @@ def start(redis_url: str, dispatcher, live, *, subject: str = DEFAULT_SUBJECT) -
     until then the copilot's meeting doc lands in the placeholder workspace, not the owner's."""
     keymap: dict[str, str] = {}
     t = threading.Thread(
-        target=_run_arm, args=(redis_url, dispatcher, live, subject, keymap),
+        target=_run_arm_resilient, args=(redis_url, dispatcher, live, subject, keymap),
         daemon=True, name="tx-watch",
     )
     t.start()
     return t
+
+
+def _run_arm_resilient(redis_url: str, dispatcher, live, subject: str, keymap: dict) -> None:
+    """Wraps ``_run_arm`` in a restart loop. Reproduced live: a full-disk Redis MISCONF error, raised
+    from ``_run_arm``'s own ``xgroup_create`` call (or any later ``xreadgroup``), was uncaught — it
+    killed this daemon thread permanently, silently disabling the meeting-copilot for the rest of the
+    process's life (the opt-in flag stayed set, nothing was ever there to act on it) until something
+    noticed and restarted the whole process. A daemon thread that dies from an uncaught exception never
+    restarts on its own, so the watcher must outlive any single failure itself."""
+    backoff = 1.0
+    while True:
+        try:
+            _run_arm(redis_url, dispatcher, live, subject, keymap)
+            return  # _run_arm's own loop never returns normally; a return here is an intentional stop
+        except Exception:  # noqa: BLE001 — see docstring: this thread must never die for good
+            logger.exception("tx-watch crashed — restarting in %.1fs", backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
 
 
 def _run_arm(redis_url: str, dispatcher, live, subject: str, keymap: dict) -> None:

@@ -505,3 +505,38 @@ def test_handle_arms_with_resolved_workspace_subject_when_enabled(monkeypatch):
     w._handle(r, disp, live, "u_live", _payload("42"), *_fresh_state())
 
     assert disp.dispatched[0]["identity"]["subject"] == "cust-42"
+
+
+# ── tx-watch self-healing (a crashed daemon thread never restarts on its own) ──────────────────────
+
+def test_run_arm_resilient_restarts_after_a_crash(monkeypatch):
+    """Reproduced live: a full-disk Redis MISCONF error, uncaught inside _run_arm, killed the tx-watch
+    daemon thread permanently — the meeting-copilot's opt-in flag stayed set but nothing was left to
+    act on it for the rest of the process's life. _run_arm_resilient must catch that and keep going."""
+    calls = []
+
+    def fake_run_arm(redis_url, dispatcher, live, subject, keymap):
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("MISCONF Errors writing to the AOF file: No space left on device")
+        return  # 3rd call "succeeds" (returns normally) — the wrapper should then also return
+
+    sleeps = []
+    monkeypatch.setattr(w, "_run_arm", fake_run_arm)
+    monkeypatch.setattr(w.time, "sleep", lambda s: sleeps.append(s))
+
+    w._run_arm_resilient("redis://x", _FakeDispatcher(), _FakeLive(), "u_live", {})
+
+    assert len(calls) == 3          # crashed twice, retried each time, then returned
+    assert len(sleeps) == 2         # one backoff sleep per crash, none after the clean return
+    assert sleeps == sorted(sleeps)  # backoff never decreases
+
+
+def test_run_arm_resilient_returns_immediately_when_run_arm_returns_clean(monkeypatch):
+    monkeypatch.setattr(w, "_run_arm", lambda *a: None)
+    slept = []
+    monkeypatch.setattr(w.time, "sleep", lambda s: slept.append(s))
+
+    w._run_arm_resilient("redis://x", _FakeDispatcher(), _FakeLive(), "u_live", {})
+
+    assert slept == []  # a clean return needs no backoff at all
