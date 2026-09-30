@@ -62,6 +62,26 @@ _ACTIONABLE_SLACK_ERRORS = {
 }
 
 
+async def _report_post_error(
+    *, client: httpx.AsyncClient, meeting_api_url: str, subject: str, meeting_id: str, error: str | None,
+) -> None:
+    """Best-effort: set (or, with error=None, clear) data.feature_request_post_error on the meeting
+    row — the terminal's own list snapshot reads it, same as it already does for auto_join_error, so
+    a human watching the terminal (not just whoever's tailing this service's logs) sees WHY a card
+    didn't reach Slack. Never raises: failing to REPORT a problem must never itself crash the
+    watcher — the log line already fired regardless of whether this call lands."""
+    try:
+        await client.put(
+            f"{meeting_api_url.rstrip('/')}/meetings/{meeting_id}/feature-request-post-error",
+            json={"error": error}, headers={"X-User-Id": subject}, timeout=5.0,
+        )
+    except httpx.HTTPError:
+        logger.warning(
+            "could not report feature_request_post_error for meeting_id=%s (terminal won't show it, "
+            "the log line above is still the source of truth)", meeting_id,
+        )
+
+
 def _format_message(workspace_id: str, title: str, body: str) -> str:
     return (
         f":bulb: *Feature request* — `{workspace_id}`\n"
@@ -220,6 +240,10 @@ async def watch_meeting(
                             "Not marked seen; will retry once fixed.",
                             title, meeting_id, exc.error_code, fix,
                         )
+                        await _report_post_error(
+                            client=client, meeting_api_url=meeting_api_url, subject=subject,
+                            meeting_id=meeting_id, error=fix,
+                        )
                     else:
                         logger.exception(
                             "Slack post failed for live card %r on meeting_id=%s — not marked seen, "
@@ -231,5 +255,12 @@ async def watch_meeting(
                     title=title, body=body,
                 )
                 store.mark_seen(key)
+                # A previously-set error (from an EARLIER card in this same call) no longer applies
+                # once a post actually succeeds — clear it so the terminal doesn't keep showing a
+                # stale warning for a problem that's fixed. Best-effort, same as setting it.
+                await _report_post_error(
+                    client=client, meeting_api_url=meeting_api_url, subject=subject,
+                    meeting_id=meeting_id, error=None,
+                )
     except Exception:  # noqa: BLE001 — a background task must never crash the process (P18)
         logger.exception("live card watcher crashed for meeting_id=%s", meeting_id)

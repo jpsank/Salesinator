@@ -57,7 +57,7 @@ from sales_cycle.resolver import (
     WorkspaceBindError, bind_meeting_workspace, enable_copilot_processing, resolve_by_tag, slug_for_company,
 )
 from sales_cycle.settings import Settings, get_settings
-from sales_cycle.slack_client import SlackClient
+from sales_cycle.slack_client import SlackClient, SlackError
 from sales_cycle.slack_verify import SlackSignatureError, verify_slack_signature
 from sales_cycle.store import PendingApproval, Store
 from sales_cycle.webhook_verify import WebhookSignatureError, verify_webhook_signature
@@ -121,6 +121,41 @@ def _slack() -> SlackClient:
     s = get_settings()
     oauth_token = slack_oauth.get_access_token(store=get_store())
     return SlackClient(bot_token=oauth_token or s.slack_bot_token)
+
+
+class SlackChannelStatus(BaseModel):
+    configured: bool
+    channel_id: str | None = None
+    channel_name: str | None = None
+    is_member: bool | None = None
+    error: str | None = None
+
+
+@app.get("/slack/channel-status", response_model=SlackChannelStatus)
+async def slack_channel_status() -> SlackChannelStatus:
+    """Live-checks whether the connected Slack app can ACTUALLY post feature-request cards to the
+    configured channel — not just whether OAuth succeeded. A connected-but-never-invited app looks
+    identical to a working one from OAuth status alone (reproduced live: a real feature_request card
+    was tagged from a real call and silently never reached Slack, for exactly this reason). Rendered
+    on the Settings → Integrations page's Slack card, alongside the OAuth connect/disconnect state,
+    so the failure surfaces at SETUP time — before any card is ever lost, not after.
+
+    conversations_info is a real, synchronous Slack API call — run_in_threadpool so a slow/stuck
+    Slack response doesn't block this whole process's event loop for every other concurrent request."""
+    settings = get_settings()
+    if not settings.slack_channel_id:
+        return SlackChannelStatus(configured=False)
+    try:
+        channel = await run_in_threadpool(_slack().conversations_info, channel=settings.slack_channel_id)
+    except SlackError as exc:
+        return SlackChannelStatus(
+            configured=True, channel_id=settings.slack_channel_id,
+            error=exc.error_code or str(exc),
+        )
+    return SlackChannelStatus(
+        configured=True, channel_id=settings.slack_channel_id,
+        channel_name=channel.get("name"), is_member=channel.get("is_member"),
+    )
 
 
 def _resolve_and_bind(*, api_key: str, platform: str, native_meeting_id: str, customer_tag: str) -> TagResponse:

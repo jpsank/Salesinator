@@ -128,3 +128,68 @@ def test_reaction_added_ignores_unrelated_emoji(monkeypatch, tmp_path: Path):
     })
     assert resp.status_code == 200
     assert store.list_approved_unprocessed() == []
+
+
+# ---- GET /slack/channel-status — the Settings page's live "will this actually work?" check -------
+
+def test_channel_status_unconfigured_when_no_channel_id_set(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "")
+    resp = client.get("/slack/channel-status")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "configured": False, "channel_id": None, "channel_name": None,
+        "is_member": None, "error": None,
+    }
+
+
+@respx.mock
+def test_channel_status_reports_a_real_member_channel(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C0C4ZQV4YJY")
+    monkeypatch.setenv("SALES_CYCLE_SLACK_BOT_TOKEN", "xoxb-test")
+    respx.get("https://slack.com/api/conversations.info").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True, "channel": {"id": "C0C4ZQV4YJY", "name": "feature-requests", "is_member": True},
+        })
+    )
+    resp = client.get("/slack/channel-status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["configured"] is True
+    assert body["channel_name"] == "feature-requests"
+    assert body["is_member"] is True
+    assert body["error"] is None
+
+
+@respx.mock
+def test_channel_status_reports_is_member_false_for_a_public_channel_not_joined(monkeypatch):
+    """A public channel the app can SEE but hasn't been invited into — the exact live bug this whole
+    feature exists to catch, reproduced here as a fixed regression test."""
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C0C4ZQV4YJY")
+    monkeypatch.setenv("SALES_CYCLE_SLACK_BOT_TOKEN", "xoxb-test")
+    respx.get("https://slack.com/api/conversations.info").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True, "channel": {"id": "C0C4ZQV4YJY", "name": "feature-requests", "is_member": False},
+        })
+    )
+    resp = client.get("/slack/channel-status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_member"] is False
+    assert body["error"] is None
+
+
+@respx.mock
+def test_channel_status_reports_channel_not_found(monkeypatch):
+    """A bad channel ID, or a private channel the app was never invited into (Slack hides private
+    channels from non-members entirely — same error shape either way)."""
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C_DOES_NOT_EXIST")
+    monkeypatch.setenv("SALES_CYCLE_SLACK_BOT_TOKEN", "xoxb-test")
+    respx.get("https://slack.com/api/conversations.info").mock(
+        return_value=httpx.Response(200, json={"ok": False, "error": "channel_not_found"})
+    )
+    resp = client.get("/slack/channel-status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["configured"] is True
+    assert body["is_member"] is None
+    assert body["error"] == "channel_not_found"

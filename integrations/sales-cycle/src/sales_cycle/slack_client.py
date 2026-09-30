@@ -37,3 +37,24 @@ class SlackClient:
             code = body.get("error")
             raise SlackError(f"chat.postMessage rejected: {code}", error_code=code)
         return body["ts"]
+
+    def conversations_info(self, *, channel: str) -> dict:
+        """Live-checks the configured channel — is it real, and is the bot actually a member?
+        Returns Slack's own channel object (notably ``is_member``). For a PRIVATE channel the bot
+        isn't in, Slack returns `channel_not_found` (private channels are invisible to a non-member
+        entirely, same failure shape as a typo'd ID); for a PUBLIC one it returns real channel info
+        with `is_member: false` instead — the caller (the Settings page's live connection check)
+        treats both as "not usable yet", just with a different reason."""
+        if not self._token:
+            raise SlackError("SLACK_BOT_TOKEN not configured")
+        resp = call(
+            "GET", f"{self._base_url}/conversations.info",
+            params={"channel": channel},
+            headers={"Authorization": f"Bearer {self._token}"}, timeout=self._timeout,
+            error_cls=SlackError, error_prefix="conversations.info",
+        )
+        body = resp.json()
+        if not body.get("ok"):
+            code = body.get("error")
+            raise SlackError(f"conversations.info rejected: {code}", error_code=code)
+        return body.get("channel") or {}

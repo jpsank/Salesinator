@@ -137,7 +137,8 @@ def test_slack_failure_does_not_mark_seen_so_a_later_reoccurrence_can_retry():
 def test_not_in_channel_logs_an_actionable_fix_not_just_a_stack_trace(caplog):
     """A Slack error with a KNOWN, human-fixable cause (the app isn't in the channel, a bad channel
     ID, a revoked token, …) will keep failing the SAME way for every future card until someone acts
-    on it — the log has to say what to do, not just that chat.postMessage was rejected."""
+    on it — the log has to say what to do, not just that chat.postMessage was rejected. It also has
+    to reach the TERMINAL, not just this service's logs — set via the meeting-api error field."""
     respx.get(STREAM_URL).mock(return_value=httpx.Response(
         200, content=_sse(_card("feature_request", "CSV export"), {"type": "meeting-end"}),
     ))
@@ -147,6 +148,9 @@ def test_not_in_channel_logs_an_actionable_fix_not_just_a_stack_trace(caplog):
     respx.post("https://slack.com/api/chat.postMessage").mock(
         return_value=httpx.Response(200, json={"ok": False, "error": "not_in_channel"})
     )
+    error_route = respx.put(f"{MEETING_API}/meetings/1/feature-request-post-error").mock(
+        return_value=httpx.Response(200, json={"id": 1})
+    )
 
     store = Store(":memory:")
     _run(**_watcher_kwargs(store))
@@ -154,6 +158,34 @@ def test_not_in_channel_logs_an_actionable_fix_not_just_a_stack_trace(caplog):
     assert store.is_seen("live:1:csv export") is False
     assert "invite @<the app's bot name>" in caplog.text
     assert "not_in_channel" in caplog.text
+    assert error_route.called
+    sent = json.loads(error_route.calls.last.request.content)
+    assert "invite @<the app's bot name>" in sent["error"]
+
+
+@respx.mock
+def test_a_successful_post_clears_any_previously_set_error():
+    """A card that later posts successfully means whatever was wrong is fixed — clear the field so
+    the terminal doesn't keep showing a stale warning for a problem that's already resolved."""
+    respx.get(STREAM_URL).mock(return_value=httpx.Response(
+        200, content=_sse(_card("feature_request", "CSV export"), {"type": "meeting-end"}),
+    ))
+    respx.get(f"{MEETING_API}/meetings/1").mock(
+        return_value=httpx.Response(200, json={"data": {"workspace_id": "cust-42"}})
+    )
+    respx.post("https://slack.com/api/chat.postMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "ts": "123.456"})
+    )
+    error_route = respx.put(f"{MEETING_API}/meetings/1/feature-request-post-error").mock(
+        return_value=httpx.Response(200, json={"id": 1})
+    )
+
+    store = Store(":memory:")
+    _run(**_watcher_kwargs(store))
+
+    assert error_route.called
+    sent = json.loads(error_route.calls.last.request.content)
+    assert sent == {"error": None}
 
 
 @respx.mock
