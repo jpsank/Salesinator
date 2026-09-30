@@ -235,6 +235,15 @@ class OpenCodeHarness:
             yield {"type": "done", "ok": False,
                   "reply": "no completion endpoint: set VEXA_LLM_BASE_URL for the opencode runner"}
             return
+        # `model` has no caller-independent source the way base_url does (ANTHROPIC_BASE_URL is a
+        # real fallback chain) — a caller that doesn't thread one through (e.g. submit_implementation's
+        # dispatch body has no `model` field at all) silently got model=None, which built an opencode.json
+        # with an EMPTY provider.models map. OpenCode then reports "ProviderNoProvidersError: No
+        # providers are available" — reproduced live, the turn failing before it ever reached the
+        # model. VEXA_LLM_MODEL is the same deployment-default every other adapter already falls back
+        # to (openai_compat.py's own `self._model`), so this is consistent, not a new convention.
+        if not model:
+            model = os.environ.get("VEXA_LLM_MODEL") or None
 
         config_path = Path(work) / "opencode.json"
         config_path.write_text(json.dumps(
