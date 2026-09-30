@@ -495,10 +495,21 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
         # lasts. Reproduced live: real copilot processing never turned on because watch_meeting had
         # (at the time) been registered first. A real fix decouples the hazard, not just this one
         # ordering of it — watch_meeting now runs fully independently of BackgroundTasks.
-        _start_watcher(
-            agent_api_url=settings.agent_api_internal_url, meeting_api_url=settings.meeting_api_internal_url,
-            subject=str(subject), meeting_id=str(meeting_id),
-        )
+        #
+        # Guard against a SECOND concurrent watcher: Vexa can (and did, live) deliver meeting.started
+        # more than once for the same meeting (e.g. one delivery per lifecycle transition, or a retry).
+        # _start_watcher itself doesn't guard — each caller owns its own liveness check (see its
+        # docstring) — and this was the one caller that didn't have one, unlike sweep_live_watchers'
+        # matching check below. Two SSE readers racing the same feed meant NEITHER posted a single
+        # card for the rest of the meeting: reproduced live, a real "change the UI to purple" request
+        # was tagged correctly by the copilot but silently never reached Slack.
+        mid = str(meeting_id)
+        if mid not in _watch_meeting_tasks or _watch_meeting_tasks[mid].done():
+            _start_watcher(
+                agent_api_url=settings.agent_api_internal_url,
+                meeting_api_url=settings.meeting_api_internal_url,
+                subject=str(subject), meeting_id=mid,
+            )
     else:
         logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
 

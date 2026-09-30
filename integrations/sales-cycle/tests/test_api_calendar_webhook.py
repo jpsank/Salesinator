@@ -101,6 +101,77 @@ def test_meeting_started_launches_the_live_card_watcher_as_the_meeting_owner(mon
     assert api_module.get_store().list_active_watchers() == [("99", "7")]
 
 
+@respx.mock
+def test_meeting_started_skips_starting_a_watcher_already_tracked_as_live(monkeypatch):
+    """Reproduced live: Vexa delivered meeting.started TWICE for the same real meeting, and
+    _start_watcher had no guard against a second concurrent SSE reader on the same copilot feed —
+    unlike sweep_live_watchers' own call site, which already checks _watch_meeting_tasks first. The
+    result: a real feature_request card was tagged correctly but never reached Slack — neither of the
+    two racing watchers ever posted anything. A delivery for a meeting already tracked as live must be
+    a no-op here, the same as it already is for the sweep.
+
+    Exercises the guard directly against _watch_meeting_tasks rather than through two real HTTP calls:
+    TestClient tears down its event loop between separate .post() calls, so a task's own asyncio-level
+    "still running" state doesn't survive to prove anything across them — the dict is the real, durable
+    signal both call sites (this handler and the sweep) actually check."""
+    monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_TOKEN", "test-token")
+    monkeypatch.setenv("SALES_CYCLE_CALENDAR_API_KEY", "vxa_rep_key")
+    _mock_process_call()
+    respx.post("https://api.hubapi.com/crm/v3/objects/companies/search").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+
+    class _StillRunningTask:
+        def done(self) -> bool:
+            return False
+
+    api_module._watch_meeting_tasks["55"] = _StillRunningTask()
+    try:
+        calls = []
+        monkeypatch.setattr(api_module, "watch_meeting", lambda **kw: calls.append(kw))
+
+        resp = _post_webhook(_meeting_started_payload(id=55, user_id=9))
+
+        assert resp.status_code == 200
+        assert calls == []  # already tracked as live — no second watcher started
+    finally:
+        api_module._watch_meeting_tasks.pop("55", None)  # shared module state — clean up
+
+
+@respx.mock
+def test_meeting_started_restarts_a_watcher_whose_task_already_finished(monkeypatch):
+    """The mirror case: a stale, DONE entry (the meeting's earlier watcher already ended) must NOT
+    block a fresh one from starting — only a genuinely still-running task should suppress it."""
+    monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
+    monkeypatch.setenv("SALES_CYCLE_HUBSPOT_TOKEN", "test-token")
+    monkeypatch.setenv("SALES_CYCLE_CALENDAR_API_KEY", "vxa_rep_key")
+    _mock_process_call()
+    respx.post("https://api.hubapi.com/crm/v3/objects/companies/search").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+
+    class _FinishedTask:
+        def done(self) -> bool:
+            return True
+
+    api_module._watch_meeting_tasks["56"] = _FinishedTask()
+    try:
+        calls = []
+
+        async def _fake_watch_meeting(**kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr(api_module, "watch_meeting", _fake_watch_meeting)
+
+        resp = _post_webhook(_meeting_started_payload(id=56, user_id=9))
+
+        assert resp.status_code == 200
+        assert len(calls) == 1
+    finally:
+        api_module._watch_meeting_tasks.pop("56", None)
+
+
 def test_meeting_started_missing_owner_id_does_not_start_a_watcher(monkeypatch):
     monkeypatch.setenv("SALES_CYCLE_CALENDAR_WEBHOOK_SECRET", SECRET)
     calls = []
