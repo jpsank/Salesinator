@@ -108,42 +108,17 @@ Logs: `~/vexa-data/logs/{agent-api,ollama}.log`. PIDs: `~/vexa-data/pids/`.
 
 ## Reaching a local stack from outside: use a NAMED Cloudflare Tunnel, not a quick one
 
-A `cloudflared tunnel --url ...` quick tunnel (no account, throwaway `*.trycloudflare.com` URL) is
-fine for a five-minute check, but not for anything that outlives one `cloudflared` process: the URL
-changes every restart, which silently breaks every OAuth redirect URI and webhook Request URL that
-was pointed at the old one — reproduced live, repeatedly, in one session (a stale HubSpot OAuth
-redirect, a stale Slack Events URL, and the calendar `webhook_url` gotcha documented in
-`integrations/sales-cycle/README.md`).
-
-A **named** tunnel (`cloudflared tunnel login` once, then `cloudflared tunnel create <name>`) gets a
-real, stable hostname under a domain you control, and one tunnel config can route several
-subdomains to several local ports at once — e.g. `terminal.example.com` → `:13000`,
-`sales-cycle.example.com` → `:18300`, `agent-api.example.com` → `:18100` — in one
-`~/.cloudflared/config.yml`:
-```yaml
-tunnel: <tunnel-id>
-credentials-file: /Users/you/.cloudflared/<tunnel-id>.json
-ingress:
-  - hostname: terminal.example.com
-    service: http://localhost:13000
-  - hostname: sales-cycle.example.com
-    service: http://localhost:18300
-  - hostname: agent-api.example.com
-    service: http://localhost:18100
-  - service: http_status:404
-```
-Two things worth knowing before you do this:
-- `sudo cloudflared service install` (no token argument) has produced a broken LaunchDaemon plist on
-  macOS — `ProgramArguments` missing the `tunnel run` subcommand entirely, silently a no-op. Check
-  `cat /Library/LaunchDaemons/com.cloudflare.cloudflared.plist` after installing; if it's just the
-  bare binary path, fix it by hand to `cloudflared --config <path to config.yml above> tunnel run`.
-- If the default QUIC protocol drops connections often (a laptop's WiFi power-saving / lid-close
-  deep-idle state is a common cause — check `pmset -g log | grep Wake` for a wake event lining up
-  with the drop before assuming it's the tunnel), add `protocol: http2` to `config.yml` — a
-  persistent TCP connection tolerates brief interruptions better than QUIC's UDP-based one.
-
-Once it's live, every OAuth redirect URI (GitHub, HubSpot, Slack, …) and webhook Request URL should
-point at the new stable hostname instead of `localhost` or a quick tunnel's rotating one.
+A `cloudflared tunnel --url ...` quick tunnel gets a throwaway `*.trycloudflare.com` URL that
+changes every restart, silently breaking any OAuth redirect URI or webhook Request URL pointed at
+it (reproduced live — see the `webhook_url` gotcha in `integrations/sales-cycle/README.md`). For
+anything longer-lived, use a **named** tunnel instead: `cloudflared tunnel login` once, then
+`cloudflared tunnel create <name>`, with a `~/.cloudflared/config.yml` `ingress` list routing
+subdomains to local ports (one tunnel can cover several services at once). Two snags hit live and
+worth knowing up front: `sudo cloudflared service install` (no token arg) has produced a macOS
+LaunchDaemon plist missing the `tunnel run` subcommand entirely — check
+`/Library/LaunchDaemons/com.cloudflare.cloudflared.plist` if the service seems to do nothing; and
+if connections drop often, try `protocol: http2` in `config.yml` before assuming the tunnel itself
+is unstable (a laptop's lid-close deep-idle state can look identical — check `pmset -g log`).
 
 ## Smoke probe — "is this install actually working?"
 
