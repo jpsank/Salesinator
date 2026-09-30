@@ -1930,7 +1930,14 @@ def create_app(
         When ``body.unit`` is given (an isolated per-turn worktree), two compliance checks run FIRST —
         the cheap attribution check before the slower pre-push-hook check, so a trivial problem fails
         in milliseconds rather than after however long the hook takes. Neither silently edits the
-        commit; a violation refuses the push with the exact problem quoted."""
+        commit; a violation refuses the push with the exact problem quoted.
+
+        The worktree is NOT released here even on success — ``/api/workspace/pull-request`` is a
+        separate, later call (sales_cycle's orchestrator always pushes, then opens a PR, as two
+        independent HTTP calls, sometimes across sweeps) that needs this SAME directory to resolve the
+        branch/remote. Reproduced live: releasing it here left every PR-open call 400ing forever
+        (`create_pull_request` reading a deleted worktree) — the worktree now survives until
+        ``ws_pull_request`` succeeds."""
         subject = subject_of(request)
         ws = worktree_dir_for(wsr.root, subject, body.unit) if body.unit else _manage_dir(subject, body.slug)
         if body.unit:
@@ -1948,15 +1955,17 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc))
         except RemoteSyncError as exc:
             raise HTTPException(status_code=502, detail=str(exc))  # already token-redacted (P15)
-        if body.unit:
-            release_worktree(wsr.root, subject, body.unit)  # best-effort; never turns success into a 5xx
         return {"remote": r.remote, "url": r.url, "branch": r.branch, "head_sha": r.head_sha}
 
     @app.post("/api/workspace/pull-request")
     def ws_pull_request(request: Request, req: WorkspacePullRequestBody = Body(...)):
         """Open a pull request for a workspace's current (already-pushed) branch. Every error is
         token-redacted (P15); a not-yet-pushed branch or missing home remote is a 400, a GitHub API
-        failure a 502."""
+        failure a 502.
+
+        Releases the isolated worktree (``req.unit``) on SUCCESS — the last step of the isolated-turn
+        lifecycle (dispatch → push → PR), not ``ws_push`` (see its docstring): this call is the one
+        that still needs the worktree on disk to resolve the branch/remote for the PR."""
         subject = subject_of(request)
         ws = worktree_dir_for(wsr.root, subject, req.unit) if req.unit else _manage_dir(subject, req.slug)
         token = (req.token or "").strip() or git_creds.read_github_token(wsr.root, subject)
@@ -1970,6 +1979,8 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc))  # already token-redacted (P15)
         except PullRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc))  # already token-redacted (P15)
+        if req.unit:
+            release_worktree(wsr.root, subject, req.unit)  # best-effort; never turns success into a 5xx
         return result
 
     @app.post("/api/workspace/pull")
