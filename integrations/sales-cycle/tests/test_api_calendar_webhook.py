@@ -96,6 +96,9 @@ def test_meeting_started_launches_the_live_card_watcher_as_the_meeting_owner(mon
     assert len(calls) == 1
     assert calls[0]["meeting_id"] == "99"
     assert calls[0]["subject"] == "7"
+    # The durable half of the same call — survives a restart, unlike the in-process task itself
+    # (see sweep_live_watchers, whose whole job is noticing when this row outlives its task).
+    assert api_module.get_store().list_active_watchers() == [("99", "7")]
 
 
 def test_meeting_started_missing_owner_id_does_not_start_a_watcher(monkeypatch):

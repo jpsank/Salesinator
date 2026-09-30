@@ -430,6 +430,11 @@ services:
   # "reasonably soon," not exact. Tight on purpose — the wait here is pure dead latency between an
   # agent turn finishing and its branch reaching GitHub, unlike a poll that's substituting for an
   # event that doesn't exist at all.
+  #
+  # /internal/sweep-live-watchers rides the SAME loop: a durable safety net for the live card
+  # watcher itself, whose in-process task tracking does not survive a sales-cycle restart mid-call
+  # (reproduced live — a real feature_request card was correctly tagged but never posted, because
+  # its watcher died with the previous process and nothing noticed).
   sales-cycle-cron:
     image: curlimages/curl:latest
     entrypoint:
@@ -438,6 +443,7 @@ services:
       - |
         while true; do
           curl -sf -X POST http://sales-cycle:8200/internal/process-approved || true
+          curl -sf -X POST http://sales-cycle:8200/internal/sweep-live-watchers || true
           sleep 10
         done
     depends_on:

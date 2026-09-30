@@ -68,10 +68,92 @@ app = FastAPI(title="vexa-sales-cycle")
 
 _store: Store | None = None
 
-# Strong references to live watch_meeting() tasks — asyncio only holds a weak reference to a
-# fire-and-forget task, so without this a task can be garbage-collected mid-run. Discarded by its
-# own done-callback once the meeting ends.
-_watch_meeting_tasks: set[asyncio.Task] = set()
+# Strong references to live watch_meeting() tasks, keyed by meeting_id — asyncio only holds a weak
+# reference to a fire-and-forget task, so without this a task can be garbage-collected mid-run.
+# Popped by its own done-callback once the task exits (meeting end OR a caught internal error —
+# watch_meeting never raises, so this alone can't tell the two apart; see sweep_live_watchers, which
+# is what actually decides whether a missing task means "done" or "needs restarting"). This dict
+# does NOT survive a process restart — active_watchers in the store is the durable record that does;
+# the sweep reconciles the two.
+_watch_meeting_tasks: dict[str, asyncio.Task] = {}
+
+
+def _start_watcher(*, agent_api_url: str, meeting_api_url: str, subject: str, meeting_id: str) -> None:
+    """Persist that this meeting should have a live watcher (survives a restart), then actually
+    start one. Idempotent-ish: calling it again for a meeting_id already in _watch_meeting_tasks
+    would spawn a SECOND concurrent watcher on the same SSE stream — callers (the webhook handler,
+    the sweep) are each responsible for checking first; this function itself doesn't guard it, since
+    the two callers have different, already-correct guards (a fresh meeting_id vs. sweep_live_watchers'
+    own liveness check)."""
+    settings = get_settings()
+    store = get_store()
+    store.record_watcher_started(meeting_id, subject)
+    task = asyncio.create_task(watch_meeting(
+        agent_api_url=agent_api_url, meeting_api_url=meeting_api_url,
+        subject=subject, meeting_id=meeting_id, store=store, slack=_slack(),
+        channel=settings.slack_channel_id, unmapped_slug=settings.unmapped_workspace_slug,
+    ))
+    _watch_meeting_tasks[meeting_id] = task
+    task.add_done_callback(lambda _t: _watch_meeting_tasks.pop(meeting_id, None))
+
+
+# Mirrors meeting-api's own _RUNNING_STATUSES (collector/app.py) — a meeting in any of these is
+# still genuinely live and worth watching; anything else (completed, failed, stopped, …) is done.
+_LIVE_MEETING_STATUSES = frozenset({"requested", "joining", "awaiting_admission", "active", "stopping"})
+
+
+@app.post("/internal/sweep-live-watchers")
+async def sweep_live_watchers() -> dict:
+    """Self-heals the ONE gap watch_meeting's own docstring already named: nothing notices or
+    restarts a watcher lost to a sales-cycle restart mid-call. Reproduced live: exactly that,
+    tonight — a real feature_request card was correctly tagged, but the watcher for that meeting
+    had died with the previous process and nothing ever posted it.
+
+    active_watchers (the store) is the durable record of "this meeting should have one"; it survives
+    the restart that kills _watch_meeting_tasks (in-process only). For each row: if a live task is
+    already running for it, nothing to do. Otherwise, ask meeting-api whether the meeting is still
+    genuinely live — if so, restart the watcher (a fresh SSE connection from wherever the copilot
+    stream currently is; anything posted before the gap is simply missed, not retried, same as any
+    other live-only capture); if the meeting has reached a terminal status (or no longer exists),
+    just clean up the row. A query failure is treated as "assume still live, try again next sweep" —
+    the cost of an unnecessary restart attempt is far lower than the cost of abandoning a real,
+    still-live meeting's watcher over a transient meeting-api blip."""
+    settings = get_settings()
+    restarted: list[str] = []
+    stopped: list[str] = []
+    async with httpx.AsyncClient() as client:
+        for meeting_id, subject in get_store().list_active_watchers():
+            if meeting_id in _watch_meeting_tasks and not _watch_meeting_tasks[meeting_id].done():
+                continue  # already being watched — nothing to do
+            still_live = True
+            try:
+                r = await client.get(
+                    f"{settings.meeting_api_internal_url.rstrip('/')}/meetings/{meeting_id}",
+                    headers={"X-User-Id": subject}, timeout=5.0,
+                )
+                if r.status_code == 404:
+                    still_live = False
+                elif r.status_code == 200:
+                    still_live = r.json().get("status") in _LIVE_MEETING_STATUSES
+                # any other status: leave still_live=True — assume still live, try again next sweep
+            except httpx.HTTPError:
+                pass  # transport failure — same "assume still live" fallback as above
+            if still_live:
+                _start_watcher(
+                    agent_api_url=settings.agent_api_internal_url,
+                    meeting_api_url=settings.meeting_api_internal_url,
+                    subject=subject, meeting_id=meeting_id,
+                )
+                restarted.append(meeting_id)
+                logger.warning(
+                    "restarted a missing live card watcher for meeting_id=%s — its previous watcher "
+                    "was lost (a service restart mid-call) while the meeting was still live",
+                    meeting_id,
+                )
+            else:
+                get_store().record_watcher_stopped(meeting_id)
+                stopped.append(meeting_id)
+    return {"restarted": restarted, "stopped": stopped}
 
 
 def get_store() -> Store:
@@ -413,13 +495,10 @@ async def webhook_meeting_started(request: Request, background_tasks: Background
         # lasts. Reproduced live: real copilot processing never turned on because watch_meeting had
         # (at the time) been registered first. A real fix decouples the hazard, not just this one
         # ordering of it — watch_meeting now runs fully independently of BackgroundTasks.
-        task = asyncio.create_task(watch_meeting(
+        _start_watcher(
             agent_api_url=settings.agent_api_internal_url, meeting_api_url=settings.meeting_api_internal_url,
-            subject=str(subject), meeting_id=str(meeting_id), store=get_store(), slack=_slack(),
-            channel=settings.slack_channel_id, unmapped_slug=settings.unmapped_workspace_slug,
-        ))
-        _watch_meeting_tasks.add(task)
-        task.add_done_callback(_watch_meeting_tasks.discard)
+            subject=str(subject), meeting_id=str(meeting_id),
+        )
     else:
         logger.warning("meeting.started payload missing meeting.id/user_id — no live watcher started")
 

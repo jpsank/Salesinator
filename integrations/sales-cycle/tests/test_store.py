@@ -229,3 +229,32 @@ def test_disconnect_oauth_removes_connection():
     )
     s.disconnect_oauth("hubspot")
     assert s.get_oauth_connection("hubspot") is None
+
+
+def test_active_watchers_roundtrip():
+    s = _store()
+    assert s.list_active_watchers() == []
+    s.record_watcher_started("61", "7")
+    assert s.list_active_watchers() == [("61", "7")]
+
+
+def test_record_watcher_started_is_idempotent_not_duplicated():
+    """A restart re-registering the SAME meeting_id refreshes it, never adds a second row —
+    meeting_id is a real primary key, not just a convention."""
+    s = _store()
+    s.record_watcher_started("61", "7")
+    s.record_watcher_started("61", "7")
+    assert s.list_active_watchers() == [("61", "7")]
+
+
+def test_record_watcher_stopped_removes_it():
+    s = _store()
+    s.record_watcher_started("61", "7")
+    s.record_watcher_stopped("61")
+    assert s.list_active_watchers() == []
+
+
+def test_record_watcher_stopped_on_an_unknown_meeting_is_a_noop():
+    s = _store()
+    s.record_watcher_stopped("does-not-exist")  # must not raise
+    assert s.list_active_watchers() == []

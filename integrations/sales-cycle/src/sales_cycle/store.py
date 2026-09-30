@@ -1,5 +1,5 @@
 """A tiny local database this add-on keeps for itself — just a plain file on disk, nothing fancy or
-external to install. It tracks two things:
+external to install. It tracks four things:
 
 - `seen_requests`: which live feature-request cards we've already posted to Slack, so a copilot that
   re-surfaces the same request (or a watcher reconnect replaying its recent backlog) never posts it
@@ -15,6 +15,11 @@ external to install. It tracks two things:
 - `oauth_connections`: one row per external service (HubSpot, Slack, ...) connected via the
   "Connect X" button in Vexa's Settings page — one shared connection for the whole team, not
   per-rep, so this is keyed by `provider` name alone.
+- `active_watchers`: which meetings currently SHOULD have a live card watcher running — a durable
+  record surviving a process restart, unlike the in-process asyncio.Task tracking it exists
+  alongside. A meeting still genuinely live loses its watcher silently the moment this service
+  restarts mid-call; a periodic sweep (api.py's sweep_live_watchers) checks this table against the
+  live task set and restarts anything missing. Removed once the meeting reaches a terminal state.
 """
 
 from __future__ import annotations
@@ -111,6 +116,17 @@ class Store:
                     connected_at REAL NOT NULL
                 )
             """)
+            # DURABLE record of "this meeting should have a live card watcher running" — the
+            # in-process asyncio.Task tracking (_watch_meeting_tasks) doesn't survive a process
+            # restart, so a meeting still genuinely live loses its watcher silently the moment this
+            # service restarts mid-call (reproduced live: exactly this, tonight). This row is the
+            # thing a sweep checks against to notice and restart a missed one — see
+            # api.py's sweep_live_watchers().
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS active_watchers (
+                    meeting_id TEXT PRIMARY KEY, subject TEXT NOT NULL, started_at REAL NOT NULL
+                )
+            """)
 
     def is_seen(self, key: str) -> bool:
         with self._conn() as conn:
@@ -122,6 +138,29 @@ class Store:
             conn.execute(
                 "INSERT OR IGNORE INTO seen_requests (key, seen_at) VALUES (?, ?)", (key, time.time())
             )
+
+    def record_watcher_started(self, meeting_id: str, subject: str) -> None:
+        """Idempotent — a restart re-registering the SAME meeting_id just refreshes started_at,
+        never duplicates a row (meeting_id is the primary key)."""
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO active_watchers (meeting_id, subject, started_at) VALUES (?, ?, ?)",
+                (meeting_id, subject, time.time()),
+            )
+
+    def record_watcher_stopped(self, meeting_id: str) -> None:
+        """The meeting reached a terminal state (or the sweep confirmed it no longer exists) — no
+        longer needs watching. Safe to call even if no row exists."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM active_watchers WHERE meeting_id = ?", (meeting_id,))
+
+    def list_active_watchers(self) -> list[tuple[str, str]]:
+        """Every meeting this process believes should currently have a live card watcher running —
+        checked against the IN-PROCESS task set by the sweep, since this row surviving a restart is
+        exactly the point (see the table's own comment)."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT meeting_id, subject FROM active_watchers").fetchall()
+        return [(r["meeting_id"], r["subject"]) for r in rows]
 
     def record_pending_approval(
         self, *, slack_channel: str, slack_ts: str, workspace_id: str, source_key: str,

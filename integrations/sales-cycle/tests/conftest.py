@@ -12,6 +12,7 @@ from sales_cycle.settings import get_settings
 client = TestClient(app)
 GATEWAY = get_settings().vexa_gateway_url.rstrip("/")
 AGENT_API = get_settings().agent_api_internal_url.rstrip("/")
+MEETING_API = get_settings().meeting_api_internal_url.rstrip("/")
 
 
 @pytest.fixture(autouse=True)
@@ -21,5 +22,13 @@ def _fresh_sales_cycle_store(tmp_path, monkeypatch):
     and even where it would be, tests must never share state with each other or a real install."""
     api_module._store = None
     monkeypatch.setenv("SALES_CYCLE_DB_PATH", str(tmp_path / "sales-cycle.db"))
+    # _watch_meeting_tasks is a plain module-level dict of real asyncio.Tasks, meant to live for the
+    # WHOLE process in a real deployment — nothing to reset there. But a test session doesn't restart
+    # the process between tests, and a task scheduled by one test may not have run its done-callback
+    # yet by the time the next test starts (create_task only SCHEDULES, it doesn't run synchronously)
+    # — without this, a stale entry from an earlier test could make a later test's "is this meeting
+    # already being watched?" check silently wrong.
+    api_module._watch_meeting_tasks.clear()
     yield
     api_module._store = None
+    api_module._watch_meeting_tasks.clear()
