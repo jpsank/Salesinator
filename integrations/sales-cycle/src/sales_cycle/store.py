@@ -98,10 +98,22 @@ class Store:
                     UNIQUE(slack_channel, slack_ts)
                 )
             """)
+            # Migration: entity_path -> source_key. The column was renamed in code at some point
+            # WITHOUT a matching migration for a database created under the old name — CREATE TABLE
+            # IF NOT EXISTS only applies to a brand-new table, so any real, already-existing deployment
+            # kept the stale column name forever, invisible until the first real INSERT actually hit
+            # it. Reproduced live: a real feature_request card posted to Slack successfully, then
+            # crashed on record_pending_approval with "no column named source_key" — and because nothing
+            # marked it as posted before the crash, every restart re-posted the SAME card, over and
+            # over, for as long as the meeting stayed live and the (otherwise correct) watcher
+            # self-heal sweep kept restarting it.
+            existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
+            if "entity_path" in existing_cols and "source_key" not in existing_cols:
+                conn.execute("ALTER TABLE pending_approvals RENAME COLUMN entity_path TO source_key")
+                existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
             # Migration: dispatched_at/dispatch_attempts, added for the stale-dispatch timeout sweep
             # (a turn that crashes or hangs must not stay 'dispatched' forever). sqlite has no
             # `ADD COLUMN IF NOT EXISTS` — guard against re-running on an already-migrated DB.
-            existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()}
             if "dispatched_at" not in existing_cols:
                 conn.execute("ALTER TABLE pending_approvals ADD COLUMN dispatched_at REAL")
             if "dispatch_attempts" not in existing_cols:

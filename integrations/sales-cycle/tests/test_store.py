@@ -1,8 +1,43 @@
+import sqlite3
+
 from sales_cycle.store import Store
 
 
 def _store() -> Store:
     return Store(":memory:")
+
+
+def test_entity_path_migrates_to_source_key_on_a_real_pre_existing_db(tmp_path):
+    """Reproduced live: a real deployment's database, created before the entity_path -> source_key
+    rename, crashed on the very first real record_pending_approval call — successfully posted to
+    Slack, then failed to persist that it had, so nothing ever marked the card as seen. Build the
+    OLD schema by hand (Store's own CREATE TABLE IF NOT EXISTS would never touch a pre-existing
+    table), then confirm opening it through Store migrates it and a real insert works afterward."""
+    db_path = str(tmp_path / "old-schema.db")
+    old = sqlite3.connect(db_path)
+    old.execute("""
+        CREATE TABLE pending_approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slack_channel TEXT NOT NULL, slack_ts TEXT NOT NULL,
+            workspace_id TEXT NOT NULL, entity_path TEXT NOT NULL,
+            title TEXT NOT NULL, body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            branch TEXT, workload_id TEXT,
+            created_at REAL NOT NULL,
+            UNIQUE(slack_channel, slack_ts)
+        )
+    """)
+    old.commit()
+    old.close()
+
+    s = Store(db_path)  # migration runs in _init()
+    s.record_pending_approval(
+        slack_channel="C1", slack_ts="1", workspace_id="cust-1",
+        source_key="x.md", title="CSV export", body="wants it",
+    )
+    approved = s.approve(slack_channel="C1", slack_ts="1")
+    assert approved is not None
+    assert approved.title == "CSV export"
 
 
 def test_seen_requests_roundtrip():
