@@ -31,6 +31,23 @@ CD="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_FILE="$CD/docker-compose.yml"
 RUNTIME_API_URL="${RUNTIME_API_URL:-http://localhost:18090}"
 
+# `docker compose config --images <service>` does NOT filter by service in this compose version
+# (v5.1.3) — it silently prints every service's image regardless, which made every service compare
+# against the WRONG image and restart on every single run, no matter what actually changed.
+# Reproduced live. Resolved config is cached once (it's the same for every service, and computing
+# it is the slow part) and sliced per service from the cached text instead. `--profile build-only`
+# is required too — agent-worker is profile-gated (never `up -d`'d directly) and a plain `config`
+# silently OMITS profile-gated services entirely, which made its image lookup always come back
+# empty. The flag is additive (every normal service still appears), also reproduced live.
+RESOLVED_CONFIG="$(docker compose -f "$COMPOSE_FILE" --profile build-only config 2>/dev/null)"
+image_of() {
+  echo "$RESOLVED_CONFIG" | awk -v svc="$1" '
+    $0 ~ "^  "svc":$" { found=1; next }
+    found && /^  [a-zA-Z]/ { found=0 }
+    found && /^    image:/ { print $2; exit }
+  '
+}
+
 # Every buildable, normally-running compose service EXCEPT agent-api/agent-worker (handled above).
 # flows-mailbox is DELIBERATELY excluded: it shares flows-api's image (so building flows-api already
 # covers it) but isn't in `docker compose config --services` and has no mail credentials configured
@@ -40,13 +57,18 @@ RUNTIME_API_URL="${RUNTIME_API_URL:-http://localhost:18090}"
 SERVICES="admin-api runtime sales-cycle meeting-api gateway flows-api flows-worker mcp terminal"
 
 echo "== building: $SERVICES agent-worker =="
+# BUILDX_NO_DEFAULT_ATTESTATIONS=1: Buildx's default provenance/SBOM attestations embed a build
+# timestamp into the image, so byte-IDENTICAL content still got a brand new image ID on every
+# single build — which made every service look "changed" on every run regardless of whether
+# anything actually was. Reproduced live: two back-to-back builds of untouched source produced two
+# different ids until this was set; with it, they're identical.
 # shellcheck disable=SC2086
-docker compose -f "$COMPOSE_FILE" build $SERVICES agent-worker
+BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose -f "$COMPOSE_FILE" build $SERVICES agent-worker
 
 echo
 echo "== restarting only what actually changed =="
 for svc in $SERVICES; do
-  img="$(docker compose -f "$COMPOSE_FILE" config --images "$svc" 2>/dev/null | head -1)"
+  img="$(image_of "$svc")"
   if [ -z "$img" ]; then
     echo "  $svc: no image configured — skipping"
     continue
@@ -69,7 +91,7 @@ docker compose -f "$COMPOSE_FILE" stop agent-api ollama 2>/dev/null || true
 
 echo
 echo "== recycling any running chat worker still on the old agent-worker image =="
-worker_img="$(docker compose -f "$COMPOSE_FILE" config --images agent-worker 2>/dev/null | head -1)"
+worker_img="$(image_of agent-worker)"
 worker_built_id="$(docker image inspect "$worker_img" --format '{{.Id}}' 2>/dev/null || true)"
 if [ -n "$worker_built_id" ]; then
   docker ps --filter "name=vexa-worker-" --format "{{.Names}}" | while read -r name; do
