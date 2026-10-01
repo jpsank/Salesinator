@@ -591,6 +591,88 @@ def test_run_turn_persists_namespaced_session_file(tmp_path):
     assert not (tmp_path / ".claude" / ".session").exists()  # never touched the legacy single-thread file
 
 
+def test_run_turn_records_a_handoff_when_the_session_id_changes(tmp_path):
+    """A second turn on the SAME thread whose harness returns a DIFFERENT session id (a harness
+    switch — opencode/claude-code ids are mutually unresumable — or an over-budget resume starting
+    fresh) must not silently drop the OLD id: it goes to <session>.chain so workspace_reader.history()
+    can still find and stitch its transcript. Reproduced live: a conversation's earlier history
+    vanished the moment its first turn ran on a different runner."""
+    import unittest.mock as mock
+
+    from worker import worker
+
+    def fake_exec_1(argv, cwd):
+        yield json.dumps({"type": "result", "subtype": "success", "result": "ok", "session_id": "SID-OLD"})
+
+    with mock.patch.object(worker, "harness_factory", lambda: ClaudeCodeHarness(exec_fn=fake_exec_1)):
+        list(worker.run_turn_over_workspace(tmp_path, "first", session="main"))
+
+    sess_file = tmp_path / ".claude" / "sessions" / "main.session"
+    chain_file = tmp_path / ".claude" / "sessions" / "main.chain"
+    assert sess_file.read_text() == "SID-OLD"
+    assert not chain_file.exists()  # first-ever write — nothing superseded yet
+
+    def fake_exec_2(argv, cwd):
+        yield json.dumps({"type": "result", "subtype": "success", "result": "ok", "session_id": "SID-NEW"})
+
+    with mock.patch.object(worker, "harness_factory", lambda: ClaudeCodeHarness(exec_fn=fake_exec_2)):
+        list(worker.run_turn_over_workspace(tmp_path, "second", session="main"))
+
+    assert sess_file.read_text() == "SID-NEW"
+    assert chain_file.read_text().splitlines() == ["SID-OLD"]
+
+
+def test_run_turn_keeps_the_pointer_resolvable_during_a_failed_resume_retry(tmp_path):
+    """Reproduced live: the retry path used to unlink sess_file BEFORE retrying, so
+    workspace_reader.history() returned [] for the ENTIRE duration of the retry turn — a user who
+    reloaded mid-turn saw their whole prior conversation vanish, then reappear once the retry
+    finished. The pointer (still resolvable to the old, still-real transcript) must stay in place
+    the whole time the retry is in flight; the retry already passes session=None explicitly and
+    never reads this file, so there is nothing to gain from removing it early."""
+    import unittest.mock as mock
+
+    from worker import worker
+
+    (tmp_path / ".claude" / "sessions").mkdir(parents=True)
+    (tmp_path / ".claude" / "sessions" / "main.session").write_text("STALE_SID")
+
+    calls: list[bool] = []
+
+    def fake_exec(argv, cwd):
+        if len(calls) == 0:
+            calls.append(True)  # about to fail — doesn't matter what's recorded here
+            yield json.dumps({"type": "result", "subtype": "error", "is_error": True, "result": "stale session"})
+        else:
+            # the retry — the pointer must STILL exist right now, mid-retry
+            calls.append((pathlib.Path(cwd) / ".claude" / "sessions" / "main.session").exists())
+            yield json.dumps({"type": "result", "subtype": "success", "result": "ok", "session_id": "FRESH_SID"})
+
+    with mock.patch.object(worker, "harness_factory", lambda: ClaudeCodeHarness(exec_fn=fake_exec)):
+        list(worker.run_turn_over_workspace(tmp_path, "hello", session="main"))
+
+    assert calls == [True, True]  # the pointer was present during the retry, not unlinked
+    sess_file = tmp_path / ".claude" / "sessions" / "main.session"
+    chain_file = tmp_path / ".claude" / "sessions" / "main.chain"
+    assert sess_file.read_text() == "FRESH_SID"
+    assert chain_file.read_text().splitlines() == ["STALE_SID"]  # still recorded, just not early
+
+
+def test_run_turn_does_not_record_a_handoff_when_the_session_id_is_unchanged(tmp_path):
+    """A normal continued resume (same id, same harness) is NOT a handoff — nothing goes to chain."""
+    import unittest.mock as mock
+
+    from worker import worker
+
+    def fake_exec(argv, cwd):
+        yield json.dumps({"type": "result", "subtype": "success", "result": "ok", "session_id": "SID-SAME"})
+
+    with mock.patch.object(worker, "harness_factory", lambda: ClaudeCodeHarness(exec_fn=fake_exec)):
+        list(worker.run_turn_over_workspace(tmp_path, "first", session="main"))
+        list(worker.run_turn_over_workspace(tmp_path, "second", session="main"))
+
+    assert not (tmp_path / ".claude" / "sessions" / "main.chain").exists()
+
+
 def test_active_mounts_reads_the_set_and_falls_back_to_baseline(monkeypatch, tmp_path):
     from worker import worker
     # explicit set

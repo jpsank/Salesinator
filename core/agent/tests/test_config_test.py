@@ -71,6 +71,36 @@ def test_custom_endpoint_unreachable():
     assert not out["ok"] and "unreachable" in out["summary"]
 
 
+def test_custom_endpoint_does_not_double_v1_when_base_already_has_it():
+    """Reproduced live: VEXA_LLM_BASE_URL always includes /v1 (OpenAI SDK convention — see
+    llm/openai_compat.py), but this function used to blindly append /v1/messages and
+    /v1/chat/completions regardless, building .../v1/v1/chat/completions — a 404 against a real
+    local Ollama even though the identical request one /v1 shorter succeeded."""
+    seen = []
+    def post(url, payload, headers):
+        seen.append(url)
+        if url.endswith("/v1/messages"):
+            return (404, "")
+        return (200, "{}")
+    out = ct.test_custom_endpoint("http://ollama:11434/v1", "", post=post)
+    assert out["ok"], out
+    # The OpenAI-compat fallback matches the real adapter exactly (llm/openai_compat.py:
+    # f"{self._base}/chat/completions" where self._base already ends in /v1) — only the
+    # Anthropic-dialect attempt needed the /v1 stripped first, since IT appends its own /v1/messages.
+    assert seen == ["http://ollama:11434/v1/messages", "http://ollama:11434/v1/chat/completions"]
+
+
+def test_custom_endpoint_without_v1_still_appends_it():
+    """The pre-existing ANTHROPIC_BASE_URL shape (no /v1) is unchanged by the fix above."""
+    seen = []
+    def post(url, payload, headers):
+        seen.append(url)
+        return (200, "{}")
+    out = ct.test_custom_endpoint("https://gw.example", "k", post=post)
+    assert out["ok"]
+    assert seen == ["https://gw.example/v1/messages"]
+
+
 def test_run_models_test_routes_custom_vs_subscription(tmp_path):
     out = ct.run_models_test({"mode": "custom", "base_url": "https://gw", "api_key": "k"},
                              env={}, post=lambda u, p, h: (200, "{}"))
@@ -81,6 +111,95 @@ def test_run_models_test_routes_custom_vs_subscription(tmp_path):
     out = ct.run_models_test({"mode": "custom", "base_url": "https://gw", "api_key": "SECRET"},
                              env={}, post=lambda u, p, h: (200, "{}"))
     assert "api_key" not in out["config"] and "SECRET" not in json.dumps(out)
+
+
+def test_run_models_test_routes_local_when_runner_is_not_claude_code():
+    """Reproduced live: a deployment with agent_runner=opencode (chat routed through a local
+    OpenAI-compatible endpoint) still reported mode=subscription here — this test only ever
+    checked ANTHROPIC_*/the mounted Claude credentials file, with zero awareness opencode exists.
+    Deployment default (no user mode override) + a non-claude-code runner must test VEXA_LLM_*,
+    not Claude credentials the deployment never touches."""
+    env = {"VEXA_LLM_BASE_URL": "http://host.docker.internal:11434/v1", "VEXA_LLM_MODEL": "gemma4:latest"}
+    # Strict: 404s a doubled /v1/v1/... path — only the exact real-adapter shape succeeds, so this
+    # test would have caught the live double-/v1 bug, not just exercised the "local" branch.
+    def post(u, p, h):
+        return (200, "{}") if u in ("http://host.docker.internal:11434/v1/messages",
+                                     "http://host.docker.internal:11434/chat/completions") else (404, "")
+    out = ct.run_models_test({}, env=env, runner="opencode", post=post)
+    assert out["mode"] == "local" and out["ok"]
+
+    # An unreachable local endpoint must fail loud as "local", never silently read as a healthy
+    # Claude subscription (the exact bug this closes).
+    def _refused(u, p, h):
+        raise ConnectionRefusedError("refused")
+    out = ct.run_models_test({}, env=env, runner="opencode", post=_refused)
+    assert out["mode"] == "local" and not out["ok"]
+
+
+def test_run_models_test_user_override_wins_over_the_deployment_runner():
+    """A user's OWN explicit choice always says what THEY asked for, regardless of the deployment's
+    default harness — subscription or custom, verbatim, never silently reinterpreted as local."""
+    out = ct.run_models_test({"mode": "subscription"}, env={}, runner="opencode",
+                             creds_path="/does/not/exist")
+    assert out["mode"] == "subscription"
+    out = ct.run_models_test({"mode": "custom", "base_url": "https://gw", "api_key": "k"},
+                             env={}, runner="opencode", post=lambda u, p, h: (200, "{}"))
+    assert out["mode"] == "custom"
+
+
+def test_run_models_test_claude_code_runner_keeps_old_behavior():
+    """runner="claude-code" (or unset, the deployment default) is unchanged from before this fix."""
+    out = ct.run_models_test({}, env={}, runner="claude-code", creds_path="/does/not/exist")
+    assert out["mode"] == "subscription" and not out["ok"]
+
+
+# ── available-model suggestions (Settings → Models' Chat/Meeting model fields) ──────────────────
+
+def test_list_available_models_claude_code_default_and_subscription_use_the_known_aliases():
+    out = ct.list_available_models({}, env={}, runner="claude-code")
+    assert out["models"] == ["sonnet", "opus", "haiku"]
+    out = ct.list_available_models({"mode": "subscription"}, env={}, runner="opencode")
+    assert out["models"] == ["sonnet", "opus", "haiku"]  # explicit override wins over the runner
+
+
+def test_list_available_models_custom_mode_queries_the_real_endpoint():
+    def get(url, headers):
+        assert url == "https://gw.example/v1/models"
+        assert headers == {"Authorization": "Bearer k"}
+        return 200, json.dumps({"data": [{"id": "qwen3"}, {"id": "deepseek-v4"}]})
+    out = ct.list_available_models({"mode": "custom", "base_url": "https://gw.example", "api_key": "k"},
+                                   env={}, get=get)
+    assert out["models"] == ["qwen3", "deepseek-v4"] and out["source"] == "https://gw.example"
+
+
+def test_list_available_models_routes_local_when_runner_is_not_claude_code():
+    """Deployment default (no user override) + a non-claude-code runner must query VEXA_LLM_BASE_URL
+    — the same endpoint a real turn actually hits — never the claude-code alias list."""
+    env = {"VEXA_LLM_BASE_URL": "http://localhost:11434/v1", "VEXA_LLM_API_KEY": ""}
+    def get(url, headers):
+        assert url == "http://localhost:11434/v1/models"
+        return 200, json.dumps({"data": [{"id": "gemma4:latest"}]})
+    out = ct.list_available_models({}, env=env, runner="opencode", get=get)
+    assert out["models"] == ["gemma4:latest"]
+
+
+def test_list_available_models_does_not_double_v1_when_base_already_has_it():
+    def get(url, headers):
+        return (200, json.dumps({"data": []})) if url == "http://ollama:11434/v1/models" else (404, "")
+    out = ct.list_available_models({"mode": "custom", "base_url": "http://ollama:11434/v1"}, env={}, get=get)
+    assert out["models"] == []  # would have 404'd on a doubled /v1/v1/models — empty, not an error
+
+
+def test_list_available_models_unreachable_endpoint_is_an_empty_list_not_a_crash():
+    def get(url, headers):
+        raise ConnectionRefusedError("refused")
+    out = ct.list_available_models({"mode": "custom", "base_url": "https://gw.example"}, env={}, get=get)
+    assert out == {"models": [], "source": "https://gw.example"}
+
+
+def test_list_available_models_custom_mode_without_base_url_is_empty():
+    out = ct.list_available_models({"mode": "custom"}, env={})
+    assert out == {"models": [], "source": ""}
 
 
 # ── transcription backend ─────────────────────────────────────────────────────────────────────
@@ -157,6 +276,32 @@ def test_transcription_unreachable():
     out = ct.run_transcription_test("https://t", "tok", "env", get=lambda u, h: (404, ""),
                                     probe=boom)
     assert not out["ok"] and "unreachable" in out["summary"]
+
+
+def test_native_safe_url_rewrites_host_docker_internal_when_not_containerized():
+    """Reproduced live: agent-api's own transcription test resolved a per-user URL of
+    host.docker.internal:8083 (correct for a bot CONTAINER) and failed with a real DNS error
+    ("nodename nor servname provided") once agent-api itself started running natively."""
+    assert ct._native_safe_url("http://host.docker.internal:8083", in_docker=False) == "http://localhost:8083"
+    # A dockerized agent-api is the intended caller shape for this URL — leave it alone.
+    assert ct._native_safe_url("http://host.docker.internal:8083", in_docker=True) == "http://host.docker.internal:8083"
+    # Nothing to rewrite — passes through unchanged either way.
+    assert ct._native_safe_url("https://api.vexa.ai", in_docker=False) == "https://api.vexa.ai"
+
+
+def test_transcription_rewrites_host_docker_internal_for_a_native_process():
+    seen = []
+    def get(u, h):
+        seen.append(u)
+        return 200, json.dumps({"email": "a@b.com"})
+    def probe(endpoint, token):
+        seen.append(endpoint)
+        return 200, "ok"
+    out = ct.run_transcription_test("http://host.docker.internal:8083", "tok", "settings",
+                                    get=get, probe=probe)
+    assert out["ok"]
+    assert all("host.docker.internal" not in u for u in seen)
+    assert seen[0] == "http://localhost:8083/balance"
 
 
 def test_transcription_balance_failure_never_blocks_the_verdict():

@@ -10,7 +10,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from llm.opencode import OpenCodeHarness, OpenCodeServerError, _opencode_config
+from llm.opencode import (
+    OpenCodeHarness, OpenCodeServerError, _durable_transcript_lines, _opencode_config,
+    _write_durable_transcript,
+)
 
 
 def test_opencode_config_includes_the_model_when_given():
@@ -77,3 +80,82 @@ def test_run_turn_reports_a_clean_error_with_no_completion_endpoint(tmp_path, mo
     assert events == [{"type": "done", "ok": False,
                         "reply": "no completion endpoint: set VEXA_LLM_BASE_URL for the opencode runner"}]
     assert not (Path(tmp_path) / "opencode.json").exists()  # fails before writing anything
+
+
+# ── durable transcript (chat history survives the worker/opencode-server being torn down) ───────
+
+def test_durable_transcript_lines_translates_user_and_assistant_messages():
+    all_messages = [
+        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "hello"}]},
+        {"info": {"role": "assistant"}, "parts": [
+            {"type": "text", "text": "hi there"},
+            {"type": "tool", "tool": "read", "callID": "c1", "state": {"status": "completed", "output": "ok"}},
+        ]},
+    ]
+    lines = _durable_transcript_lines(all_messages)
+    assert len(lines) == 2
+    assert json.loads(lines[0]) == {"type": "user", "message": {"content": "hello"}}
+    assert json.loads(lines[1]) == {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "hi there"},
+        {"type": "tool_use", "name": "read"},
+    ]}}
+
+
+def test_durable_transcript_lines_skips_pending_tool_calls_and_empty_messages():
+    all_messages = [
+        {"info": {"role": "user"}, "parts": []},  # no text — dropped
+        {"info": {"role": "assistant"}, "parts": [
+            {"type": "tool", "tool": "read", "callID": "c1", "state": {"status": "running"}},  # not done yet
+        ]},  # no content survives — dropped
+        {"info": {"role": "system"}, "parts": [{"type": "text", "text": "ignored"}]},  # unknown role — skipped
+    ]
+    assert _durable_transcript_lines(all_messages) == []
+
+
+def test_write_durable_transcript_round_trips_through_workspace_reader(tmp_path):
+    """Proves the actual contract claim: a write here must be readable by the control plane's
+    EXISTING history() parser unmodified — the whole point of reusing claude-code's jsonl shape
+    instead of growing a second format. Reproduced live before this fix: an opencode turn's reply
+    rendered fine in the live SSE stream, but vanished completely on the next page reload."""
+    from control_plane.workspace_reader import WorkspaceReader
+
+    all_messages = [
+        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "what's up"}]},
+        {"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "Not much!"}]},
+    ]
+    chat_root = tmp_path / ".system" / "2"
+    _write_durable_transcript(chat_root, "ses_abc123", all_messages)
+
+    (chat_root / ".claude" / "sessions").mkdir(parents=True)
+    (chat_root / ".claude" / "sessions" / "chat-x.session").write_text("ses_abc123")
+    reader = WorkspaceReader(str(tmp_path))
+    turns = reader.history("2", "chat-x")
+    assert turns == [
+        {"role": "user", "text": "what's up"},
+        {"role": "agent", "text": "Not much!", "ops": []},
+    ]
+
+
+def test_write_durable_transcript_is_a_full_rewrite_each_time(tmp_path):
+    """all_messages carries the WHOLE session, not just the new turn — each write REPLACES the file
+    (self-healing against a missed/partial earlier write), never appends and duplicates."""
+    chat_root = tmp_path / ".system" / "2"
+    _write_durable_transcript(chat_root, "ses_x", [
+        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "one"}]},
+    ])
+    _write_durable_transcript(chat_root, "ses_x", [
+        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "one"}]},
+        {"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "two"}]},
+    ])
+    path = chat_root / ".claude" / "projects" / "opencode" / "ses_x.jsonl"
+    assert len(path.read_text().splitlines()) == 2
+
+
+def test_write_durable_transcript_never_raises_on_an_unwritable_path(tmp_path):
+    """Best-effort: a save failure must never surface as a turn error — the conversation already
+    succeeded for the user; losing the durable copy is a shame, not their error."""
+    chat_root = tmp_path / "blocked"
+    chat_root.write_text("not a directory")  # collides with the .claude/... mkdir below
+    _write_durable_transcript(chat_root, "ses_x", [
+        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "hi"}]},
+    ])  # must not raise

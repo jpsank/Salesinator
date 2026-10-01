@@ -222,10 +222,56 @@ def _message_events(message: dict, *, seen_call_ids: set) -> Iterator[dict]:
             yield from _tool_events(part)
 
 
+def _durable_transcript_lines(all_messages: list[dict]) -> list[str]:
+    """Translate OpenCode's ``GET /session/{id}/message`` response into the SAME jsonl line shape
+    ``workspace_reader.history()`` already parses (claude-code's own transcript format, which its
+    CLI happens to write for free) — the control plane's one history CONTRACT; this harness conforms
+    to it rather than the reader growing a second, opencode-specific parser."""
+    lines: list[str] = []
+    for msg in all_messages:
+        info = msg.get("info") or {}
+        parts = msg.get("parts") or []
+        if info.get("role") == "user":
+            text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+            if text.strip():
+                lines.append(json.dumps({"type": "user", "message": {"content": text}}))
+        elif info.get("role") == "assistant":
+            content: list[dict] = []
+            for p in parts:
+                if p.get("type") == "text" and p.get("text"):
+                    content.append({"type": "text", "text": p["text"]})
+                elif p.get("type") == "tool" and (p.get("state") or {}).get("status") in ("completed", "error"):
+                    content.append({"type": "tool_use", "name": p.get("tool", "")})
+            if content:
+                lines.append(json.dumps({"type": "assistant", "message": {"content": content}}))
+    return lines
+
+
+def _write_durable_transcript(chat_root: Path, session_id: str, all_messages: list[dict]) -> None:
+    """OpenCode's own session lives only inside this turn's ``opencode serve`` subprocess — gone the
+    moment the worker is torn down (idle timeout, restart, redeploy). Reproduced live: a worker
+    recreation silently erased a session's entire history, no error anywhere, because nothing durable
+    was ever written for it. Writes the FULL session (not just this turn — ``all_messages`` already
+    carries the whole thing) so a later turn's rewrite self-heals a missed/partial write; best-effort
+    because a conversation that already happened must never be lost over a failed SAVE of its copy."""
+    try:
+        lines = _durable_transcript_lines(all_messages)
+        if not lines:
+            return
+        path = chat_root / ".claude" / "projects" / "opencode" / f"{session_id}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n")
+    except OSError:
+        pass  # the turn already succeeded for the user — a save failure here is never their error
+
+
 class OpenCodeHarness:
     """``HarnessPort`` adapter for the OpenCode CLI/server."""
 
     name = "opencode"
+
+    def __init__(self) -> None:
+        self._chat_root: Optional[Path] = None
 
     def run_turn(self, work: Path, prompt: str, *, allowed_tools: Iterable[str] = (),
                  session: Optional[str] = None, model: Optional[str] = None,
@@ -313,6 +359,10 @@ class OpenCodeHarness:
                         all_messages = client.get(f"/session/{session_id}/message").json()
                     except (httpx.HTTPError, ValueError):
                         all_messages = []
+                    if self._chat_root is not None:
+                        # Durably — not deferred — since the worker (and this opencode server with
+                        # it) can be torn down any time after this turn returns.
+                        _write_durable_transcript(self._chat_root, session_id, all_messages)
                     reply_parts: list[str] = []
                     for msg in all_messages:
                         info = msg.get("info", {})
@@ -327,11 +377,15 @@ class OpenCodeHarness:
             yield {"type": "done", "ok": False, "reply": str(exc)}
 
     def prepare(self, work: Path, chat_root: Optional[Path] = None) -> None:
-        pass  # OpenCode's own session store IS the continuity mechanism; nothing to link/symlink
+        # No symlink/skills wiring needed (OpenCode's own session store IS the live continuity
+        # mechanism — resume works without this) — but run_turn needs chat_root to know WHERE to
+        # durably persist each turn's transcript (see _write_durable_transcript), since nothing else
+        # threads it through to run_turn's own signature.
+        self._chat_root = chat_root
 
     def transcript_bytes(self, work: Path, session_id: str) -> int:
-        return 0  # OpenCode's session history lives server-side per turn (torn down with it), not
-                  # on disk under `work` the way Claude Code's ~/.claude/projects/*.jsonl does
+        return 0  # resume-budget check only (_resume_id) — always "under budget" for opencode, same
+                  # as before this fix; the durable file written in run_turn doesn't feed this check
 
     def preflight(self) -> Optional[str]:
         base_url = os.environ.get("VEXA_LLM_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL")

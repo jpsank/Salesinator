@@ -111,6 +111,29 @@ def test_models_reports_chat_and_workspace_streaming_model(tmp_path):
     assert r.status_code == 200
     assert r.json()["chat_model"] == "deepseek/deepseek-v4-flash"
     assert r.json()["streaming_model"] == "openrouter/free"
+    assert r.json()["runner"] == "claude-code"
+
+
+def test_models_reports_the_llm_model_when_the_deployment_runner_is_not_claude_code(tmp_path):
+    """A deployment default of e.g. opencode never touches settings.agent_model (claude-code's own
+    field) — chat_model must report what the ACTUAL harness reads (VEXA_LLM_MODEL), not "default",
+    so Settings → Models can show what "Deployment default" really resolves to (P21)."""
+    from control_plane.workspace_reader import WorkspaceReader
+
+    c = TestClient(create_app(
+        Dispatcher(
+            load_settings(agent_model="sonnet", llm_model="gemma4:latest", agent_runner="opencode"),
+            _FakeRuntime(),
+            _FakeIdentity(),
+        ),
+        reader=WorkspaceReader(str(tmp_path)),
+    ))
+
+    r = c.get("/api/models", params={"subject": "u_jane"})
+
+    assert r.status_code == 200
+    assert r.json()["chat_model"] == "gemma4:latest"
+    assert r.json()["runner"] == "opencode"
 
 
 def test_invocations_dispatches():
@@ -769,6 +792,75 @@ def test_session_history_prefers_the_system_anchor(tmp_path):
     reader = WorkspaceReader(str(tmp_path))
     turns = reader.history("28", "chat-y")
     assert turns == [{"role": "user", "text": "hello"}]
+
+
+def test_session_history_stitches_across_a_chain_handoff(tmp_path):
+    """engine.py's _record_handoff logs every superseded session id to <session>.chain — history()
+    must concatenate each one's transcript, oldest first, so a harness switch (or an over-budget
+    resume restart) never cuts a conversation in half. Reproduced live: a session's onboarding-era
+    history vanished the moment its first turn ran on a different runner."""
+    from control_plane.workspace_reader import WorkspaceReader
+
+    ws = tmp_path / "u_jane"
+    (ws / ".claude" / "sessions").mkdir(parents=True)
+    (ws / ".claude" / "sessions" / "main.session").write_text("sid-new")
+    (ws / ".claude" / "sessions" / "main.chain").write_text("sid-old\n")
+    _write_transcript(ws, "sid-old", [
+        {"type": "user", "message": {"role": "user", "content": "old harness message"}},
+    ])
+    _write_transcript(ws, "sid-new", [
+        {"type": "user", "message": {"role": "user", "content": "new harness message"}},
+    ])
+
+    reader = WorkspaceReader(str(tmp_path))
+    turns = reader.history("u_jane", "main")
+
+    assert [t["text"] for t in turns] == ["old harness message", "new harness message"]
+
+
+def test_session_history_chain_with_multiple_handoffs_stays_in_order(tmp_path):
+    from control_plane.workspace_reader import WorkspaceReader
+
+    ws = tmp_path / "u_jane"
+    (ws / ".claude" / "sessions").mkdir(parents=True)
+    (ws / ".claude" / "sessions" / "main.session").write_text("sid-3")
+    (ws / ".claude" / "sessions" / "main.chain").write_text("sid-1\nsid-2\n")
+    for sid, text in [("sid-1", "first"), ("sid-2", "second"), ("sid-3", "third")]:
+        _write_transcript(ws, sid, [{"type": "user", "message": {"role": "user", "content": text}}])
+
+    reader = WorkspaceReader(str(tmp_path))
+    turns = reader.history("u_jane", "main")
+    assert [t["text"] for t in turns] == ["first", "second", "third"]
+
+
+def test_session_history_missing_chain_entry_is_skipped_not_fatal(tmp_path):
+    """A chain entry whose transcript file is gone (never written, or cleaned up) must not block the
+    rest of the conversation from rendering."""
+    from control_plane.workspace_reader import WorkspaceReader
+
+    ws = tmp_path / "u_jane"
+    (ws / ".claude" / "sessions").mkdir(parents=True)
+    (ws / ".claude" / "sessions" / "main.session").write_text("sid-new")
+    (ws / ".claude" / "sessions" / "main.chain").write_text("sid-missing\n")
+    _write_transcript(ws, "sid-new", [{"type": "user", "message": {"role": "user", "content": "hi"}}])
+
+    reader = WorkspaceReader(str(tmp_path))
+    turns = reader.history("u_jane", "main")
+    assert turns == [{"role": "user", "text": "hi"}]
+
+
+def test_drop_session_also_clears_the_chain_file(tmp_path):
+    from control_plane.workspace_reader import WorkspaceReader
+
+    ws = tmp_path / "u_jane"
+    (ws / ".claude" / "sessions").mkdir(parents=True)
+    (ws / ".claude" / "sessions" / "main.session").write_text("sid-new")
+    (ws / ".claude" / "sessions" / "main.chain").write_text("sid-old\n")
+
+    reader = WorkspaceReader(str(tmp_path))
+    assert reader.drop_session("u_jane", "main") is True
+    assert not (ws / ".claude" / "sessions" / "main.chain").exists()
+    assert not (ws / ".claude" / "sessions" / "main.session").exists()
 
 
 def test_session_history_tolerant_of_missing(tmp_path):

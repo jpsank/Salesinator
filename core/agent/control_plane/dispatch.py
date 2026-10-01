@@ -151,14 +151,23 @@ def overlay_model_config(env: dict[str, str], config: dict, *, allowlist: str = 
     ``mode: custom`` points BOTH call shapes at the supplied gateway (an Anthropic-/OpenAI-
     compatible endpoint, e.g. LiteLLM/OpenRouter in front of an open-source model): the
     claude-code harness via ``ANTHROPIC_BASE_URL``/``ANTHROPIC_AUTH_TOKEN`` and the completion
-    adapters via ``VEXA_LLM_PROVIDER=openai-compat`` + ``VEXA_LLM_BASE_URL``/``VEXA_LLM_API_KEY``.
-    ``mode: subscription`` (or unset) keeps the deployment's brokered credential — the mounted
-    Claude Code subscription / deployment key — and only the model names apply.
+    adapters via ``VEXA_LLM_PROVIDER=openai-compat`` + ``VEXA_LLM_BASE_URL``/``VEXA_LLM_API_KEY``
+    — whichever harness ends up running picks up what it understands, so this needs no runner
+    force of its own. ``mode: subscription`` keeps the deployment's brokered credential — the
+    mounted Claude Code subscription / deployment key — and only the model names apply; it ALSO
+    forces ``VEXA_RUNNER=claude-code``, since that's the one harness that actually consumes that
+    credential. Without the force, a user's explicit "subscription" choice was silently inert on
+    any deployment whose default runner isn't claude-code (e.g. ``VEXA_AGENT_RUNNER=opencode``,
+    routing through a local model) — reproduced live. Unset mode leaves the deployment's own
+    runner choice alone, same as before.
 
     Dispatch-stamped values WIN downstream (the runtime copies its own env only for keys absent
     here — docker_backend's ``key not in spawn_env``). Models are gated by the operator's
     allowlist: a non-allowlisted model is DROPPED (deployment default applies), never an error —
     a stale pref must not brick a turn."""
+    mode = (config.get("mode") or "").strip()
+    if mode == "subscription":
+        env["VEXA_RUNNER"] = "claude-code"
     model = (config.get("model") or "").strip()
     if model and _allowlisted(model, allowlist):
         env["VEXA_AGENT_MODEL"] = model     # harness turns (chat/docs/routines)
@@ -179,7 +188,7 @@ def overlay_model_config(env: dict[str, str], config: dict, *, allowlist: str = 
     effort = (config.get("effort") or "").strip()
     if effort:
         env["VEXA_AGENT_EFFORT"] = effort
-    if (config.get("mode") or "").strip() != "custom":
+    if mode != "custom":
         return
     base_url = (config.get("base_url") or "").strip()
     api_key = (config.get("api_key") or "").strip()

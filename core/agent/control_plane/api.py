@@ -1069,12 +1069,18 @@ def create_app(
                 streaming_model = workspace_model
         except ValueError:
             pass
-        chat_model = settings.agent_model or "default"
+        # Settings → Models needs this to show what "Deployment default" actually resolves to
+        # (P21: facts, not a placeholder) — same runner-awareness as run_models_test: a deployment
+        # whose default harness isn't claude-code reads VEXA_LLM_MODEL, never settings.agent_model
+        # (which it never touches).
+        runner = dispatcher.settings.agent_runner or units.RUNNER
+        chat_model = (settings.agent_model if runner == units.RUNNER else settings.llm_model) or "default"
         return {
             "chat_model": chat_model,
             "agent_model": chat_model,
             "streaming_model": streaming_model,
             "meeting_model": streaming_model,
+            "runner": runner,
         }
 
     @app.post("/invocations", status_code=202)
@@ -2478,15 +2484,35 @@ def create_app(
         from control_plane import config_test as _ct
         subject = subject_of(request)
         cfg: dict = {}
+        runner = dispatcher.settings.agent_runner
         mc = getattr(dispatcher, "_model_config", None)
         if mc is not None:
             try:
                 cfg = mc.resolve(subject) or {}
             except Exception as exc:  # resolver down → still test the env floor, but SAY so
-                out = _ct.run_models_test({})
+                out = _ct.run_models_test({}, runner=runner)
                 out["summary"] += f" (settings resolver unavailable: {exc} — tested env defaults)"
                 return out
-        return _ct.run_models_test(cfg)
+        return _ct.run_models_test(cfg, runner=runner)
+
+    @app.get("/api/models/available")
+    def models_available(request: Request):
+        """Model-name suggestions for Settings → Models' Chat/Meeting model fields — the SAME
+        effective-config resolution as the Test button, so what's offered matches what would
+        actually run. A real endpoint lookup where one exists; claude-code's known aliases where
+        it doesn't (see list_available_models). Never errors: an unreachable/unresolved config
+        just means an empty suggestion list — the fields stay free-text either way."""
+        from control_plane import config_test as _ct
+        subject = subject_of(request)
+        cfg: dict = {}
+        runner = dispatcher.settings.agent_runner
+        mc = getattr(dispatcher, "_model_config", None)
+        if mc is not None:
+            try:
+                cfg = mc.resolve(subject) or {}
+            except Exception:  # noqa: BLE001 — resolver down → suggestions from the env floor only
+                cfg = {}
+        return _ct.list_available_models(cfg, runner=runner)
 
     @app.get("/api/transcription/test")
     def transcription_test(request: Request):

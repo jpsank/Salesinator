@@ -252,6 +252,32 @@ def _session_file(work: Path, session: str) -> Path:
     return namespaced
 
 
+def _chain_file(sess_file: Path) -> Path:
+    """The sibling append-only log of every session id a thread has EVER held
+    (``<session>.chain``, next to ``<session>.session``) — written whenever the resume pointer is
+    about to move to a DIFFERENT id, so workspace_reader.history() can stitch every superseded id's
+    transcript back in. A pointer changes for two reasons, both continuity breaks the user never
+    asked for: a harness switch (opencode/claude-code sessionId formats are mutually unresumable),
+    or a same-harness resume starting fresh over budget (_resume_id's size cap). Either way the OLD
+    transcript stays real and findable on disk — only the single-slot pointer ever stopped seeing
+    it; this makes that loss recoverable instead of silent."""
+    return sess_file.parent / f"{sess_file.stem}.chain"
+
+
+def _record_handoff(sess_file: Path, prior_id: str) -> None:
+    """Append ``prior_id`` to the chain, idempotent against being called again with the same value
+    (e.g. a touch that re-reads and re-writes the same pointer)."""
+    chain = _chain_file(sess_file)
+    try:
+        existing = chain.read_text().splitlines() if chain.exists() else []
+        if existing and existing[-1] == prior_id:
+            return
+        with chain.open("a") as f:
+            f.write(prior_id + "\n")
+    except OSError:
+        pass  # best-effort — losing a chain entry degrades to today's behavior, never breaks the turn
+
+
 def _chat_resume_max_bytes() -> int:
     try:
         return int(os.environ.get("VEXA_CHAT_RESUME_MAX_BYTES", "1000000"))
@@ -330,8 +356,15 @@ def run_turn_over_workspace(
                            commit=commit, author=author, extra_mounts=extras)
     first = next(gen, None)
     if resume and first is not None and first.get("type") == "done" and not first.get("ok", True):
-        if sess_file.exists():
-            sess_file.unlink()
+        # Leave sess_file ALONE here — don't unlink it. Reproduced live: unlinking made
+        # workspace_reader.history() return [] for the ENTIRE duration of the retry turn below (a
+        # user who reloaded mid-turn saw their whole prior conversation vanish, then reappear once
+        # the retry finished) — the file is the ONLY thing history() has to resolve FROM while this
+        # retry is in flight, so removing it early cost total history for no benefit: the retry
+        # already passes session=None explicitly, never reads this file, and the final write block
+        # below already detects (via a simple prior-vs-captured comparison) and records the handoff
+        # once there's a real new id to hand off TO. A retry that fails too just leaves the old,
+        # still-valid pointer in place — strictly better than leaving none at all.
         gen = run_harness_turn(work, turn_prompt, harness, allowed_tools=allowed, session=None, model=model,
                                commit=commit, author=author, extra_mounts=extras)
         first = next(gen, None)
@@ -342,6 +375,12 @@ def run_turn_over_workspace(
         yield ev
     if captured and session_continuity:
         sess_file.parent.mkdir(parents=True, exist_ok=True)
+        if sess_file.exists():
+            prior = sess_file.read_text().strip()
+            if prior and prior != captured:
+                _record_handoff(sess_file, prior)  # pointer is moving to a DIFFERENT id — e.g. a
+                                                    # harness switch (opencode/claude-code never
+                                                    # share an id format) — don't let it vanish
         sess_file.write_text(captured)
 
 

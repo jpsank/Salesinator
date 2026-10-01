@@ -504,6 +504,37 @@ def test_dispatcher_model_config_subscription_mode_keeps_deployment_credentials(
     assert "VEXA_LLM_API_KEY" not in env
 
 
+def test_dispatcher_model_config_subscription_mode_forces_claude_code_harness(monkeypatch):
+    """A user's explicit "subscription" choice must reach the actual harness switch, not just sit
+    inert under whatever VEXA_RUNNER the deployment defaults to (e.g. VEXA_AGENT_RUNNER=opencode,
+    routing through a local model) — otherwise picking subscription silently keeps running local."""
+    for key in dispatch.MODEL_AUTH_ENV_ALLOWLIST:
+        monkeypatch.delenv(key, raising=False)
+    rt = _FakeRuntime()
+    mc = _FakeModelConfig({"mode": "subscription"})
+    d = dispatch.Dispatcher(load_settings(), rt, _FakeIdentity(), model_config=mc)
+    d.dispatch({**VALID_INV, "runner": "opencode"})  # deployment default would otherwise be opencode
+    _, _profile, env = rt.spawned[0]
+    assert env["VEXA_RUNNER"] == "claude-code"
+
+
+def test_dispatcher_model_config_unset_mode_leaves_the_deployment_runner_alone():
+    """"Deployment default" (no explicit mode) must NOT force a harness — only an explicit
+    "subscription" choice does. mode:custom needs no force either (it stamps both call shapes)."""
+    rt = _FakeRuntime()
+    d = dispatch.Dispatcher(load_settings(), rt, _FakeIdentity(), model_config=_FakeModelConfig({}))
+    d.dispatch({**VALID_INV, "runner": "opencode"})
+    _, _profile, env = rt.spawned[0]
+    assert env["VEXA_RUNNER"] == "opencode"
+
+    rt2 = _FakeRuntime()
+    mc2 = _FakeModelConfig({"mode": "custom", "base_url": "https://gw.example.com"})
+    d2 = dispatch.Dispatcher(load_settings(), rt2, _FakeIdentity(), model_config=mc2)
+    d2.dispatch({**VALID_INV, "runner": "opencode"})
+    _, _profile2, env2 = rt2.spawned[0]
+    assert env2["VEXA_RUNNER"] == "opencode"
+
+
 def test_dispatcher_model_config_allowlist_gates_models_not_endpoint():
     """A non-allowlisted model is DROPPED (deployment default applies) — never an error; the
     custom endpoint itself is not the allowlist's business."""

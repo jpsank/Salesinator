@@ -116,6 +116,19 @@ class WorkspaceReader:
             raise ValueError("invalid path")
         return f.read_text() if f.exists() and f.is_file() else None
 
+    def _session_id_chain(self, ws: Path, session: str) -> list[str]:
+        """Every id this thread held BEFORE the current one, oldest first (``<session>.chain`` —
+        written by engine.py's ``_record_handoff`` whenever the resume pointer is about to move to a
+        different id: a harness switch, or a same-harness resume that started fresh over budget).
+        Absent file ⇒ no prior handoffs ⇒ []. Tolerant, like every other continuity read here."""
+        chain = ws / ".claude" / "sessions" / f"{session}.chain"
+        try:
+            if chain.exists() and chain.is_file():
+                return [line.strip() for line in chain.read_text().splitlines() if line.strip()]
+        except OSError:
+            pass
+        return []
+
     def _session_id(self, ws: Path, session: str) -> Optional[str]:
         """The claude sessionId for a thread, read from its continuity pointer
         (``.claude/sessions/<session>.session``; the legacy ``main`` falls back to ``.claude/.session``)."""
@@ -156,54 +169,22 @@ class WorkspaceReader:
             out.append(c)
         return out
 
-    def history(self, subject: str, session: str, extra_roots: "list[str | Path] | None" = None) -> list[dict]:
-        """The session's prior conversation as ordered, terminal-renderable turns.
-
-        Resolves the thread's claude sessionId from its continuity pointer, finds the transcript JSONL
-        under ``<ws>/.claude/projects/<cwd-slug>/<sessionId>.jsonl``, and parses it into ``Turn``-shaped
-        dicts: user turns ``{role:"user", text}``; agent turns ``{role:"agent", text, ops, commit?}``.
-        Pointer and transcript are searched across every continuity root (``_continuity_roots``) — they
-        normally co-locate, but a thread that MOVED anchors (cwd-rooted → _system-rooted) may have them
-        apart. Tolerant by design — a missing pointer/file or unparseable lines yield ``[]`` (never
-        raises), so the surface degrades to "no history yet" rather than erroring."""
-        if "/" in session or "\\" in session or session in ("", ".", ".."):
-            return []
-        roots = self._continuity_roots(subject, extra_roots)
-        sid: Optional[str] = None
-        for ws in roots:
-            sid = self._session_id(ws, session)
-            if sid:
-                break
-        if not sid:
-            # LAST RESORT — threads recorded BEFORE continuity anchoring sit under whatever workspace
-            # was the turn's cwd at the time, which may no longer be mounted (deactivated / membership
-            # gone). Two fixed-depth globs over the store root find the pointer; read-only + bounded.
-            for pat in (f"*/.claude/sessions/{session}.session",
-                        f".attached/*/*/.claude/sessions/{session}.session"):
-                for f in self._root.glob(pat):
-                    ws = f.parents[2]
-                    sid = self._session_id(ws, session)
-                    if sid:
-                        roots.append(ws)
-                        break
-                if sid:
-                    break
-        if not sid:
-            return []
-        # The cwd-slug dir is claude's encoding of the workspace path; there is normally one, but match by
-        # the sessionId filename to be safe. ``rglob`` also catches subagent transcripts — we want the top.
-        path: Optional[Path] = None
+    def _find_transcript_path(self, roots: list[Path], sid: str) -> Optional[Path]:
+        """The transcript JSONL for ONE sessionId, searched across every continuity root. The
+        cwd-slug dir is claude's encoding of the workspace path; there is normally one, but match by
+        the sessionId filename to be safe."""
         for ws in roots:
             projects = ws / ".claude" / "projects"
             if not projects.exists():
                 continue
             for cand in projects.glob(f"*/{sid}.jsonl"):
-                path = cand
-                break
-            if path is not None:
-                break
-        if path is None:
-            return []
+                return cand
+        return None
+
+    def _parse_transcript_file(self, path: Path) -> list[dict]:
+        """Parse ONE transcript JSONL into ``Turn``-shaped dicts: user turns ``{role:"user", text}``;
+        agent turns ``{role:"agent", text, ops, commit?}``. Tolerant — unparseable lines are skipped,
+        never raise."""
         try:
             raw = path.read_text()
         except OSError:
@@ -259,6 +240,57 @@ class WorkspaceReader:
         flush_agent()
         return turns
 
+    def history(self, subject: str, session: str, extra_roots: "list[str | Path] | None" = None) -> list[dict]:
+        """The session's FULL prior conversation as ordered, terminal-renderable turns — stitched
+        across every handoff the thread ever had, not just its current pointer.
+
+        The resume pointer is a single slot: a harness switch (opencode/claude-code sessionIds are
+        mutually unresumable) or a same-harness resume that started fresh over budget both move it to
+        a NEW id, and the one id history() used to resolve would only ever show what happened AFTER
+        the most recent move — the earlier transcript was still real and on disk, just unreachable
+        from the current pointer alone (reproduced live: a session's onboarding-era history vanished
+        the moment its first turn ran on a different runner). ``<session>.chain`` (engine.py's
+        ``_record_handoff``) is the append-only log of every id this thread superseded, oldest first;
+        concatenating each chain entry's transcript, in order, ahead of the current id's gives one
+        continuous conversation regardless of how many times continuity broke underneath it.
+
+        Tolerant by design — a missing pointer/file, missing chain, or unparseable lines yield ``[]``
+        for that piece (never raise), so the surface degrades gracefully rather than erroring."""
+        if "/" in session or "\\" in session or session in ("", ".", ".."):
+            return []
+        roots = self._continuity_roots(subject, extra_roots)
+        sid: Optional[str] = None
+        ws_found: Optional[Path] = None
+        for ws in roots:
+            sid = self._session_id(ws, session)
+            if sid:
+                ws_found = ws
+                break
+        if not sid:
+            # LAST RESORT — threads recorded BEFORE continuity anchoring sit under whatever workspace
+            # was the turn's cwd at the time, which may no longer be mounted (deactivated / membership
+            # gone). Two fixed-depth globs over the store root find the pointer; read-only + bounded.
+            for pat in (f"*/.claude/sessions/{session}.session",
+                        f".attached/*/*/.claude/sessions/{session}.session"):
+                for f in self._root.glob(pat):
+                    ws = f.parents[2]
+                    sid = self._session_id(ws, session)
+                    if sid:
+                        roots.append(ws)
+                        ws_found = ws
+                        break
+                if sid:
+                    break
+        if not sid or ws_found is None:
+            return []
+        ids = self._session_id_chain(ws_found, session) + [sid]  # oldest handoff first, current last
+        turns: list[dict] = []
+        for one_id in ids:
+            path = self._find_transcript_path(roots, one_id)
+            if path is not None:
+                turns.extend(self._parse_transcript_file(path))
+        return turns
+
     def drop_session(self, subject: str, session: str) -> bool:
         """Delete a chat thread's continuity file (``.claude/sessions/<session>.session``) so a future
         turn on the same name starts a fresh conversation. The ``"main"`` thread also clears the legacy
@@ -272,6 +304,7 @@ class WorkspaceReader:
         # needed here: dropping the indexed thread only has to cover the anchored locations)
         for ws in self._continuity_roots(subject):
             targets.append(ws / ".claude" / "sessions" / f"{session}.session")
+            targets.append(ws / ".claude" / "sessions" / f"{session}.chain")
             if session == "main":
                 targets.append(ws / ".claude" / ".session")
         for f in targets:

@@ -100,20 +100,31 @@ def test_subscription_credentials(creds_path: str = CREDS_PATH, *, now: Optional
 def test_custom_endpoint(base_url: str, api_key: str, model: str = "",
                          post: HttpPost = _post) -> dict:
     """A REAL 1-token completion against the configured endpoint. Anthropic-style first
-    (``/v1/messages``), OpenAI-compat fallback (``/v1/chat/completions``) on 404/405 — the two
-    dialects the dispatch overlay brokers (ANTHROPIC_* vs VEXA_LLM_*)."""
+    (``/v1/messages``), OpenAI-compat fallback (``/chat/completions``) on 404/405 — the two
+    dialects the dispatch overlay brokers (ANTHROPIC_* vs VEXA_LLM_*).
+
+    ``base_url`` arrives in TWO different shapes depending on which env family it came from:
+    ANTHROPIC_BASE_URL never includes ``/v1`` (callers append it); VEXA_LLM_BASE_URL always DOES
+    (OpenAI SDK convention — see llm/openai_compat.py's own docstring, e.g.
+    ``http://ollama:11434/v1``), and the real adapter posts to ``{base}/chat/completions`` with no
+    further prefix. Reproduced live: blindly appending ``/v1/chat/completions`` to a base that
+    already ends in ``/v1`` built ``.../v1/v1/chat/completions`` — a guaranteed 404 against a real
+    local Ollama, even though the exact same request one ``/v1`` shorter succeeded."""
     base = base_url.rstrip("/")
     if not base:
         return _result(False, "Custom mode but no Base URL set.")
     model = model or "claude-haiku-4-5-20251001"
     auth = {"x-api-key": api_key, "Authorization": f"Bearer {api_key}",
             "anthropic-version": "2023-06-01"}
+    has_v1 = base.endswith("/v1")
+    anthropic_url = f"{base[:-len('/v1')] if has_v1 else base}/v1/messages"
+    openai_url = f"{base}/chat/completions" if has_v1 else f"{base}/v1/chat/completions"
     try:
-        status, body = post(f"{base}/v1/messages",
+        status, body = post(anthropic_url,
                             {"model": model, "max_tokens": 1,
                              "messages": [{"role": "user", "content": "ping"}]}, auth)
         if status in (404, 405):  # not an anthropic dialect — try openai-compat
-            status, body = post(f"{base}/v1/chat/completions",
+            status, body = post(openai_url,
                                 {"model": model, "max_tokens": 1,
                                  "messages": [{"role": "user", "content": "ping"}]}, auth)
     except Exception as exc:  # DNS, refused, TLS, timeout — the endpoint itself is the problem
@@ -128,22 +139,106 @@ def test_custom_endpoint(base_url: str, api_key: str, model: str = "",
     return _result(False, f"Endpoint answered HTTP {status}: {detail}", status=status)
 
 
-def run_models_test(config: dict, env: Optional[dict] = None,
-                    creds_path: str = CREDS_PATH, post: HttpPost = _post) -> dict:
-    """The EFFECTIVE model credential test — same resolution the dispatch overlay applies
-    (Settings user > global config already collapsed by admin-api; env is the floor)."""
+# claude-code's own stable model aliases (not a live lookup — the CLI's subscription path has no
+# public "list models" call; a worker-side dispatch is the only live surface, same reason
+# test_subscription_credentials stops at an expiry check). Small and deliberately not guessed at
+# per-deployment: these three are the CLI's documented, versionless aliases.
+_CLAUDE_CODE_ALIASES = ("sonnet", "opus", "haiku")
+
+
+def _models_from_endpoint(base_url: str, api_key: str, *, get: HttpGet) -> dict:
+    """GET {base}/models (OpenAI-compat convention — same /v1 double-up gotcha as
+    test_custom_endpoint's POST side: VEXA_LLM_BASE_URL already ends in /v1, ANTHROPIC_BASE_URL
+    never does) and return the model ids. Any failure (unreachable, non-2xx, unparseable) is NOT
+    an error here — an empty list just means the UI's suggestions are empty; the field stays a
+    free-text input either way."""
+    base = (base_url or "").rstrip("/")
+    if not base:
+        return {"models": [], "source": ""}
+    url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        status, body = get(url, headers)
+    except Exception:  # noqa: BLE001 — unreachable endpoint; empty suggestions, not a crash
+        return {"models": [], "source": base}
+    if not (200 <= status < 300):
+        return {"models": [], "source": base}
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return {"models": [], "source": base}
+    items = data.get("data") if isinstance(data, dict) else None
+    models = [m["id"] for m in items if isinstance(m, dict) and m.get("id")] if isinstance(items, list) else []
+    return {"models": models, "source": base}
+
+
+def list_available_models(config: dict, env: Optional[dict] = None, runner: str = "",
+                          get: HttpGet = _get) -> dict:
+    """What Settings → Models can actually offer as suggestions, given the SAME effective
+    resolution run_models_test uses: a real endpoint lookup where one exists (custom mode, or the
+    deployment's own non-claude-code default), the CLI's known aliases where it doesn't
+    (subscription, or deployment default with no runner override)."""
     env = env if env is not None else dict(os.environ)
     mode = (config.get("mode") or "").strip()
-    base_url = (config.get("base_url") or "").strip() or env.get("ANTHROPIC_BASE_URL", "")
-    api_key = (config.get("api_key") or "").strip() or env.get("ANTHROPIC_AUTH_TOKEN", "") \
-        or env.get("ANTHROPIC_API_KEY", "")
-    if mode == "custom" or (not mode and base_url and api_key):
+    if mode == "custom":
+        base_url = (config.get("base_url") or "").strip() or env.get("ANTHROPIC_BASE_URL", "")
+        api_key = (config.get("api_key") or "").strip() or env.get("ANTHROPIC_AUTH_TOKEN", "") \
+            or env.get("ANTHROPIC_API_KEY", "")
+        return _models_from_endpoint(base_url, api_key, get=get)
+    if mode == "subscription":
+        return {"models": list(_CLAUDE_CODE_ALIASES), "source": "claude-code"}
+    if runner and runner != "claude-code":
+        return _models_from_endpoint(env.get("VEXA_LLM_BASE_URL", ""), env.get("VEXA_LLM_API_KEY", ""), get=get)
+    return {"models": list(_CLAUDE_CODE_ALIASES), "source": "claude-code"}
+
+
+def run_models_test(config: dict, env: Optional[dict] = None,
+                    creds_path: str = CREDS_PATH, post: HttpPost = _post,
+                    runner: str = "") -> dict:
+    """The EFFECTIVE model credential test — same resolution the dispatch overlay applies
+    (Settings user > global config already collapsed by admin-api; env is the floor).
+
+    ``runner`` is the deployment's effective /api/chat harness (``settings.agent_runner``, empty =
+    claude-code). Reproduced live: a deployment switched to ``agent_runner=opencode`` (routing chat
+    through a local OpenAI-compatible endpoint, VEXA_LLM_BASE_URL) still had this test report
+    "Subscription credentials valid" — it only ever checked ANTHROPIC_* env/the mounted Claude
+    credentials file, with no awareness opencode exists at all. A user's own explicit "subscription"
+    or "custom" choice always wins (it says what THEY asked for); only the UNSET "deployment
+    default" case needed to learn the deployment might default to something other than claude-code."""
+    env = env if env is not None else dict(os.environ)
+    mode = (config.get("mode") or "").strip()
+    if mode == "custom":
+        base_url = (config.get("base_url") or "").strip() or env.get("ANTHROPIC_BASE_URL", "")
+        api_key = (config.get("api_key") or "").strip() or env.get("ANTHROPIC_AUTH_TOKEN", "") \
+            or env.get("ANTHROPIC_API_KEY", "")
         out = test_custom_endpoint(base_url, api_key, (config.get("model") or "").strip(),
                                    post=post)
         out["mode"] = "custom"
-    else:
+    elif mode == "subscription":
         out = test_subscription_credentials(creds_path)
         out["mode"] = "subscription"
+    elif runner and runner != "claude-code":
+        # Deployment default, and the default harness isn't claude-code — test what it ACTUALLY
+        # uses (VEXA_LLM_BASE_URL/VEXA_LLM_API_KEY), not Claude credentials it never touches.
+        # test_custom_endpoint already tries the Anthropic dialect then falls back to OpenAI-compat
+        # on 404/405, so it works unmodified against Ollama/any OpenAI-compatible local endpoint —
+        # an empty api_key is fine here (a local Ollama ignores bogus auth headers).
+        base_url = env.get("VEXA_LLM_BASE_URL", "")
+        api_key = env.get("VEXA_LLM_API_KEY", "")
+        model = (config.get("model") or "").strip() or env.get("VEXA_LLM_MODEL", "")
+        out = test_custom_endpoint(base_url, api_key, model, post=post)
+        out["mode"] = "local"
+    else:
+        base_url = (config.get("base_url") or "").strip() or env.get("ANTHROPIC_BASE_URL", "")
+        api_key = (config.get("api_key") or "").strip() or env.get("ANTHROPIC_AUTH_TOKEN", "") \
+            or env.get("ANTHROPIC_API_KEY", "")
+        if base_url and api_key:
+            out = test_custom_endpoint(base_url, api_key, (config.get("model") or "").strip(),
+                                       post=post)
+            out["mode"] = "custom"
+        else:
+            out = test_subscription_credentials(creds_path)
+            out["mode"] = "subscription"
     # Non-secret provenance so the UI can say WHAT was tested.
     out["config"] = {k: v for k, v in config.items() if k in ("mode", "model", "meeting_model",
                                                               "base_url") and v}
@@ -151,6 +246,28 @@ def run_models_test(config: dict, env: Optional[dict] = None,
 
 
 # ── transcription ─────────────────────────────────────────────────────────────────────────────
+
+def _is_running_in_docker() -> bool:
+    """True when THIS process is itself inside a Docker container (the standard /.dockerenv
+    marker every container gets)."""
+    return os.path.exists("/.dockerenv")
+
+
+def _native_safe_url(url: str, *, in_docker: Optional[bool] = None) -> str:
+    """``host.docker.internal`` only resolves from INSIDE a Docker container — it's the bridge
+    Docker Desktop injects for reaching the host, meaningless (a DNS failure) from a native
+    process that already IS the host. Reproduced live: agent-api's own transcription test (now
+    running natively — see shared/config.py's agent_runner docstring for the native-agent-api
+    story) resolved a per-user transcription URL of ``host.docker.internal:8083`` — correct for a
+    bot CONTAINER reaching the host-published transcription-api service, wrong for agent-api's own
+    native process probing that SAME stored URL. Rewritten only when this process is confirmed
+    NOT containerized; a dockerized agent-api keeps the URL exactly as stored (it IS the intended
+    caller shape bots also use)."""
+    in_docker = _is_running_in_docker() if in_docker is None else in_docker
+    if not in_docker and "host.docker.internal" in url:
+        return url.replace("host.docker.internal", "localhost")
+    return url
+
 
 # The OpenAI-compatible transcriptions path every consumer agrees on. Appended only when the
 # configured URL does not already carry it — the one rule shared with the config.v1 probe
@@ -224,7 +341,7 @@ def run_transcription_test(url: str, token: str, source: str, get: HttpGet = _ge
     zero-balance *exempt* token did the actual work. Sending audio asks the real question and keeps
     every account identity out of this codebase. ``/balance`` is still consulted first, but only to
     NAME the account in the verdict (a courtesy, never the oracle)."""
-    base = (url or "").strip().rstrip("/")
+    base = _native_safe_url((url or "").strip().rstrip("/"))
     if not base:
         return _result(False, "No transcription backend configured at any level "
                               "(user, global, or deployment env).", source=source)
