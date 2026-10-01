@@ -1058,7 +1058,7 @@ services:
       # HTTP scheme: the terminal's REST proxy fetches GATEWAY_URL as http; server.mjs converts it to
       # ws:// itself for the /ws upgrade. ws:// here would break the REST proxy (502 fetch failed).
       - GATEWAY_URL=http://gateway:8000
-      - AGENT_API_URL=http://agent-api:8100
+      - AGENT_API_URL=${AGENT_API_URL:-http://agent-api:8100}
       - VEXA_ADMIN_API_URL=http://admin-api:8001
       # sales-cycle add-on (integrations/sales-cycle/): the server-side target for /api/sales-cycle/*
       # (see app/api/sales-cycle/[...path]/route.ts) — a different host from the gateway above, since
