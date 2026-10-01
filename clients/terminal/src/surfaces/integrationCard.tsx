@@ -10,11 +10,13 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { presentError } from "./apiClient";
 
 export const cardField: CSSProperties = { width: "100%", minWidth: 0, boxSizing: "border-box", fontSize: 12, padding: "6px 9px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)" };
+/** A field inside a `cardLabelled` row: takes the remaining width, wraps under its label when it would drop below 180px. */
+export const cardFieldGrow: CSSProperties = { ...cardField, flex: "1 1 180px" };
 export const cardBtn: CSSProperties = { fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)", cursor: "pointer" };
 export const cardPrimaryBtn: CSSProperties = { ...cardBtn, background: "var(--accent)", color: "var(--on-accent)", border: "none" };
 export const cardRow: CSSProperties = { border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 };
 export const cardMeta: CSSProperties = { fontSize: 11, color: "var(--t3)", lineHeight: 1.5 };
-export const cardLabelled: CSSProperties = { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--t2)" };
+export const cardLabelled: CSSProperties = { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--t2)" };
 export const cardLabelCol: CSSProperties = { width: 96, flex: "none", color: "var(--t3)" };
 export const cardCheckRow: CSSProperties = { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--t2)", cursor: "pointer" };
 

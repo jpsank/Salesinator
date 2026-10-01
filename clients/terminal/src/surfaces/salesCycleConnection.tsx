@@ -5,7 +5,7 @@
  *  Calendar or GitHub next to them — so there's no per-user identity in this flow at all.
  */
 import { useEffect, useState } from "react";
-import { cardBtn, cardField, cardLabelCol, cardLabelled, cardMeta, OAuthConnectionCard, PasteTokenFallback } from "./integrationCard";
+import { cardBtn, cardFieldGrow, cardLabelCol, cardLabelled, cardMeta, OAuthConnectionCard, PasteTokenFallback } from "./integrationCard";
 import {
   disconnectOAuth, getOAuthStatus, getSlackChannel, getSlackChannelStatus, oauthConnectUrl, setOAuthToken,
   setSlackChannel, type SlackChannelConfig, type SlackChannelStatus,
@@ -104,7 +104,7 @@ export function SlackChannelField({ onSaved = () => undefined }: { onSaved?: () 
         <span style={cardLabelCol}>Channel ID</span>
         <input value={value} placeholder="C0123ABCDEF"
           onChange={(e) => { setSaved(false); setValue(e.target.value); }}
-          style={{ ...cardField, flex: 1 }} />
+          style={cardFieldGrow} />
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <button disabled={busy || !dirty} onClick={() => void save()}

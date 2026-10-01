@@ -23,7 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../ui-kit";
 import { presentError } from "./apiClient";
 import {
-  cardBtn as btn, cardCheckRow as checkRow, cardField as field, cardLabelCol as labelCol,
+  cardBtn as btn, cardCheckRow as checkRow, cardFieldGrow as field, cardLabelCol as labelCol,
   cardLabelled as labelled, cardMeta as meta, cardPrimaryBtn as primaryBtn, cardRow as row,
 } from "./integrationCard";
 import { refreshMeetings } from "./liveMeetings";
@@ -126,15 +126,17 @@ function CalendarRow({ cal, stamp, busy, onPatch, onSync, onDisconnect }: {
 
   return (
     <div style={{ ...row, opacity: cal.enabled ? 1 : 0.7 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <Icon name="cal" size={13} style={{ color: cal.enabled ? "var(--green)" : "var(--t3)" }} />
         <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--t1)" }}>{cal.name}</span>
-        <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)", fontFamily: "var(--mono)" }}>{feedLine(cal)}</span>
-        <button disabled={locked} onClick={onSync} style={btn}>{busy === "sync" ? "Syncing…" : "Sync now"}</button>
-        <button disabled={locked} onClick={() => { setEditing((v) => !v); setConfirming(false); }}
-          aria-expanded={editing} style={btn}>{editing ? "Close" : "Edit"}</button>
-        <button disabled={locked} onClick={() => { setConfirming(true); setEditing(false); }}
-          style={{ ...btn, color: "var(--danger)" }}>Disconnect</button>
+        <span style={{ flex: "1 1 120px", minWidth: 0, overflowWrap: "anywhere", fontSize: 11.5, color: "var(--t3)", fontFamily: "var(--mono)" }}>{feedLine(cal)}</span>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button disabled={locked} onClick={onSync} style={btn}>{busy === "sync" ? "Syncing…" : "Sync now"}</button>
+          <button disabled={locked} onClick={() => { setEditing((v) => !v); setConfirming(false); }}
+            aria-expanded={editing} style={btn}>{editing ? "Close" : "Edit"}</button>
+          <button disabled={locked} onClick={() => { setConfirming(true); setEditing(false); }}
+            style={{ ...btn, color: "var(--danger)" }}>Disconnect</button>
+        </div>
       </div>
 
       <div style={{ ...sync.ok ? meta : { ...meta, color: "var(--danger)" } }} role={sync.ok ? undefined : "alert"}>
