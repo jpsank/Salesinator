@@ -78,7 +78,6 @@ export VEXA_WORKER_REDIS_URL=redis://redis:6379/0
 export VEXA_WORKSPACE_MOUNT_SOURCE="$WORKSPACES"
 export VEXA_DISPATCH_SIGNING_KEY=dev-dispatch-signing-key
 export VEXA_GATEWAY_URL=http://localhost:18056
-export VEXA_TERMINAL_URL=http://localhost:13000
 export SALES_CYCLE_WORKSPACE_RESOLVE=true
 export HOST_CLAUDE_CREDENTIALS="${HOST_CLAUDE_CREDENTIALS:-$HOME/.claude/.credentials.json}"
 # Secrets/tokens: read from deploy/compose/.env at run time rather than hardcoded here (never commit
@@ -100,5 +99,9 @@ export VEXA_GITHUB_OAUTH_CLIENT_SECRET="${VEXA_GITHUB_OAUTH_CLIENT_SECRET:-$(env
 # doesn't match what's registered on the GitHub OAuth App.
 export VEXA_GITHUB_OAUTH_REDIRECT_URI="${VEXA_GITHUB_OAUTH_REDIRECT_URI:-$(env_val VEXA_GITHUB_OAUTH_REDIRECT_URI)}"
 export VEXA_GITHUB_OAUTH_REDIRECT_URI="${VEXA_GITHUB_OAUTH_REDIRECT_URI:-http://localhost:18100/api/workspace/git-token/oauth/callback}"
+# Where the browser lands after an OAuth round-trip (the GitHub callback redirects to it): the PUBLIC
+# terminal address when .env sets one, localhost only as the local-dev fallback.
+export VEXA_TERMINAL_URL="${VEXA_TERMINAL_URL:-$(env_val VEXA_TERMINAL_URL)}"
+export VEXA_TERMINAL_URL="${VEXA_TERMINAL_URL:-http://localhost:13000}"
 
 exec "$REPO/core/agent/.venv/bin/uvicorn" control_plane.api:app --host 0.0.0.0 --port 18100
