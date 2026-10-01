@@ -6,13 +6,24 @@
  *  main proxy, since it targets a different host entirely (SALES_CYCLE_URL, not GATEWAY_URL).
  */
 import type { NextRequest } from "next/server";
+import { requireAdmin, requireUser } from "../../admin/gate";
 
 export const dynamic = "force-dynamic";
 
 const SALES_CYCLE_URL = (process.env.SALES_CYCLE_URL || "http://127.0.0.1:18300").replace(/\/$/, "");
 
+/** Only the paths the terminal's own client calls (salesCycleApi.ts) — the backend's /internal/* and
+ *  /dispatch endpoints are never reachable through the browser-facing proxy. */
+const ALLOWED_PATHS = [/^oauth\/[a-z0-9_-]+\/(status|disconnect|token)$/, /^slack\/channel(-status)?$/];
+
+const deny = (status: number, error: string) =>
+  new Response(JSON.stringify({ error }), { status, headers: { "Content-Type": "application/json" } });
+
 async function forward(req: NextRequest, params: Promise<{ path: string[] }>): Promise<Response> {
   const { path } = await params;
+  if (!ALLOWED_PATHS.some((re) => re.test(path.join("/")))) return deny(404, "not_found");
+  // The connections are deployment-wide: reading needs a signed-in user, changing them needs an admin.
+  if (!(req.method === "GET" ? await requireUser() : await requireAdmin())) return deny(req.method === "GET" ? 401 : 403, "forbidden");
   const url = `${SALES_CYCLE_URL}/${path.join("/")}${req.nextUrl.search}`;
 
   const init: RequestInit = { method: req.method, cache: "no-store" };

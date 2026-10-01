@@ -25,8 +25,8 @@ export interface AdminIdentity {
   userId: string | number;
 }
 
-/** The verified admin identity, or null (callers must 404 on null). */
-export async function requireAdmin(): Promise<AdminIdentity | null> {
+/** The verified signed-in identity (any role), or null — same oracle validation as `requireAdmin`. */
+export async function requireUser(): Promise<(AdminIdentity & { isAdmin: boolean }) | null> {
   let token: string | undefined;
   try {
     token = (await cookies()).get(AUTH_COOKIE)?.value;
@@ -37,7 +37,13 @@ export async function requireAdmin(): Promise<AdminIdentity | null> {
 
   const validated = await validateAuthToken(token);
   if (!validated.ok) return null; // invalid token, oracle unreachable, or misconfigured — fail closed
-  const email = validated.email.toLowerCase();
-  if (!validated.isAdmin && !allowlist().includes(email)) return null;
-  return { email, userId: validated.userId };
+  return { email: validated.email.toLowerCase(), userId: validated.userId, isAdmin: validated.isAdmin };
+}
+
+/** The verified admin identity, or null (callers must 404 on null). */
+export async function requireAdmin(): Promise<AdminIdentity | null> {
+  const user = await requireUser();
+  if (!user) return null;
+  if (!user.isAdmin && !allowlist().includes(user.email)) return null;
+  return { email: user.email, userId: user.userId };
 }
