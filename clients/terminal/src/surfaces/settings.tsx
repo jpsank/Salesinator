@@ -6,6 +6,8 @@
  *  the durable home (multi-calendar management lives in `calendarConnections.tsx`). Sections are a left nav (no sub-routing; one tab, local state). */
 import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
 import { registerTab } from "../contributions";
+import { useService, useStore } from "../platform";
+import { LayoutServiceId } from "../workbench/layout";
 import { Icon } from "../ui-kit";
 import { GitHubTokenCard, TokensPanel } from "./tokens";
 import { presentError } from "./apiClient";
@@ -65,12 +67,12 @@ function ConfigForm({ fields, load, save, note }: {
       {note && <div style={{ fontSize: 11, color: "var(--t3)", lineHeight: 1.5 }}>{note}</div>}
       {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
       {fields.map((f) => (f.showIf && !f.showIf(values)) ? null : (
-        <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--t2)" }}>
+        <label key={f.key} style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--t2)" }}>
           <span style={{ width: 110, flex: "none", color: "var(--t3)" }}>{f.label}</span>
           {f.options ? (
             <select value={values[f.key] ?? ""}
               onChange={(e) => { setSaved(false); setValues((v) => ({ ...v, [f.key]: e.target.value })); }}
-              style={{ ...field, width: "auto", flex: 1 }}>
+              style={{ ...field, width: "auto", flex: "1 1 180px" }}>
               {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           ) : (
@@ -79,7 +81,7 @@ function ConfigForm({ fields, load, save, note }: {
                 type={f.secret && (values[f.key] ?? "") !== (initial[f.key] ?? "") ? "password" : "text"}
                 list={f.suggestions?.length ? `${formId}-${f.key}` : undefined}
                 onChange={(e) => { setSaved(false); setValues((v) => ({ ...v, [f.key]: e.target.value })); }}
-                style={field} />
+                style={{ ...field, flex: "1 1 180px" }} />
               {f.suggestions?.length ? (
                 <datalist id={`${formId}-${f.key}`}>
                   {f.suggestions.map((m) => <option key={m} value={m} />)}
@@ -284,20 +286,24 @@ function SettingsView() {
     tokens: <TokensPanel />,
     account: <AccountSection />,
   };
+  const layout = useService(LayoutServiceId);
+  const single = useStore(layout.store).tier === "single";
   return (
-    <div style={{ height: "100%", display: "flex", minHeight: 0 }}>
-      <div style={{ width: 160, flex: "none", borderRight: "1px solid var(--line)", padding: "14px 8px", background: "var(--sidebar)" }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--t1)", padding: "0 8px 10px" }}>Settings</div>
+    <div style={{ height: "100%", display: "flex", flexDirection: single ? "column" : "row", minHeight: 0 }}>
+      <div style={single
+        ? { flex: "none", display: "flex", alignItems: "center", gap: 4, overflowX: "auto", padding: "8px 10px", borderBottom: "1px solid var(--line)", background: "var(--sidebar)" }
+        : { width: 160, flex: "none", borderRight: "1px solid var(--line)", padding: "14px 8px", background: "var(--sidebar)" }}>
+        {!single && <div style={{ fontSize: 15, fontWeight: 700, color: "var(--t1)", padding: "0 8px 10px" }}>Settings</div>}
         {SECTIONS.map((s) => (
           <button key={s.id} onClick={() => setSection(s.id)}
-            style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", textAlign: "left", fontSize: 12.5,
+            style={{ display: "flex", alignItems: "center", gap: 7, width: single ? "auto" : "100%", flex: "none", whiteSpace: "nowrap", textAlign: "left", fontSize: 12.5,
               padding: "6px 9px", borderRadius: 7, border: "none", cursor: "pointer",
               color: section === s.id ? "var(--t1)" : "var(--t2)", background: section === s.id ? "var(--panel2)" : "transparent" }}>
             <Icon name={s.icon} size={13} />{s.label}
           </button>
         ))}
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px", minWidth: 0 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: single ? "14px 12px" : "18px 22px", minWidth: 0, minHeight: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--t1)", marginBottom: 12 }}>
           {SECTIONS.find((s) => s.id === section)?.label}
         </div>
