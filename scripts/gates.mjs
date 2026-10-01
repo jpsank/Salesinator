@@ -19,6 +19,27 @@ import { execSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 const ROOT = process.cwd();
+
+// Every `uv run pytest` / docker-touching gate below spawns with execSync's default (inherit
+// process.env) — so this runs ONCE, here, rather than being threaded through each call site.
+// Reproduced live: admin-api's own pytest suite failed with
+// `docker.errors.DockerException: ... FileNotFoundError(2, 'No such file or directory')` — NOT a
+// sandbox/environment limitation (first assumed, wrongly); the Python `docker` SDK's from_env()
+// defaults to the hardcoded unix:///var/run/docker.sock when DOCKER_HOST is unset, which doesn't
+// exist on Docker Desktop for Mac (it publishes a per-user socket instead, e.g.
+// ~/.docker/run/docker.sock) — the `docker` CLI itself still works because it resolves the socket
+// via ~/.docker/config.json's current context, a mechanism the raw SDK default does not use.
+// Fixed at the one point every pytest invocation shares, not per-fixture, and resolved from
+// whatever context is ACTUALLY active (never hardcoded to one path) so this holds on Colima,
+// Rancher Desktop, OrbStack, or a remote DOCKER_HOST too — anywhere the CLI already works.
+if (!process.env.DOCKER_HOST) {
+  try {
+    const host = execSync("docker context inspect --format '{{.Endpoints.docker.Host}}'", { stdio: "pipe" })
+      .toString().trim();
+    if (host) process.env.DOCKER_HOST = host;
+  } catch { /* docker absent or no active context — gates that need it already handle absence */ }
+}
+
 const SKIP = new Set(["node_modules", "dist", ".turbo", "__pycache__", "test-results", "playwright-report", "coverage"]);
 const skippable = (name) => name.startsWith(".") || SKIP.has(name);
 const rel = (p) => p.slice(ROOT.length + 1) || ".";

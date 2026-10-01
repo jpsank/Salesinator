@@ -304,6 +304,28 @@ def _cleanup(s: Stack) -> None:
     except Exception:
         pass
     _compose("down", "-v", "--remove-orphans", check=False, timeout=300)
+    _remove_built_images()
+
+
+def _remove_built_images() -> None:
+    """`down -v` never removes images: `--rmi local` only drops compose's own auto-named images, a
+    no-op here since every service below sets a custom `image:` tag; `--rmi all` would also nuke
+    PULLED base images (postgres/redis/minio), forcing a slow re-pull on every subsequent run. So
+    every gate:compose run left its freshly built `:dev` images behind, forever — confirmed live: 8
+    of them (~4GB) had piled up, found during an unrelated disk-cleanup pass, nothing had ever
+    reclaimed them. Remove only the images THIS run actually built (services with a `build:` key in
+    the resolved config), by exact name — pulled base images are untouched, and the next run's
+    `--build` just rebuilds from Docker's own layer cache (fast) instead of leaving a duplicate."""
+    try:
+        cfg = json.loads(_compose("config", "--format", "json", check=False).stdout or "{}")
+    except Exception:
+        return
+    images = {
+        svc["image"] for svc in cfg.get("services", {}).values()
+        if "build" in svc and svc.get("image")
+    }
+    if images:
+        subprocess.run(["docker", "rmi", "-f", *images], capture_output=True, timeout=120)
 
 
 def _poll_http(url: str, *, deadline: float, want: int = 200, poll: float = 2.0):
