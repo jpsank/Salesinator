@@ -1,0 +1,24 @@
+{"speaker": "Sam", "text": "Thanks for making time, Dana. Last quarter you were piloting with the ops team, how did that go?", "start": 0.0}
+{"speaker": "Dana", "text": "Pretty well overall. The team likes the dashboards and the weekly summaries land on time.", "start": 6.5}
+{"speaker": "Sam", "text": "Great to hear. Anything blocking a wider rollout?", "start": 13.0}
+{"speaker": "Dana", "text": "A few things. First, our finance group lives in spreadsheets, so we really need to be able to export the weekly reports to CSV. Right now they copy and paste.", "start": 19.5}
+{"speaker": "Sam", "text": "Understood, a CSV export of the reports. Noted.", "start": 26.0}
+{"speaker": "Dana", "text": "Second, honestly it would be great if everything were just a bit faster, but that's not a deal breaker.", "start": 32.5}
+{"speaker": "Sam", "text": "Fair. We're working on performance generally.", "start": 39.0}
+{"speaker": "Dana", "text": "The onboarding last time was a little confusing too, but your team walked us through it.", "start": 45.5}
+{"speaker": "Sam", "text": "Thanks for the candor, we've reworked the onboarding since then.", "start": 52.0}
+{"speaker": "Dana", "text": "Do you already support Slack notifications for new alerts?", "start": 58.5}
+{"speaker": "Sam", "text": "Yes, Slack notifications are built in, you can turn them on under Settings.", "start": 65.0}
+{"speaker": "Dana", "text": "Perfect, we'll use that. Now the big one: our CRM is Salesforce, and we'd need a Salesforce integration so deals sync automatically before we can roll this out to sales.", "start": 71.5}
+{"speaker": "Sam", "text": "A Salesforce integration, got it. That's not available today.", "start": 78.0}
+{"speaker": "Dana", "text": "Right, so that's a requirement for us, not a nice to have.", "start": 84.5}
+{"speaker": "Priya", "text": "Hi, I'm Priya, I run security for Acme. Can I jump in on one thing?", "start": 91.0}
+{"speaker": "Sam", "text": "Of course, welcome Priya.", "start": 97.5}
+{"speaker": "Priya", "text": "We require single sign-on through Okta for every tool we adopt. Without SSO we can't approve it.", "start": 104.0}
+{"speaker": "Sam", "text": "Okta single sign-on, understood. I'll take that back to the product team.", "start": 110.5}
+{"speaker": "Dana", "text": "Pricing wise, we were quoted for two hundred and fifty seats last time, is that still right?", "start": 117.0}
+{"speaker": "Sam", "text": "That's right, I'll send an updated quote by Friday.", "start": 123.5}
+{"speaker": "Dana", "text": "Great. And Priya will own the contract review on our side.", "start": 130.0}
+{"speaker": "Priya", "text": "Yes, send me the security questionnaire when you have it.", "start": 136.5}
+{"speaker": "Sam", "text": "Will do. Let's schedule a follow up for next Thursday.", "start": 143.0}
+{"speaker": "Dana", "text": "Thursday works. Thanks everyone.", "start": 149.5}

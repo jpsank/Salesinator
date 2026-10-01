@@ -1,0 +1,17 @@
+[
+  {
+    "id": "csv-export",
+    "request": "Finance lives in spreadsheets. Add a function to_csv(summary) in reports.py that turns the output of weekly_summary into CSV text: a header line \"rep,total\" then one line per rep. A name containing a comma must be quoted.",
+    "check": "checks/test_csv_export.py"
+  },
+  {
+    "id": "cli-format-flag",
+    "request": "Add a --format option to cli.py that accepts \"text\" (the current output, still the default) or \"json\" (print the weekly summary as a JSON list). Keep the existing behavior unchanged when the flag is absent.",
+    "check": "checks/test_cli_format.py"
+  },
+  {
+    "id": "reject-negative-amounts",
+    "request": "Bad data is slipping into reports. Make weekly_summary raise ValueError when any row has a negative amount. Valid rows must keep working and the existing tests must still pass.",
+    "check": "checks/test_reject_negative.py"
+  }
+]

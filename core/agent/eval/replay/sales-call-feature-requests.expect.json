@@ -1,0 +1,56 @@
+{
+  "kind": "feature_request",
+  "expected": [
+    {
+      "id": "csv-export",
+      "any": [
+        "csv",
+        "export"
+      ]
+    },
+    {
+      "id": "salesforce-integration",
+      "any": [
+        "salesforce"
+      ]
+    },
+    {
+      "id": "okta-sso",
+      "any": [
+        "sso",
+        "single sign-on",
+        "okta"
+      ]
+    }
+  ],
+  "must_not_match": [
+    {
+      "id": "vague-speed-wish",
+      "any": [
+        "faster",
+        "speed",
+        "performance"
+      ]
+    },
+    {
+      "id": "onboarding-complaint",
+      "any": [
+        "onboarding"
+      ]
+    },
+    {
+      "id": "existing-slack-notifications",
+      "any": [
+        "slack"
+      ]
+    },
+    {
+      "id": "pricing-quote",
+      "any": [
+        "pricing",
+        "quote",
+        "seats"
+      ]
+    }
+  ]
+}
