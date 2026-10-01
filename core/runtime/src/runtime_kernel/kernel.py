@@ -11,6 +11,7 @@ Quotas (O-RT-2): create() rejects the N+1th active workload for an owner via the
 count_for_owner."""
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -27,6 +28,8 @@ from .store import (
     WorkloadStore,
     default_owner,
 )
+
+log = logging.getLogger("runtime_kernel")
 
 
 class QuotaExceeded(Exception):
@@ -307,7 +310,12 @@ class Runtime:
             except ValueError:
                 continue
             if (now - stopped_at).total_seconds() >= older_than_sec:
-                self.destroy(status.workloadId)
+                try:
+                    self.destroy(status.workloadId)
+                except Exception:  # noqa: BLE001 — one unreclaimable workload must not strand the rest of the sweep
+                    log.exception("reap of stopped workload %s failed; it stays stopped and is retried next sweep",
+                                  status.workloadId)
+                    continue
                 reaped.append(status.workloadId)
         return reaped
 

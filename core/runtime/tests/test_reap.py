@@ -57,3 +57,22 @@ def test_reap_stopped_is_a_noop_with_nothing_past_retention():
 
     assert rt.reap_stopped(older_than_sec=3600) == []
     assert rt.get("w1").state is RuntimeState.stopped
+
+
+def test_reap_stopped_survives_a_workload_that_cannot_be_reclaimed():
+    """destroy() raises on an unconfirmed reclaim; that must not strand every workload after it."""
+    rt = _runtime()
+    for wid in ("stuck", "fine"):
+        rt.create(WorkloadSpec(workloadId=wid, profile="quick", env={}))
+        rt.stop(wid)
+        _backdate_stop(rt, wid, seconds_ago=7200)
+    real = rt.destroy
+    def flaky(workload_id):
+        if workload_id == "stuck":
+            raise RuntimeError("unconfirmed reclaim")
+        return real(workload_id)
+    rt.destroy = flaky
+
+    assert rt.reap_stopped(older_than_sec=3600) == ["fine"]
+    assert rt.get("stuck").state is RuntimeState.stopped      # retried on the next sweep
+    assert rt.get("fine").state is RuntimeState.destroyed
