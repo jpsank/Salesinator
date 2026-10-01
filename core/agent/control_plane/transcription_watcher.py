@@ -186,7 +186,8 @@ def _resolve_native(meeting_id: str) -> "tuple[str, str] | None":
 # gateway/API-key env vars) so a late tag (a rep tagging the call a few seconds after it starts) is
 # picked up on the next re-arm rather than being permanently missed.
 _workspace_subject: dict[str, str] = {}       # numeric meeting_id → resolved workspace/subject slug
-_workspace_miss_at: dict[str, float] = {}     # numeric meeting_id → last failed-resolve (monotonic)
+_workspace_miss_at: dict[str, float] = {}     # numeric meeting_id → last failed/provisional resolve (monotonic)
+_workspace_owner_provisional: dict[str, str] = {}  # numeric meeting_id → owner fallback while a tag may still land
 WORKSPACE_RESOLVE_RETRY_SEC = 5.0
 
 
@@ -217,7 +218,7 @@ def _resolve_workspace_subject(meeting_id: str, default: str) -> str:
         return _workspace_subject[meeting_id]
     now = time.monotonic()
     if now - _workspace_miss_at.get(meeting_id, 0.0) < WORKSPACE_RESOLVE_RETRY_SEC:
-        return default
+        return _workspace_owner_provisional.get(meeting_id, default)
     key = os.environ.get("VEXA_BOT_API_KEY", "")
     if not key:
         _report_fault("workspace_resolve", "unauthorized",
@@ -250,8 +251,14 @@ def _resolve_workspace_subject(meeting_id: str, default: str) -> str:
     if not resolved:
         _workspace_miss_at[meeting_id] = now  # not tagged/owned yet — retry shortly, not a fault
         return default
-    _workspace_subject[meeting_id] = str(resolved)
     _clear_fault("workspace_resolve")
+    if workspace_id or not _workspace_resolve_enabled():
+        _workspace_subject[meeting_id] = str(resolved)  # the final answer
+    else:
+        # Owner fallback while customer-workspace binding is on: a rep may tag the call seconds after it
+        # starts, so keep re-resolving (throttled) rather than pinning the owner for the whole meeting.
+        _workspace_owner_provisional[meeting_id] = str(resolved)
+        _workspace_miss_at[meeting_id] = now
     return str(resolved)
 
 
@@ -428,6 +435,8 @@ def _handle(r, dispatcher, live, subject, p, last_arm, keymap, first_seen) -> No
         # Connect this meeting's own kg doc (authored by the §4 worker on session_end) to the
         # meeting — from here, so the user key stays out of the isolated worker container.
         _record_meeting_doc(native, platform, _resolve_workspace_subject(mid, subject))
+        for cache in (_workspace_subject, _workspace_miss_at, _workspace_owner_provisional):
+            cache.pop(mid, None)
         return
     if kind != "transcription":
         return

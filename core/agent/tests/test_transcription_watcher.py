@@ -82,6 +82,7 @@ def _reset_module_caches():
     w._resolve_miss_at.clear()
     w._workspace_subject.clear()
     w._workspace_miss_at.clear()
+    w._workspace_owner_provisional.clear()
 
 
 def _native_streams(r):
@@ -513,6 +514,28 @@ def test_workspace_resolve_no_binding_yet_falls_back_and_retries_later(monkeypat
     monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
     assert w._resolve_workspace_subject("42", "u_live") == "u_live"
     assert "42" not in w._workspace_subject  # no permanent cache on a miss
+
+
+def test_a_late_customer_tag_replaces_the_provisional_owner_fallback(monkeypatch):
+    """Customer binding on: the owner resolves first (provisional, NOT pinned), then the rep tags the
+    call and the next re-resolve after the throttle window picks up the customer workspace."""
+    _reset_module_caches()
+    monkeypatch.setenv("SALES_CYCLE_WORKSPACE_RESOLVE", "true")
+    monkeypatch.setenv("VEXA_BOT_API_KEY", "k")
+    row = {"id": 42, "user_id": 7, "data": {}}
+
+    class _Resp:
+        def read(self): return json.dumps(row).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(w.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
+    assert w._resolve_workspace_subject("42", "u_live") == "7"
+    assert w._resolve_workspace_subject("42", "u_live") == "7"        # inside the throttle window: still the owner, not the placeholder
+    row["data"] = {"workspace_id": "cust-42"}
+    w._workspace_miss_at["42"] -= w.WORKSPACE_RESOLVE_RETRY_SEC + 1   # the window elapses
+    assert w._resolve_workspace_subject("42", "u_live") == "cust-42"
+    assert w._workspace_subject["42"] == "cust-42"                    # now final
 
 
 def test_workspace_resolve_failure_is_fail_soft_never_raises(monkeypatch):
