@@ -1040,7 +1040,8 @@ def test_meeting_card_turn_falls_back_when_model_omits_matching_notes(tmp_path):
         "error": {
             "stage": "meeting-card",
             "model": "openrouter/free",
-            "message": "model response did not include processed transcript notes",
+            "message": "model response did not include processed transcript notes "
+                       "(1 notes returned, 1 with an id that matches no input line (e.g. '1'))",
         },
     }
     assert evs[1] == {

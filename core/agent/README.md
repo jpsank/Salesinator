@@ -60,7 +60,7 @@ Only `invoke.v1` + `workspace.v1` are pinned in `contracts.seal.json`; the rest 
 - ✅ delivered — chat dispatch, warm-session resume, workspace git commit (`workspace.v1`)
 - ✅ delivered — generic event ingress (`event.v1` → `unit.v1`) and tool mechanism (`tool.v1` → `--allowedTools` + injected MCP)
 - ✅ delivered — routines: `routine.v1` `kind:scheduled` compiles to a `schedule.v1` cron job
-- ✅ delivered — live in-meeting copilot: transcript stream → propose-only beats → `proactive-card.v1`
+- ✅ delivered — live in-meeting copilot: transcript stream → propose-only beats → `proactive-card.v1`. Every line is emitted at ingest as a baseline note (chapter `Live Transcript`); a beat's model reply upgrades the lines it returns. A beat that returns fewer notes than lines logs why (`meeting-card beat: N of M lines came back processed (…)`), and one that returns none emits a `model-error` naming the reason (empty reply, truncated or non-JSON, ids that match no line)
 - 🟡 partial — most owned contracts UNSEALED (sealed per-MVP); `invoke.v1` retired once the meetings path migrates
 - ⬜ planned — `routine.v1` gains a `target` (agent|meeting) so a routine can schedule a bot
 - ⬜ planned — `workspace.v1` meeting-entity convention (a meeting becomes `kg/entities/meeting/*`)

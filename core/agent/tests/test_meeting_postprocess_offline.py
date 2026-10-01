@@ -172,7 +172,7 @@ def test_offline_meeting_card_turn_falls_back_when_reply_omits_notes(tmp_path):
     evs = list(worker.meeting_card_turn(tmp_path, segments, model="openrouter/free", completion=completion))
 
     assert evs[0]["type"] == "model-error"
-    assert evs[0]["error"]["message"] == "model response did not include processed transcript notes"
+    assert evs[0]["error"]["message"] == "model response did not include processed transcript notes (notes list was empty)"
     fallback = [e["note"] for e in evs if e["type"] == "note"]
     assert [n["id"] for n in fallback] == ["seg-0", "seg-1"]  # fallback covered every input line
 
@@ -328,3 +328,33 @@ def test_looks_like_auth_failure_signatures():
     assert not worker.looks_like_auth_failure("upstream timeout 504")
     assert not worker.looks_like_auth_failure("")
     assert not worker.looks_like_auth_failure(None)
+
+
+def test_meeting_card_turn_names_why_a_reply_produced_no_notes(tmp_path):
+    """A truncated reply, an empty one, and a model that renamed the ids all end in the same fallback, but each
+    needs a different fix — the error says which, instead of one opaque sentence."""
+    segs = [{"segment_id": "seg-a", "speaker": "Jane", "text": "hello there", "start": 1.0}]
+
+    def why(reply):
+        completion, _ = _fake_completion(reply)
+        return list(worker.meeting_card_turn(tmp_path, segs, model="m", completion=completion))[0]["error"]["message"]
+
+    assert "truncated or wrapped in prose" in why('{"notes":[{"id":"seg-a","text":"hel')
+    assert "empty reply" in why("")
+
+
+def test_meeting_card_turn_logs_lines_the_model_skipped(tmp_path, caplog):
+    """A model that returns notes for only some lines leaves the rest at their baseline text without any error
+    event — the log is the one place that says so."""
+    import logging
+    segs = [
+        {"segment_id": "seg-a", "speaker": "Jane", "text": "one", "start": 1.0},
+        {"segment_id": "seg-b", "speaker": "Jane", "text": "two", "start": 2.0},
+    ]
+    completion, _ = _fake_completion(json.dumps({
+        "notes": [{"id": "seg-a", "speaker": "Jane", "chapter": "", "text": "One."}], "cards": []}))
+    with caplog.at_level(logging.WARNING, logger="agent_api.worker"):
+        evs = list(worker.meeting_card_turn(tmp_path, segs, model="m", completion=completion))
+    assert [e["type"] for e in evs] == ["note"]
+    assert any("1 of 2 lines came back processed" in r.message and "skipped or merged" in r.message for r in caplog.records)
+

@@ -252,6 +252,29 @@ def _first_person_note_text(text: str) -> str:
     return out[:1].upper() + out[1:] if out else out
 
 
+def _returned_note_ids(reply: str | None) -> list[str] | None:
+    """The ids the model's reply carries, or None when the reply is not a JSON object with a notes list."""
+    value = _extract_json_value(reply)
+    if not isinstance(value, dict) or not isinstance(value.get("notes"), list):
+        return None
+    return [str(n.get("id") or "").strip() for n in value["notes"] if isinstance(n, dict)]
+
+
+def _notes_shortfall(reply: str | None, segment_by_id: dict[str, dict], returned: list[str] | None) -> str:
+    """Why a beat produced fewer processed notes than lines — the reason a reader needs to tell a
+    truncated/garbled reply from a model that skipped or renamed lines."""
+    if not (reply or "").strip():
+        return "empty reply"
+    if returned is None:
+        return "reply was not a JSON object with a notes list — truncated or wrapped in prose"
+    unknown = [i for i in returned if i not in segment_by_id]
+    if not returned:
+        return "notes list was empty"
+    if unknown:
+        return f"{len(returned)} notes returned, {len(unknown)} with an id that matches no input line (e.g. {unknown[0][:40]!r})"
+    return f"{len(returned)} notes returned for {len(segment_by_id)} lines — the model skipped or merged lines"
+
+
 def fallback_processed_notes(segments: list[dict], stage_by_id: dict[str, int] | None = None) -> list[dict]:
     stages = stage_by_id or {}
     notes: list[dict] = []
@@ -321,9 +344,19 @@ def meeting_card_turn(
         return
     notes = parse_notes(reply, stage_by_id, segment_by_id)
     cards = parse_cards(reply, kinds)
-    if segments and not notes:
-        yield _model_error_event("model response did not include processed transcript notes", model=model, stage="meeting-card")
-        notes = fallback_processed_notes(segments, stage_by_id)
+    if segments:
+        returned = _returned_note_ids(reply)
+        if len(notes) < len(segments):
+            log.warning(
+                "meeting-card beat: %d of %d lines came back processed (%s; reply %d chars; model=%s) — the rest keep "
+                "their baseline text", len(notes), len(segments), _notes_shortfall(reply, segment_by_id, returned),
+                len(reply or ""), model,
+            )
+        if not notes:
+            yield _model_error_event(
+                f"model response did not include processed transcript notes ({_notes_shortfall(reply, segment_by_id, returned)})",
+                model=model, stage="meeting-card")
+            notes = fallback_processed_notes(segments, stage_by_id)
     for note in notes:
         yield {"type": "note", "note": note}
     for card in cards:
