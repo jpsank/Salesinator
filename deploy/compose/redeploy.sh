@@ -122,6 +122,9 @@ if [ -f "$PIDDIR/agent-api.pid" ]; then
   done
   kill -9 "$old" 2>/dev/null || true
 fi
+# Keep the previous run's log (one generation) instead of truncating it — a failure seen before a
+# redeploy is otherwise unrecoverable afterward.
+[ -f "$LOGDIR/agent-api.log" ] && mv "$LOGDIR/agent-api.log" "$LOGDIR/agent-api.log.prev"
 nohup "$CD/run-agent-api-native.sh" >"$LOGDIR/agent-api.log" 2>&1 &
 echo $! >"$PIDDIR/agent-api.pid"
 i=0
