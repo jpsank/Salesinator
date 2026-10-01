@@ -176,3 +176,30 @@ def test_server_hands_the_config_over_in_the_environment_not_as_a_file(tmp_path,
     assert json.loads(env["OPENCODE_CONFIG_CONTENT"]) == {"provider": {"local": {}}}
     assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1"   # a repo's own opencode.json must not merge in
     assert list(tmp_path.iterdir()) == []
+
+
+def test_opencode_config_carries_the_served_context_window(monkeypatch):
+    """OpenCode records a context of 0 for a model it has no limit for, so it never compacts and the server
+    silently drops the front of an over-long prompt. The window the endpoint loads rides in as ``limit``."""
+    monkeypatch.setenv("VEXA_LLM_CONTEXT_TOKENS", "16384")
+    monkeypatch.delenv("VEXA_LLM_MAX_TOKENS", raising=False)
+    cfg = _opencode_config(base_url="http://x/v1", model="gemma4:latest", allowed_tools=[], mcp_config=None)
+    assert cfg["provider"]["local"]["models"]["gemma4:latest"]["limit"] == {"context": 16384, "output": 4096}
+
+    monkeypatch.setenv("VEXA_LLM_MAX_TOKENS", "2048")
+    cfg = _opencode_config(base_url="http://x/v1", model="gemma4:latest", allowed_tools=[], mcp_config=None)
+    assert cfg["provider"]["local"]["models"]["gemma4:latest"]["limit"]["output"] == 2048
+
+    monkeypatch.setenv("VEXA_LLM_MAX_TOKENS", "999999")   # never lets a reply claim the whole window
+    cfg = _opencode_config(base_url="http://x/v1", model="gemma4:latest", allowed_tools=[], mcp_config=None)
+    assert cfg["provider"]["local"]["models"]["gemma4:latest"]["limit"]["output"] == 8192
+
+
+def test_opencode_config_has_no_limit_when_the_window_is_unknown_or_unusable(monkeypatch):
+    for value in (None, "", "0", "-5", "lots"):
+        if value is None:
+            monkeypatch.delenv("VEXA_LLM_CONTEXT_TOKENS", raising=False)
+        else:
+            monkeypatch.setenv("VEXA_LLM_CONTEXT_TOKENS", value)
+        cfg = _opencode_config(base_url="http://x/v1", model="m", allowed_tools=[], mcp_config=None)
+        assert "limit" not in cfg["provider"]["local"]["models"]["m"], value

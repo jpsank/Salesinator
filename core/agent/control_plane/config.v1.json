@@ -188,6 +188,15 @@
       ]
     },
     {
+      "key": "VEXA_LLM_CONTEXT_TOKENS",
+      "class": "defaulted",
+      "default": "(unset — the harness assumes no window and never compacts)",
+      "description": "the context window, in tokens, the served model actually loads (Ollama: OLLAMA_CONTEXT_LENGTH), forwarded into workers by dispatch so the opencode harness compacts before the server truncates",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
       "key": "VEXA_LLM_TIMEOUT_SEC",
       "class": "defaulted",
       "default": "300",

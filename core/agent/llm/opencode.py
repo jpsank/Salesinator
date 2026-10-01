@@ -116,12 +116,32 @@ def _mcp_servers_from_claude_config(mcp_config_path: Optional[str]) -> dict:
     return out
 
 
+def _context_limit() -> Optional[dict]:
+    """The served model's window as OpenCode's ``limit`` — ``VEXA_LLM_CONTEXT_TOKENS`` is what the endpoint
+    actually loads (e.g. Ollama's ``OLLAMA_CONTEXT_LENGTH``). Left unset OpenCode records 0, so it never
+    compacts and a long turn overruns the server, which then silently drops the OLDEST tokens — the system
+    prompt and tool schema — and the model looks broken. ``output`` is ``VEXA_LLM_MAX_TOKENS`` when set,
+    else a quarter of the window capped at 8192, so a reply can never claim the whole window."""
+    try:
+        context = int(os.environ.get("VEXA_LLM_CONTEXT_TOKENS") or 0)
+    except ValueError:
+        return None
+    if context <= 0:
+        return None
+    try:
+        output = int(os.environ.get("VEXA_LLM_MAX_TOKENS") or 0)
+    except ValueError:
+        output = 0
+    return {"context": context, "output": min(output, context // 2) if output > 0 else min(8192, context // 4)}
+
+
 def _opencode_config(*, base_url: str, model: Optional[str], allowed_tools: Iterable[str],
                      mcp_config: Optional[str]) -> dict:
     """The OpenCode config this adapter builds fresh for every turn: the one fixed local provider
     (pointed at whatever completion endpoint this deployment already configures), a fail-closed
     permission map built from the unit's resolved toolbelt, and the turn's granted MCP servers."""
-    models = {model: {"name": model}} if model else {}
+    limit = _context_limit()
+    models = {model: {"name": model, **({"limit": limit} if limit else {})}} if model else {}
     permission: dict = {"*": "deny"}
     for tool_name in allowed_tools:
         key = _permission_key_for(tool_name)

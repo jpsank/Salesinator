@@ -133,6 +133,7 @@ MODEL_AUTH_ENV_ALLOWLIST = (
     "ANTHROPIC_BASE_URL",       # claude CLI gateway endpoint; openai_compat base-url fallback
     "VEXA_LLM_API_KEY",         # llm/ completion adapters' first-class credential (deliberately no Settings field)
     "VEXA_LLM_BASE_URL",        # llm/ completion adapters' first-class endpoint (pairs with the key above)
+    "VEXA_LLM_CONTEXT_TOKENS",  # opencode harness: the served model's window, so it compacts before the server truncates
     "VEXA_LLM_TIMEOUT_SEC",     # openai-compat adapter's request budget — local CPU inference needs more than a hosted API's default
 )
 

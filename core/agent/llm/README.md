@@ -9,7 +9,8 @@ front door (`llm/__init__.py`) and never names a vendor.
 | Port | Call shape | Used by | Selected by |
 |---|---|---|---|
 | `CompletionPort` | plain prompt→text HTTP call — no tools, no subprocess | meeting card beats | `VEXA_LLM_PROVIDER` |
-| `HarnessPort` | a CLI coding agent over the mounted workspace — tool loop, sessions, streamed UnitEvents | post-meeting doc, chat, routines | `VEXA_RUNNER` |
+| `HarnessPort` | a CLI coding agent over the mounted workspace — tool loop, sessions, streamed UnitEvents | post-meeting doc, chat, routines | `VEXA_LLM_CONTEXT_TOKENS` | the window the model server actually loads (Ollama: `OLLAMA_CONTEXT_LENGTH`); the `opencode` runner sizes and compacts its turns to it | unset → no compaction |
+| `VEXA_RUNNER` |
 
 Both are `typing.Protocol` (duck-typed, mirroring `core/runtime`'s `Backend` port); adapters are
 selected env-driven in `registry.py` and constructor-injected everywhere, so tests use trivial
@@ -63,3 +64,16 @@ supply-chain surface than the dialect itself.
 2. One line in `registry.py`'s table.
 3. Unit test with a fake transport (`httpx.MockTransport`) or fake `exec_fn` — see
    `tests/test_llm_openai_compat.py` / `tests/test_llm_claude_code.py`.
+
+## Running on a local model
+
+- **Serve it natively on the host** (`deploy/compose/run-ollama-native.sh` for Ollama): Docker on a Mac has no GPU
+  path. Point `VEXA_LLM_BASE_URL` at it, set `VEXA_RUNNER=opencode`, and name the model in `VEXA_LLM_MODEL`.
+- **Tell the harness the window.** `VEXA_LLM_CONTEXT_TOKENS` must equal what the server loads
+  (`run-ollama-native.sh` loads 16384). Left unset, OpenCode assumes no limit, never compacts, and the server
+  silently drops the start of an over-long prompt — the system prompt and tool schema — so the model seems broken.
+- **Two models.** `VEXA_LLM_MODEL` is the default for everything, including builds under `opencode`;
+  `VEXA_MEETING_MODEL` overrides it for the live copilot, so a small fast model can run the notes while a larger one builds.
+- **Measure before trusting a model**: `python -m eval.copilot_eval` and `python -m eval.build_eval`
+  (see `eval/README.md`) score a model on the copilot and on build tasks.
+

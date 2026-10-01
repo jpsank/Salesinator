@@ -319,6 +319,7 @@ services:
       # CPU-only local inference over a real card prompt routinely runs past a hosted-API-sized
       # budget — see core/agent/llm/openai_compat.py's docstring.
       - VEXA_LLM_TIMEOUT_SEC=${VEXA_LLM_TIMEOUT_SEC:-300}
+      - VEXA_LLM_CONTEXT_TOKENS=${VEXA_LLM_CONTEXT_TOKENS:-}
       - VEXA_LOG_LEVEL=${LOG_LEVEL:-info}
       # Stream primitive — the per-dispatch redis Streams the control plane relays (unit:<id>:out → SSE).
       - VEXA_REDIS_URL=redis://redis:6379/0

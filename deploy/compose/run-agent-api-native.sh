@@ -68,6 +68,8 @@ export VEXA_LLM_BASE_URL=http://localhost:11434/v1   # native Ollama — see run
 export WORKER_VEXA_LLM_BASE_URL=http://host.docker.internal:11434/v1
 export VEXA_LLM_MODEL="${VEXA_LLM_MODEL:-gemma4:latest}"
 export VEXA_LLM_TIMEOUT_SEC=300
+# The window run-ollama-native.sh loads Ollama with — the opencode harness must size its turns to it.
+export VEXA_LLM_CONTEXT_TOKENS="${VEXA_LLM_CONTEXT_TOKENS:-${OLLAMA_CONTEXT_LENGTH:-16384}}"
 export VEXA_LOG_LEVEL=info
 export VEXA_REDIS_URL=redis://localhost:16379/0
 # The redis URL handed to a DISPATCHED WORKER's own env is DIFFERENT from agent-api's own — a
