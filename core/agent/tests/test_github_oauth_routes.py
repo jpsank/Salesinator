@@ -282,3 +282,23 @@ def test_attached_for_the_shared_subject_reports_its_own_empty_shape(tmp_path):
     r = c.get("/api/workspace/attached?for=product-repo", headers=H)
     assert r.status_code == 200
     assert "slots" in r.json() and "active_set" in r.json()
+
+
+def test_repos_reports_a_rejected_saved_token_as_a_reconnect_prompt_not_a_gateway_fault(tmp_path, monkeypatch):
+    import urllib.error
+    git_creds.set_github_token(tmp_path, "u_jane", "ghu_revoked")
+    c = _client(tmp_path)
+
+    def _401(req, timeout=10):
+        raise urllib.error.HTTPError(req.full_url, 401, "Bad credentials", {}, None)
+
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", _401)
+    r = c.get("/api/workspace/git-token/oauth/repos", headers=H)
+    assert r.status_code == 409
+    assert "reconnect" in r.json()["detail"].lower()
+
+    def _500(req, timeout=10):
+        raise urllib.error.HTTPError(req.full_url, 500, "boom", {}, None)
+
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", _500)
+    assert c.get("/api/workspace/git-token/oauth/repos", headers=H).status_code == 502   # a real upstream fault stays a 502

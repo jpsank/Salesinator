@@ -1919,6 +1919,11 @@ def create_app(
             raise HTTPException(status_code=409, detail="connect GitHub first")
         try:
             repos = github_oauth.list_repos(token=token)
+        except github_oauth.GitHubTokenRejected:
+            # Not a gateway fault: GitHub refused the saved token. 409 (like "connect GitHub first") so the
+            # terminal shows this sentence instead of "can't reach a backend service".
+            raise HTTPException(status_code=409,
+                                detail="GitHub rejected your saved token (revoked or expired) — disconnect and reconnect GitHub")
         except github_oauth.GitHubOAuthError as e:
             raise HTTPException(status_code=502, detail=str(e))
         return {"repos": repos}

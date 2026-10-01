@@ -31,6 +31,11 @@ class GitHubOAuthError(RuntimeError):
     pass
 
 
+class GitHubTokenRejected(GitHubOAuthError):
+    """GitHub answered 401: the saved token is revoked, expired or otherwise no longer valid — the
+    caller must reconnect, as opposed to GitHub being unreachable or rate-limiting."""
+
+
 def sign_state(*, subject: str, secret: str) -> str:
     """Encodes + signs `subject` so the callback (no session available) can recover who asked,
     without trusting anything the client could forge."""
@@ -73,6 +78,8 @@ def list_repos(*, token: str, timeout: float = 10.0) -> list[dict]:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise GitHubTokenRejected("GitHub repo list failed: HTTP 401") from e
         raise GitHubOAuthError(f"GitHub repo list failed: HTTP {e.code}") from e
     except urllib.error.URLError as e:
         raise GitHubOAuthError(f"GitHub repo list failed: {e}") from e
