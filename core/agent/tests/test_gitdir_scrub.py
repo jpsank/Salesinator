@@ -107,3 +107,14 @@ def test_scrubbed_git_env_drops_discovery_vars_only(monkeypatch):
 
     from llm.ports import scrubbed_git_env as llm_scrub  # the module-local twin stays in lockstep
     assert all(v not in llm_scrub() for v in GIT_REPO_DISCOVERY_VARS)
+
+
+def test_untrusted_exec_env_keeps_git_identity_and_proxy_but_drops_secrets(monkeypatch):
+    from shared.gitenv import untrusted_exec_env
+    for k, v in {"GIT_AUTHOR_NAME": "a", "GIT_COMMITTER_EMAIL": "e@e", "HTTPS_PROXY": "http://p", "SSL_CERT_FILE": "/c",
+                 "VEXA_INTERNAL_API_SECRET": "s", "ANTHROPIC_API_KEY": "k", "GIT_DIR": "/x"}.items():
+        monkeypatch.setenv(k, v)
+    env = untrusted_exec_env()
+    assert env["GIT_AUTHOR_NAME"] == "a" and env["GIT_COMMITTER_EMAIL"] == "e@e"
+    assert env["HTTPS_PROXY"] == "http://p" and env["SSL_CERT_FILE"] == "/c"
+    assert not {"VEXA_INTERNAL_API_SECRET", "ANTHROPIC_API_KEY", "GIT_DIR"} & set(env)

@@ -106,3 +106,13 @@ def test_a_non_executable_hook_file_is_treated_as_not_configured(tmp_path):
     hook = ws / ".git" / "hooks" / "pre-push"
     hook.write_text("#!/bin/sh\nexit 1\n")  # deliberately NOT chmod +x
     assert run_configured_pre_push_hook(ws) == []
+
+
+def test_the_pre_push_hook_never_sees_the_control_planes_secrets(tmp_path, monkeypatch):
+    """The hook's tree is writable by the agent it gates, so the control plane's env must not leak in."""
+    monkeypatch.setenv("VEXA_INTERNAL_API_SECRET", "s3cret"); monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    ws = _repo_with_commit(tmp_path, "x")
+    hook = ws / ".git" / "hooks" / "pre-push"
+    hook.write_text('#!/bin/sh\n[ -z "$VEXA_INTERNAL_API_SECRET$ANTHROPIC_API_KEY" ] || { echo leaked; exit 1; }\n')
+    hook.chmod(0o755)
+    assert run_configured_pre_push_hook(ws) == []

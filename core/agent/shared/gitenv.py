@@ -95,3 +95,20 @@ def pinned_git_env(url: str | None, **overrides: str) -> dict[str, str]:
     env = scrubbed_git_env(**overrides)
     env.setdefault("GIT_ALLOW_PROTOCOL", ":".join(git_transports_for(url)))
     return env
+
+
+_EXEC_ENV_KEYS = (
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR", "NVM_DIR", "VOLTA_HOME", "PNPM_HOME",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+)
+_EXEC_ENV_PREFIXES = ("LC_", "GIT_AUTHOR_", "GIT_COMMITTER_", "GIT_CONFIG_")
+
+
+def untrusted_exec_env(*passthrough: str) -> dict[str, str]:
+    """The child env for running code that lives in a tree the agent can write (a repo's pre-push
+    hook, its setup command): the repo-discovery scrub PLUS an allowlist — toolchain/locale variables
+    (plus git identity and proxy/CA settings) and any explicitly named ``passthrough`` — so the control plane's own secrets (signing key,
+    internal secret, provider keys) are never inherited."""
+    keep = set(_EXEC_ENV_KEYS) | set(passthrough)
+    return {k: v for k, v in scrubbed_git_env().items() if k in keep or k.startswith(_EXEC_ENV_PREFIXES)}

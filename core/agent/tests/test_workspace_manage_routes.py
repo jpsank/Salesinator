@@ -114,6 +114,18 @@ def test_git_state_for_an_unprovisioned_unit_reads_as_not_ready(tmp_path):
     assert body == {"branch": "", "changes": [], "commits": []}
 
 
+def test_a_unit_that_is_not_one_path_component_is_rejected_on_every_unit_route(tmp_path):
+    """`unit` joins into .worktrees/<subject>/<unit>; `../../u_victim` would otherwise resolve to
+    ANOTHER subject's workspace root and read/push it as the caller."""
+    _seed_primary(tmp_path, "u_jane"); _seed_primary(tmp_path, "u_victim")
+    c = _client(tmp_path)
+    for bad in ("../../u_victim", "..", "a/b", ""):
+        if bad:
+            assert c.get("/api/workspace/git", headers=H, params={"unit": bad}).status_code == 400
+        assert c.post("/api/workspace/push", headers=H, json={"unit": bad or "/x", "token": "t"}).status_code == 400
+        assert c.post("/api/workspace/pull-request", headers=H, json={"unit": bad or "/x", "title": "t", "body": "b", "token": "t"}).status_code == 400
+
+
 def test_git_state_for_a_provisioned_unit_reports_its_own_branch(tmp_path):
     from control_plane.workspace_worktree import provision_worktree
     root = tmp_path

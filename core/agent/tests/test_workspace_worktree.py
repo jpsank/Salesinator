@@ -172,3 +172,29 @@ def test_release_of_an_unprovisioned_unit_is_a_safe_noop(tmp_path):
     root = tmp_path / "workspaces"
     _seed_baseline(root, "product-repo")
     release_worktree(root, "product-repo", "never-provisioned")  # must not raise
+
+
+def test_setup_command_does_not_inherit_the_control_planes_secrets(tmp_path, monkeypatch):
+    """The setup command runs the product repo's own dependency scripts, so agent-api's secrets stay
+    out of its env; only variables the operator names explicitly are passed through."""
+    monkeypatch.setenv("VEXA_INTERNAL_API_SECRET", "s3cret"); monkeypatch.setenv("REGISTRY_TOKEN", "r")
+    monkeypatch.setenv("VEXA_WORKSPACE_WORKTREE_SETUP_ENV", "REGISTRY_TOKEN")
+    root = tmp_path / "workspaces"
+    _seed_baseline(root, "product-repo")
+
+    dest = provision_worktree(root, "product-repo", "unit-1",
+                              setup_cmd='echo "[$VEXA_INTERNAL_API_SECRET][$REGISTRY_TOKEN]" > env.txt')
+
+    assert (dest / "env.txt").read_text().strip() == "[][r]"
+
+
+def test_setup_command_timeout_is_a_worktree_error(tmp_path, monkeypatch):
+    import subprocess as sp
+    import control_plane.workspace_worktree as ww
+    root = tmp_path / "workspaces"
+    _seed_baseline(root, "product-repo")
+    def boom(*a, **k): raise sp.TimeoutExpired(cmd="x", timeout=600)
+    real = ww.subprocess.run
+    monkeypatch.setattr(ww.subprocess, "run", lambda cmd, *a, **k: boom() if k.get("shell") else real(cmd, *a, **k))
+    with pytest.raises(WorktreeError, match="timed out"):
+        provision_worktree(root, "product-repo", "unit-1", setup_cmd="sleep 1")

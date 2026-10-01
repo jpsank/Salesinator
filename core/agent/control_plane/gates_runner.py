@@ -19,7 +19,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from shared.gitenv import scrubbed_git_env
+from shared.gitenv import scrubbed_git_env, untrusted_exec_env
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -44,6 +44,9 @@ def check_commit_compliance(ws: Path, *, expected_signoff: str | None) -> list[s
     return failures
 
 
+_HOOK_TIMEOUT_SEC = 600
+
+
 def run_configured_pre_push_hook(ws: Path) -> list[str]:
     """Resolves the effective pre-push hook the SAME way ``git push`` itself would (``core.hooksPath``,
     falling back to the default ``.git/hooks/pre-push``), and runs it if present + executable. No hook
@@ -62,9 +65,12 @@ def run_configured_pre_push_hook(ws: Path) -> list[str]:
     if not hook.exists() or not os.access(hook, os.X_OK):
         return []
 
-    result = subprocess.run(
-        [str(hook)], cwd=str(ws), capture_output=True, text=True, env=scrubbed_git_env(),
-    )
+    try:
+        result = subprocess.run(
+            [str(hook)], cwd=str(ws), capture_output=True, text=True, env=untrusted_exec_env(), timeout=_HOOK_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"pre-push hook timed out after {_HOOK_TIMEOUT_SEC}s"]
     if result.returncode != 0:
         output = ((result.stdout or "") + (result.stderr or "")).strip()
         return [f"pre-push hook failed (exit {result.returncode}): {output[-4000:]}"]

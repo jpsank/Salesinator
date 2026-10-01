@@ -20,7 +20,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from shared.gitenv import scrubbed_git_env
+from shared.gitenv import scrubbed_git_env, untrusted_exec_env
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +57,10 @@ def _baseline_dir(root: Path, subject: str) -> Path:
 
 def worktree_dir_for(root: str | Path, subject: str, unit_id: str) -> Path:
     """Deterministic on-disk path for one turn's isolated worktree. Lives under the already-bound
-    store root, so the Runtime's existing subpath-bind logic needs no changes to reach it."""
+    store root, so the Runtime's existing subpath-bind logic needs no changes to reach it. ``unit_id``
+    arrives from HTTP callers, so it must be ONE path component — anything else raises ``ValueError``."""
+    if not unit_id or unit_id in (".", "..") or any(c in unit_id for c in "/\\\0"):
+        raise ValueError("invalid unit id")
     return Path(root) / WORKTREE_DIRNAME / subject / unit_id
 
 
@@ -128,10 +131,16 @@ def provision_worktree(
         raise WorktreeError(f"git worktree add failed: {(added.stderr or '').strip()}")
 
     if setup_cmd:
-        setup = subprocess.run(
-            setup_cmd, shell=True, cwd=str(dest), capture_output=True, text=True,
-            env={**os.environ}, timeout=600,
-        )
+        # Runs the repo's own dependency lifecycle scripts, so it gets the allowlisted env — never
+        # agent-api's. Registry credentials a private install needs are named explicitly by the operator.
+        extra = tuple(n.strip() for n in (os.environ.get("VEXA_WORKSPACE_WORKTREE_SETUP_ENV") or "").split(",") if n.strip())
+        try:
+            setup = subprocess.run(
+                setup_cmd, shell=True, cwd=str(dest), capture_output=True, text=True,
+                env=untrusted_exec_env(*extra), timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            raise WorktreeError("worktree setup command timed out after 600s")
         if setup.returncode != 0:
             raise WorktreeError(
                 f"worktree setup command failed (exit {setup.returncode}): {(setup.stderr or '').strip()[-2000:]}"

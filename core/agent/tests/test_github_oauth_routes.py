@@ -228,6 +228,28 @@ def test_swap_for_the_shared_subject_uses_the_callers_own_token_and_mounts_under
     assert git_creds.read_github_token(workspaces, "product-repo") == "ghu_janes_own_token"
 
 
+def test_swap_for_the_shared_subject_never_stores_a_one_time_body_token(tmp_path, monkeypatch):
+    """A `token` passed in the body is one-time (P15: never stored) — it may authenticate THIS clone
+    but must not become the shared identity's persisted credential."""
+    import subprocess
+
+    monkeypatch.setenv("VEXA_ALLOW_LOCAL_REPO_ROOT", str(tmp_path))
+    origin = tmp_path / "origin"; origin.mkdir()
+    run = lambda *a: subprocess.run(["git", *a], cwd=origin, check=True, capture_output=True)
+    run("init", "-q", "-b", "main"); run("config", "user.email", "t@t"); run("config", "user.name", "t")
+    (origin / "CLAUDE.md").write_text("CUSTOM ROOT\n"); run("add", "-A"); run("commit", "-q", "-m", "x")
+    workspaces = tmp_path / "ws"
+    c = TestClient(create_app(
+        Dispatcher(load_settings(workspaces_dir=str(workspaces), workspace_delegate_subject="product-repo"),
+                   _FakeRuntime(), _FakeIdentity()),
+        reader=WorkspaceReader(str(workspaces)),
+    ))
+    r = c.post("/api/workspace/swap", headers=H,
+               json={"repo": str(origin), "ref": "main", "for_subject": "product-repo", "token": "ghp_one_time"})
+    assert r.status_code == 200
+    assert git_creds.read_github_token(workspaces, "product-repo") is None
+
+
 def test_swap_for_disallowed_subject_is_refused(tmp_path):
     c = _client(tmp_path, workspace_delegate_subject="product-repo")
     r = c.post("/api/workspace/swap", headers=H, json={"repo": "https://github.com/acme/api.git", "for_subject": "someone-else"})

@@ -403,6 +403,15 @@
       ]
     },
     {
+      "key": "VEXA_WORKSPACE_WORKTREE_SETUP_ENV",
+      "class": "defaulted",
+      "default": "",
+      "description": "comma-separated names of agent-api environment variables passed through to VEXA_WORKSPACE_WORKTREE_SETUP_CMD (e.g. a private-registry token the install needs). The setup command otherwise runs with only an allowlisted toolchain/proxy/git-identity environment, never agent-api's own secrets. Empty (default) passes nothing extra.",
+      "targets": [
+        "compose"
+      ]
+    },
+    {
       "key": "SALES_CYCLE_WORKSPACE_RESOLVE",
       "class": "defaulted",
       "default": "true",

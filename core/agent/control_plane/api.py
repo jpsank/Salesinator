@@ -66,7 +66,7 @@ from control_plane.workspace_publish import (
 from control_plane.workspace_git_sync import (
     MergeError, RemoteSyncError, merge_branch, pull_origin, push_origin, remote_status,
 )
-from control_plane.workspace_worktree import worktree_dir_for, release_worktree
+from control_plane.workspace_worktree import worktree_dir_for as _worktree_dir_for, release_worktree
 from control_plane.gates_runner import check_commit_compliance, run_configured_pre_push_hook
 from control_plane.workspace_purpose import read_purpose, write_purpose
 from control_plane import workspace_membership as membership_mod
@@ -1501,6 +1501,12 @@ def create_app(
                 return Path(m.path)
         raise HTTPException(status_code=403, detail="not authorized for this workspace")
 
+    def worktree_dir_for(root, subject: str, unit: str) -> Path:
+        try:
+            return _worktree_dir_for(root, subject, unit)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid unit")
+
     def _manage_dir(subject: str, slug: Optional[str]) -> Path:
         """Resolve a workspace dir for a MANAGEMENT op (git sync, purpose) — unlike ``_read_target`` this
         also reaches the caller's PARKED slots (a workspace need not be mounted to manage it). Own slots
@@ -1689,7 +1695,9 @@ def create_app(
             assert_fetchable(body.repo)
         except RepoRefError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        _tok = (body.token or "").strip() or git_creds.read_github_token(wsr.root, caller)
+        _one_time = (body.token or "").strip()
+        _saved = git_creds.read_github_token(wsr.root, caller)
+        _tok = _one_time or _saved
         try:
             result = swap_workspace(wsr.root, subject, body.repo, body.ref or "main",
                                     slug=body.slug or None, fresh=body.fresh, token=_tok or None)
@@ -1700,8 +1708,8 @@ def create_app(
         except CloneError as exc:
             # message is already token-redacted (P15); private repo without/with a bad token lands here.
             raise HTTPException(status_code=502, detail=f"git clone failed: {exc}")
-        if subject != caller and _tok:
-            git_creds.set_github_token(wsr.root, subject, _tok)
+        if subject != caller and _saved and not _one_time:   # a one-time body token is never stored (P15)
+            git_creds.set_github_token(wsr.root, subject, _saved)
         return {
             "subject": result.subject,
             "active": result.active_slug,
