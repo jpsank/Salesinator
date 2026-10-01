@@ -458,6 +458,24 @@ def test_needs_help_is_only_proof_of_a_lobby_when_it_was_entered_from_one():
     assert ev["attribution"] == "host_action"
 
 
+def test_a_rehydrated_record_remembers_the_lobby_it_stood_in_before_a_restart():
+    """meeting-api restarts while a bot waits in the lobby: the in-memory history is gone, but the
+    durable status_transition trail is not. A later lobby failure must still read as a host-side
+    timeout, not as a system join failure (which would inflate system_failure_rate)."""
+    from meeting_api.lifecycle.machine import BotStatus, FailureStage, MeetingStore, _capture_join_evidence
+
+    store = MeetingStore()
+    rec = store.rehydrate(
+        "sess-restarted", "awaiting_admission",
+        {"status_transition": [{"from": None, "to": "joining"}, {"from": "joining", "to": "awaiting_admission"}]},
+    )
+    assert BotStatus.AWAITING_ADMISSION in rec.history
+    rec.failure_stage = FailureStage.AWAITING_ADMISSION
+    ev = _capture_join_evidence(rec, {"completion_reason": "join_failure", "reason": "gave up waiting"}, BotStatus.AWAITING_ADMISSION)
+    assert ev["reason"] == "awaiting_admission_timeout"
+    assert ev["attribution"] == "host_action"
+
+
 def test_no_join_evidence_for_a_failure_after_admission():
     """A bot that reached ``active`` was admitted; whatever killed it later is not a join failure.
     The taxonomy stays silent rather than filing it under ``unknown``."""

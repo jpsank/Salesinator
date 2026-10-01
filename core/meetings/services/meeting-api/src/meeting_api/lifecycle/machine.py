@@ -155,6 +155,13 @@ _PERSISTED_STATUS_TO_BOTSTATUS: Dict[str, Optional[BotStatus]] = {
 }
 
 
+def _status_or_none(value: Any) -> Optional[BotStatus]:
+    try:
+        return BotStatus(value)
+    except ValueError:
+        return None
+
+
 def bot_status_from_persisted(status: Optional[str]) -> Optional[BotStatus]:
     """Map a persisted DB meeting-status string → the FSM `BotStatus` for rehydration.
 
@@ -415,6 +422,13 @@ class MeetingStore:
                 if isinstance(trail, list):
                     rec.status_transition = [
                         dict(entry) for entry in trail if isinstance(entry, dict)
+                    ]
+                    # `history` is the in-process FSM path (`reached_lobby` reads it). A restart
+                    # empties it, so rebuild it from the durable trail — otherwise a bot that sat in
+                    # the waiting room before the restart reads as never having reached the lobby.
+                    rec.history = [
+                        status for entry in rec.status_transition
+                        if (status := _status_or_none(entry.get("to"))) is not None
                     ]
         return rec
 
