@@ -66,4 +66,28 @@ describe("layout service — single-pane tier", () => {
     expect(layout.store.getState().rightCollapsed).toBe(true);
     expect(layout.store.getState().mobileFocus).toBe("right"); // left as-is, not reset
   });
+
+  // Settings (and any other openTab caller invoked from a pane other than center, e.g. the LEFT
+  // sidebar's gear button) needs a way to ensure the CENTER pane — where its tab actually opens —
+  // becomes the visible one on mobile. Reproduced live: tapping Settings from the left pane on a
+  // phone left mobileFocus at "left", so the settings tab opened underneath but nothing visible
+  // changed.
+  it("showCenter GUARANTEES center visibility on mobile, same never-toggle-off contract", () => {
+    layout.setTier("single");
+    layout.setMobileFocus("left");
+
+    layout.showCenter();
+    expect(layout.store.getState().mobileFocus).toBe("center");
+
+    layout.showCenter(); // calling it again while already showing must not flip it back off
+    expect(layout.store.getState().mobileFocus).toBe("center");
+  });
+
+  it("showCenter is a no-op outside the single-pane tier — center has no collapse flag there", () => {
+    expect(layout.store.getState().tier).toBe("full");
+    layout.setMobileFocus("left"); // simulate a stale/irrelevant value at a wide tier
+
+    layout.showCenter();
+    expect(layout.store.getState().mobileFocus).toBe("left"); // untouched
+  });
 });

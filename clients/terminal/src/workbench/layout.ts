@@ -73,6 +73,10 @@ export interface LayoutService {
   toggleRight(): void;
   showRight(): void;
   showLeft(): void;
+  /** Same "ensure visible, never toggle off" contract as showLeft/showRight, for CENTER — needed
+   *  by openTab callers (e.g. Settings) whose target pane isn't the one the user tapped FROM.
+   *  No-op outside the single-pane tier: center has no collapse flag there, already visible. */
+  showCenter(): void;
   /** Sets which pane the single-pane (mobile) width tier shows; null returns to the automatic,
    *  content-based default. See LayoutState.mobileFocus. */
   setMobileFocus(pane: "left" | "center" | "right" | null): void;
@@ -303,6 +307,9 @@ export function createLayoutService(defaultList: string): LayoutService {
     },
     showLeft() {
       store.set((s) => s.tier === "single" ? { ...s, mobileFocus: "left" } : { ...s, leftCollapsed: false });
+    },
+    showCenter() {
+      store.set((s) => (s.tier === "single" ? { ...s, mobileFocus: "center" } : s));
     },
     setMobileFocus(pane) { store.set((s) => ({ ...s, mobileFocus: pane })); },
     setTier(tier) { store.set((s) => (s.tier === tier ? s : { ...s, tier })); },

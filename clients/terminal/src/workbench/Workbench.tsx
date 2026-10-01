@@ -243,7 +243,12 @@ function UserProfile() {
         {email && <div style={{ fontSize: 11, color: "var(--t3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</div>}
       </div>
       <button type="button" title="Settings"
-        onClick={() => layout.openTab({ id: "settings", title: "Settings", kind: "settings", params: {} })}
+        onClick={() => {
+          layout.openTab({ id: "settings", title: "Settings", kind: "settings", params: {} });
+          // Settings is a CENTER tab, but this button lives in the LEFT pane — on mobile
+          // single-pane, left stays the visible pane after openTab unless told otherwise.
+          layout.showCenter();
+        }}
         style={{ flex: "none", background: "transparent", border: "none", color: "var(--t3)", cursor: "pointer", display: "flex", padding: 4, borderRadius: 6 }}>
         <Icon name="gear" size={15} />
       </button>
