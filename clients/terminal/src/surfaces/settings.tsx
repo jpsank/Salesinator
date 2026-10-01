@@ -4,7 +4,7 @@
  *  "API Tokens" activity-bar item retired into here (its panels are imported, not duplicated);
  *  the Meetings sidebar keeps its own first-connect calendar card at the point of need — this is
  *  the durable home (multi-calendar management lives in `calendarConnections.tsx`). Sections are a left nav (no sub-routing; one tab, local state). */
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
 import { registerTab } from "../contributions";
 import { Icon } from "../ui-kit";
 import { GitHubTokenCard, TokensPanel } from "./tokens";
@@ -12,7 +12,7 @@ import { presentError } from "./apiClient";
 import { CalendarConnectionsPanel } from "./calendarConnections";
 import { SalesCycleSection } from "./salesCycleConnection";
 import { cardField as field, cardBtn as btn } from "./integrationCard";
-import { getModelPrefs, setModelPrefs, getTranscriptionPrefs, setTranscriptionPrefs, getGlobalSetting, setGlobalSetting, testModels, testTranscription, type ConfigTestResult } from "./settingsApi";
+import { getModelPrefs, setModelPrefs, getTranscriptionPrefs, setTranscriptionPrefs, getGlobalSetting, setGlobalSetting, testModels, testTranscription, listAvailableModels, type ConfigTestResult } from "./settingsApi";
 
 type SectionId = "integrations" | "models" | "tokens" | "account";
 const SECTIONS: Array<{ id: SectionId; label: string; icon: string }> = [
@@ -27,11 +27,12 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: string }> = [
  *  (********abcd): an untouched masked value is never sent back, typing replaces it, emptying a
  *  previously-set field clears it (empty string = clear, the API's contract). */
 function ConfigForm({ fields, load, save, note }: {
-  fields: Array<{ key: string; label: string; placeholder?: string; secret?: boolean; options?: Array<{ value: string; label: string }>; showIf?: (v: Record<string, string>) => boolean }>;
+  fields: Array<{ key: string; label: string; placeholder?: string; secret?: boolean; options?: Array<{ value: string; label: string }>; suggestions?: string[]; showIf?: (v: Record<string, string>) => boolean }>;
   load: () => Promise<Record<string, string>>;
   save: (update: Record<string, string>) => Promise<Record<string, string>>;
   note?: string;
 }) {
+  const formId = useId();
   const [values, setValues] = useState<Record<string, string>>({});
   const [initial, setInitial] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -73,10 +74,18 @@ function ConfigForm({ fields, load, save, note }: {
               {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           ) : (
-            <input value={values[f.key] ?? ""} placeholder={f.placeholder}
-              type={f.secret && (values[f.key] ?? "") !== (initial[f.key] ?? "") ? "password" : "text"}
-              onChange={(e) => { setSaved(false); setValues((v) => ({ ...v, [f.key]: e.target.value })); }}
-              style={field} />
+            <>
+              <input value={values[f.key] ?? ""} placeholder={f.placeholder}
+                type={f.secret && (values[f.key] ?? "") !== (initial[f.key] ?? "") ? "password" : "text"}
+                list={f.suggestions?.length ? `${formId}-${f.key}` : undefined}
+                onChange={(e) => { setSaved(false); setValues((v) => ({ ...v, [f.key]: e.target.value })); }}
+                style={field} />
+              {f.suggestions?.length ? (
+                <datalist id={`${formId}-${f.key}`}>
+                  {f.suggestions.map((m) => <option key={m} value={m} />)}
+                </datalist>
+              ) : null}
+            </>
           )}
         </label>
       ))}
@@ -136,16 +145,38 @@ function ModelsSection() {
     return () => { on = false; };
   }, []);
 
+  // What "Deployment default" actually resolves to (P21: facts, not a placeholder) — the real
+  // runner + model the deployment falls back to when nobody's set a per-user/global override.
+  // Provider names the HARNESS/credential source only; the MODEL name lives in the Chat/Meeting
+  // model fields below — showing it in both places just duplicates the same fact twice.
+  const [deployment, setDeployment] = useState<{ chat_model?: string; streaming_model?: string; runner?: string } | null>(null);
+  useEffect(() => {
+    let on = true;
+    fetch("/api/models", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null))
+      .then((v) => on && setDeployment(v)).catch(() => undefined);
+    return () => { on = false; };
+  }, []);
+  const runnerLabel = deployment?.runner ? ` (${deployment.runner})` : "";
+
+  // Real model-name suggestions (an editable dropdown via <datalist>, not a closed <select> —
+  // an unreachable/unknown endpoint just means no suggestions, the field stays free-text).
+  const [modelSuggestions, setModelSuggestions] = useState<string[]>([]);
+  useEffect(() => {
+    let on = true;
+    listAvailableModels().then((v) => on && setModelSuggestions(v.models)).catch(() => undefined);
+    return () => { on = false; };
+  }, []);
+
   const modelFields = [
     { key: "mode", label: "Provider", options: [
-      { value: "", label: "Deployment default" },
+      { value: "", label: `Deployment default${runnerLabel}` },
       { value: "subscription", label: "Claude subscription (deployment credentials)" },
       { value: "custom", label: "Custom endpoint (open-source / gateway)" },
     ] },
     { key: "base_url", label: "Base URL", placeholder: "https://… (Anthropic/OpenAI-compatible gateway)", showIf: (v: Record<string, string>) => v.mode === "custom" },
     { key: "api_key", label: "API key", placeholder: "unchanged unless typed", secret: true, showIf: (v: Record<string, string>) => v.mode === "custom" },
-    { key: "model", label: "Chat model", placeholder: "deployment default (e.g. sonnet)" },
-    { key: "meeting_model", label: "Meeting model", placeholder: "defaults to chat model" },
+    { key: "model", label: "Chat model", placeholder: deployment?.chat_model ? `deployment default: ${deployment.chat_model}` : "deployment default (e.g. sonnet)", suggestions: modelSuggestions },
+    { key: "meeting_model", label: "Meeting model", placeholder: deployment?.streaming_model ? `deployment default: ${deployment.streaming_model}` : "defaults to chat model", suggestions: modelSuggestions },
     { key: "effort", label: "Reasoning effort", placeholder: "CLI default (e.g. medium)", options: [
       { value: "", label: "CLI default" },
       { value: "low", label: "low" },
@@ -231,8 +262,22 @@ function AccountSection() {
   );
 }
 
+// Remembered across reloads (localStorage, per-viewer convenience) — a full page reload used to
+// always reopen Settings on "Integrations" regardless of which section was actually open.
+const SETTINGS_SECTION_KEY = "vexa:settings:section";
+function readStoredSection(): SectionId {
+  try {
+    const v = localStorage.getItem(SETTINGS_SECTION_KEY);
+    return SECTIONS.some((s) => s.id === v) ? (v as SectionId) : "integrations";
+  } catch { return "integrations"; }
+}
+
 function SettingsView() {
-  const [section, setSection] = useState<SectionId>("integrations");
+  const [section, setSectionState] = useState<SectionId>(readStoredSection);
+  const setSection = (id: SectionId) => {
+    setSectionState(id);
+    try { localStorage.setItem(SETTINGS_SECTION_KEY, id); } catch { /* noop */ }
+  };
   const bodies: Record<SectionId, ReactNode> = {
     integrations: <IntegrationsSection />,
     models: <ModelsSection />,

@@ -93,3 +93,11 @@ export async function testModels(): Promise<ConfigTestResult> {
 export async function testTranscription(): Promise<ConfigTestResult> {
   return jsonOrThrow(await fetch("/api/transcription/test", { cache: "no-store" }));
 }
+
+/** Model-name suggestions for the Chat/Meeting model fields — the SAME effective-config
+ *  resolution testModels() uses, so what's offered matches what would actually run. Empty
+ *  `models` (unreachable endpoint, or a resolver failure) just means no suggestions; the fields
+ *  stay free-text either way, never blocked on this. */
+export async function listAvailableModels(): Promise<{ models: string[]; source?: string }> {
+  return jsonOrThrow(await fetch("/api/models/available", { cache: "no-store" }));
+}
