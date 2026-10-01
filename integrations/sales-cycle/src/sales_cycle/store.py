@@ -278,9 +278,8 @@ class Store:
     def mark_pushed(self, approval_id: int) -> None:
         """The branch reached GitHub — but a pull request isn't open for it yet (see
         `list_pushed_unopened`). Deliberately a separate state from 'done': a re-fetched git state on
-        a LATER sweep can no longer prove the push happened (the isolated worktree it was pushed from
-        is already released), so PR-open retries are driven by this store state, not by re-checking
-        git."""
+        a LATER sweep can no longer prove the push happened (the worktree is released once the PR opens,
+        or reaped by age), so PR-open retries are driven by this store state, not by re-checking git."""
         with self._conn() as conn:
             conn.execute("UPDATE pending_approvals SET status = 'pushed' WHERE id = ?", (approval_id,))
 

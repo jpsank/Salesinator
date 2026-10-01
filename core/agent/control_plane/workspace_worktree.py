@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,9 @@ from shared.gitenv import scrubbed_git_env, untrusted_exec_env
 log = logging.getLogger(__name__)
 
 WORKTREE_DIRNAME = ".worktrees"
+# A worktree outlives its push (it is released only once the PR opens), so one whose PR never opens — a
+# persistently failing PR call, an abandoned approval — would otherwise stay on disk and registered forever.
+WORKTREE_MAX_AGE_SEC = 3 * 24 * 3600
 
 # CONTRIBUTOR_RIGHTS.md's own sanctioned mechanism (verbatim) for stamping a Signed-off-by line on
 # every commit made in a checkout with a configured git identity — reused here, not reinvented.
@@ -123,6 +127,7 @@ def provision_worktree(
     if dest.exists() and _worktree_registered(baseline, dest):
         return dest  # already provisioned — a retry of the same unit_id, not a fresh one
 
+    reap_stale_worktrees(rootp, subject)
     _ensure_identity_and_hook(baseline, principal)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -162,3 +167,28 @@ def release_worktree(root: str | Path, subject: str, unit_id: str) -> None:
                         subject, unit_id, (removed.stderr or "").strip())
     except Exception:  # noqa: BLE001 — cleanup must never raise into a caller's success path
         log.exception("worktree release raised for subject=%s unit=%s", subject, unit_id)
+
+
+def reap_stale_worktrees(root: str | Path, subject: str, *, max_age_sec: float = WORKTREE_MAX_AGE_SEC,
+                         now: Optional[float] = None) -> list[str]:
+    """Release this subject's isolated worktrees untouched for longer than ``max_age_sec``; returns the
+    unit ids reaped. Runs on each provision so the leak is bounded without a separate janitor. Age is the
+    newest mtime of the worktree dir and its ``.git`` pointer. Best-effort — never raises."""
+    reaped: list[str] = []
+    try:
+        base = Path(root) / WORKTREE_DIRNAME / subject
+        if not base.is_dir():
+            return reaped
+        cutoff = (time.time() if now is None else now) - max_age_sec
+        for entry in base.iterdir():
+            if not entry.is_dir():
+                continue
+            marks = [entry.stat().st_mtime]
+            if (entry / ".git").exists():
+                marks.append((entry / ".git").stat().st_mtime)
+            if max(marks) < cutoff:
+                release_worktree(root, subject, entry.name)
+                reaped.append(entry.name)
+    except Exception:  # noqa: BLE001 — housekeeping must never fail a dispatch
+        log.exception("stale worktree reap raised for subject=%s", subject)
+    return reaped

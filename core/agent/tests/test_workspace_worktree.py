@@ -198,3 +198,31 @@ def test_setup_command_timeout_is_a_worktree_error(tmp_path, monkeypatch):
     monkeypatch.setattr(ww.subprocess, "run", lambda cmd, *a, **k: boom() if k.get("shell") else real(cmd, *a, **k))
     with pytest.raises(WorktreeError, match="timed out"):
         provision_worktree(root, "product-repo", "unit-1", setup_cmd="sleep 1")
+
+
+def test_reap_stale_worktrees_releases_only_the_old_ones(tmp_path):
+    from control_plane.workspace_worktree import reap_stale_worktrees, worktree_dir_for
+    root = tmp_path / "workspaces"
+    _seed_baseline(root, "product-repo")
+    old = provision_worktree(root, "product-repo", "unit-old")
+    fresh = provision_worktree(root, "product-repo", "unit-fresh")
+    import os, time
+    ancient = time.time() - 10 * 24 * 3600
+    for p in (old, old / ".git"):
+        os.utime(p, (ancient, ancient))
+
+    assert reap_stale_worktrees(root, "product-repo") == ["unit-old"]
+    assert not old.exists() and fresh.exists()
+    assert reap_stale_worktrees(root, "product-repo") == []   # idempotent
+
+
+def test_provision_reaps_the_subjects_stale_worktrees(tmp_path):
+    import os, time
+    root = tmp_path / "workspaces"
+    _seed_baseline(root, "product-repo")
+    old = provision_worktree(root, "product-repo", "unit-old")
+    ancient = time.time() - 10 * 24 * 3600
+    for p in (old, old / ".git"):
+        os.utime(p, (ancient, ancient))
+    provision_worktree(root, "product-repo", "unit-new")
+    assert not old.exists()
