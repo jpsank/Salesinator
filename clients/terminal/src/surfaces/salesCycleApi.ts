@@ -55,6 +55,27 @@ export async function getSlackChannelStatus(): Promise<SlackChannelStatus> {
   return jsonOrThrow(await fetch("/api/sales-cycle/slack/channel-status", { cache: "no-store" }));
 }
 
+export interface SlackChannelConfig {
+  channel_id?: string | null;
+  /** "override" = set from this page; "env" = SALES_CYCLE_SLACK_CHANNEL_ID; "unset" = neither. */
+  source: "override" | "env" | "unset";
+}
+
+/** The effective channel (a Settings-page override if one's been saved, else the deployment's env
+ *  default) and where it came from — used to prefill the Channel ID field with what's ACTUALLY in
+ *  effect, not a blank, and to label it as "from your env var" vs. "set here". */
+export async function getSlackChannel(): Promise<SlackChannelConfig> {
+  return jsonOrThrow(await fetch("/api/sales-cycle/slack/channel", { cache: "no-store" }));
+}
+
+/** Sets the channel override — the UI alternative to editing SALES_CYCLE_SLACK_CHANNEL_ID and
+ *  restarting the service. An empty string clears it, reverting to the env default. */
+export async function setSlackChannel(channelId: string): Promise<SlackChannelConfig> {
+  return jsonOrThrow(await fetch("/api/sales-cycle/slack/channel", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel_id: channelId }),
+  }));
+}
+
 /** A "Connect X" link's target. A real cross-origin navigation (the browser leaves the Terminal
  *  entirely, via the sales-cycle service and then the provider's own consent screen, before
  *  landing back here) — not a fetch, so this is the one place in the sales-cycle integration that

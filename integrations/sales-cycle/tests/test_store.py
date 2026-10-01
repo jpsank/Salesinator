@@ -293,3 +293,33 @@ def test_record_watcher_stopped_on_an_unknown_meeting_is_a_noop():
     s = _store()
     s.record_watcher_stopped("does-not-exist")  # must not raise
     assert s.list_active_watchers() == []
+
+
+def test_runtime_setting_roundtrip():
+    s = _store()
+    assert s.get_runtime_setting("slack_channel_id") is None
+    s.set_runtime_setting("slack_channel_id", "C123")
+    assert s.get_runtime_setting("slack_channel_id") == "C123"
+
+
+def test_runtime_setting_overwrite_replaces_value():
+    s = _store()
+    s.set_runtime_setting("slack_channel_id", "C123")
+    s.set_runtime_setting("slack_channel_id", "C456")
+    assert s.get_runtime_setting("slack_channel_id") == "C456"
+
+
+def test_runtime_setting_empty_value_clears_it():
+    """set_runtime_setting's own contract: an empty string DELETES the row rather than storing an
+    empty value — so a cleared override reads back as None (falls through to the caller's env
+    default) instead of a configured-but-blank override that would look set but post nowhere."""
+    s = _store()
+    s.set_runtime_setting("slack_channel_id", "C123")
+    s.set_runtime_setting("slack_channel_id", "")
+    assert s.get_runtime_setting("slack_channel_id") is None
+
+
+def test_runtime_setting_keys_are_independent():
+    s = _store()
+    s.set_runtime_setting("slack_channel_id", "C123")
+    assert s.get_runtime_setting("some_other_key") is None

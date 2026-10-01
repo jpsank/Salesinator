@@ -31,6 +31,15 @@ GET /oauth/{hubspot,slack}/authorize, .../callback, .../status, POST .../disconn
     hubspot_oauth.py and slack_oauth.py (what's actually provider-specific). `authorize` sends the
     browser to the provider's consent screen; `callback` is where it sends the browser back with a
     code; `status`/`disconnect` back the Settings page's "Connected as ___ / Disconnect" display.
+
+GET /slack/channel-status
+    Live-checks whether the connected Slack app can actually post to the configured channel
+    (connected ≠ invited — see the handler's own docstring).
+
+GET /slack/channel, POST /slack/channel
+    The effective "which channel do feature-request cards post to" value and where it came from
+    (a Settings-page override vs. the SALES_CYCLE_SLACK_CHANNEL_ID env default), and how to set or
+    clear that override — the UI alternative to editing the env var and restarting the service.
 """
 
 from __future__ import annotations
@@ -96,7 +105,7 @@ def _start_watcher(*, agent_api_url: str, meeting_api_url: str, subject: str, me
     task = asyncio.create_task(watch_meeting(
         agent_api_url=agent_api_url, meeting_api_url=meeting_api_url,
         subject=subject, meeting_id=meeting_id, store=store, slack=_slack(),
-        channel=settings.slack_channel_id, unmapped_slug=settings.unmapped_workspace_slug,
+        channel=_slack_channel_id(), unmapped_slug=settings.unmapped_workspace_slug,
     ))
     _watch_meeting_tasks[meeting_id] = task
     task.add_done_callback(lambda finished, _mid=meeting_id: _watcher_task_finished(_mid, finished))
@@ -223,6 +232,17 @@ def _slack() -> SlackClient:
     return SlackClient(bot_token=oauth_token or s.slack_bot_token)
 
 
+def _slack_channel_id() -> str:
+    """Which channel feature-request cards actually post to, right now. A Settings-page override
+    (set via POST /slack/channel) wins over SALES_CYCLE_SLACK_CHANNEL_ID — same override-wins-over-
+    env-default shape as _slack()'s OAuth-token-over-static-token. Every caller that needs "the
+    configured channel" (the watcher that posts cards, the status check below) goes through this,
+    not settings.slack_channel_id directly, so a channel switched from the Settings page actually
+    takes effect instead of only changing what the status card displays."""
+    override = get_store().get_runtime_setting("slack_channel_id")
+    return override or get_settings().slack_channel_id
+
+
 class SlackChannelStatus(BaseModel):
     configured: bool
     channel_id: str | None = None
@@ -242,20 +262,57 @@ async def slack_channel_status() -> SlackChannelStatus:
 
     conversations_info is a real, synchronous Slack API call — run_in_threadpool so a slow/stuck
     Slack response doesn't block this whole process's event loop for every other concurrent request."""
-    settings = get_settings()
-    if not settings.slack_channel_id:
+    channel_id = _slack_channel_id()
+    if not channel_id:
         return SlackChannelStatus(configured=False)
     try:
-        channel = await run_in_threadpool(_slack().conversations_info, channel=settings.slack_channel_id)
+        channel = await run_in_threadpool(_slack().conversations_info, channel=channel_id)
     except SlackError as exc:
         return SlackChannelStatus(
-            configured=True, channel_id=settings.slack_channel_id,
+            configured=True, channel_id=channel_id,
             error=exc.error_code or str(exc),
         )
     return SlackChannelStatus(
-        configured=True, channel_id=settings.slack_channel_id,
+        configured=True, channel_id=channel_id,
         channel_name=channel.get("name"), is_member=channel.get("is_member"),
     )
+
+
+class SlackChannelConfig(BaseModel):
+    channel_id: str | None = None
+    # "override" = set from the Settings page; "env" = SALES_CYCLE_SLACK_CHANNEL_ID; "unset" =
+    # neither — no channel configured at all yet.
+    source: str
+
+
+class SetSlackChannelBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    channel_id: str
+
+
+def _slack_channel_config() -> SlackChannelConfig:
+    override = get_store().get_runtime_setting("slack_channel_id")
+    env_default = get_settings().slack_channel_id
+    channel_id = override or env_default
+    source = "override" if override else ("env" if env_default else "unset")
+    return SlackChannelConfig(channel_id=channel_id or None, source=source)
+
+
+@app.get("/slack/channel", response_model=SlackChannelConfig)
+async def get_slack_channel() -> SlackChannelConfig:
+    """What the Settings page's Slack card shows in its "Channel ID" field — the EFFECTIVE value
+    (a Settings-page override if one's been saved, else the env-var default), with `source` so the
+    UI can tell an operator "this is from your env var" vs. "this is what you set here"."""
+    return _slack_channel_config()
+
+
+@app.post("/slack/channel", response_model=SlackChannelConfig)
+async def set_slack_channel(body: SetSlackChannelBody) -> SlackChannelConfig:
+    """Sets (or, with an empty string, clears) the Settings-page override for which channel
+    feature-request cards post to — the UI alternative to SALES_CYCLE_SLACK_CHANNEL_ID + a restart.
+    Clearing reverts to the env default, not to nothing (set_runtime_setting's own contract)."""
+    get_store().set_runtime_setting("slack_channel_id", body.channel_id.strip())
+    return _slack_channel_config()
 
 
 def _resolve_and_bind(*, api_key: str, platform: str, native_meeting_id: str, customer_tag: str) -> TagResponse:

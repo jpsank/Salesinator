@@ -20,6 +20,11 @@ external to install. It tracks four things:
   alongside. A meeting still genuinely live loses its watcher silently the moment this service
   restarts mid-call; a periodic sweep (api.py's sweep_live_watchers) checks this table against the
   live task set and restarts anything missing. Removed once the meeting reaches a terminal state.
+- `runtime_settings`: a plain key/value override for the handful of settings an operator can change
+  from Vexa's Settings page instead of an env var + restart (first (and so far only) user:
+  `slack_channel_id`). A key with no row here means "no override" — the caller falls back to its own
+  env-var default, same override-wins-over-static-default shape `oauth_connections` already has for
+  tokens (an OAuth-obtained token beats `SALES_CYCLE_*_TOKEN`).
 """
 
 from __future__ import annotations
@@ -137,6 +142,11 @@ class Store:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS active_watchers (
                     meeting_id TEXT PRIMARY KEY, subject TEXT NOT NULL, started_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS runtime_settings (
+                    key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at REAL NOT NULL
                 )
             """)
 
@@ -310,3 +320,23 @@ class Store:
     def disconnect_oauth(self, provider: str) -> None:
         with self._conn() as conn:
             conn.execute("DELETE FROM oauth_connections WHERE provider = ?", (provider,))
+
+    def get_runtime_setting(self, key: str) -> str | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM runtime_settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row is not None else None
+
+    def set_runtime_setting(self, key: str, value: str) -> None:
+        """Empty `value` CLEARS the override (deletes the row) instead of storing an empty string —
+        same empty-field-clears-it convention the Settings page's ConfigForm already uses everywhere
+        else, so a Save with a blanked field reverts to the env-var default rather than locking in
+        an empty override that would read as "configured" but post nowhere."""
+        with self._conn() as conn:
+            if value:
+                conn.execute(
+                    "INSERT INTO runtime_settings (key, value, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                    (key, value, time.time()),
+                )
+            else:
+                conn.execute("DELETE FROM runtime_settings WHERE key = ?", (key,))

@@ -5,10 +5,10 @@
  *  Calendar or GitHub next to them — so there's no per-user identity in this flow at all.
  */
 import { useEffect, useState } from "react";
-import { cardMeta, OAuthConnectionCard, PasteTokenFallback } from "./integrationCard";
+import { cardBtn, cardField, cardLabelCol, cardLabelled, cardMeta, OAuthConnectionCard, PasteTokenFallback } from "./integrationCard";
 import {
-  disconnectOAuth, getOAuthStatus, getSlackChannelStatus, oauthConnectUrl, setOAuthToken,
-  type SlackChannelStatus,
+  disconnectOAuth, getOAuthStatus, getSlackChannel, getSlackChannelStatus, oauthConnectUrl, setOAuthToken,
+  setSlackChannel, type SlackChannelConfig, type SlackChannelStatus,
 } from "./salesCycleApi";
 import { presentError } from "./apiClient";
 
@@ -32,11 +32,7 @@ export function SlackChannelCheck() {
   if (err) return <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ Couldn&rsquo;t check the channel: {err}</div>;
   if (status === null) return <div style={cardMeta}>Checking the configured channel…</div>;
   if (!status.configured) {
-    return (
-      <div style={{ fontSize: 11.5, color: "var(--t3)" }}>
-        No channel configured yet — set <code style={{ fontFamily: "var(--mono)" }}>SALES_CYCLE_SLACK_CHANNEL_ID</code>.
-      </div>
-    );
+    return <div style={{ fontSize: 11.5, color: "var(--t3)" }}>No channel configured yet — set one above.</div>;
   }
   if (status.error) {
     const reason = status.error === "channel_not_found"
@@ -61,6 +57,79 @@ export function SlackChannelCheck() {
   return (
     <div style={{ fontSize: 11.5, color: "var(--green)" }}>
       ✓ Ready — posting to <code style={{ fontFamily: "var(--mono)" }}>#{status.channel_name ?? status.channel_id}</code>.
+    </div>
+  );
+}
+
+/** The channel ID field itself — what used to be ONLY `SALES_CYCLE_SLACK_CHANNEL_ID` (an env var +
+ *  a restart) is now editable right here. Loads the EFFECTIVE value (a saved override if one
+ *  exists, else the env default) so an untouched field shows what's actually in effect, not a
+ *  blank; an empty Save clears the override and reverts to the env default — same convention as
+ *  every other Settings field on this page (ConfigForm in settings.tsx). */
+export function SlackChannelField({ onSaved = () => undefined }: { onSaved?: () => void }) {
+  const [value, setValue] = useState("");
+  const [initial, setInitial] = useState("");
+  const [source, setSource] = useState<SlackChannelConfig["source"] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let on = true;
+    getSlackChannel()
+      .then((c) => {
+        if (!on) return;
+        const v = c.channel_id ?? "";
+        setValue(v); setInitial(v); setSource(c.source);
+      })
+      .catch((e: unknown) => on && setErr(presentError(e).headline));
+    return () => { on = false; };
+  }, []);
+
+  const dirty = value !== initial;
+  const save = async () => {
+    setBusy(true); setErr(null); setSaved(false);
+    try {
+      const c = await setSlackChannel(value.trim());
+      const v = c.channel_id ?? "";
+      setValue(v); setInitial(v); setSource(c.source); setSaved(true);
+      onSaved();
+    } catch (e: unknown) { setErr(presentError(e).headline); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <label style={cardLabelled}>
+        <span style={cardLabelCol}>Channel ID</span>
+        <input value={value} placeholder="C0123ABCDEF"
+          onChange={(e) => { setSaved(false); setValue(e.target.value); }}
+          style={{ ...cardField, flex: 1 }} />
+      </label>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button disabled={busy || !dirty} onClick={() => void save()}
+          style={{ ...cardBtn, opacity: busy || !dirty ? 0.5 : 1 }}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {saved && <span style={{ fontSize: 11.5, color: "var(--green)" }}>Saved</span>}
+        {!dirty && !saved && source === "env" && value && (
+          <span style={cardMeta}>from SALES_CYCLE_SLACK_CHANNEL_ID &mdash; saving overrides it</span>
+        )}
+      </div>
+      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+    </div>
+  );
+}
+
+/** Field + live check together. `version` forces SlackChannelCheck to remount (its own effect has
+ *  no deps, so a plain re-render wouldn't re-poll) after a save, so the ✓/⚠ verdict reflects the
+ *  channel you just set instead of the one that was configured when the page loaded. */
+function SlackChannelSettings() {
+  const [version, setVersion] = useState(0);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <SlackChannelField onSaved={() => setVersion((v) => v + 1)} />
+      <SlackChannelCheck key={version} />
     </div>
   );
 }
@@ -98,7 +167,7 @@ export function SalesCycleSection() {
         )}
         extra={() => (
           <div style={{ borderTop: "1px dashed var(--line)", paddingTop: 8 }}>
-            <SlackChannelCheck />
+            <SlackChannelSettings />
           </div>
         )} />
     </div>

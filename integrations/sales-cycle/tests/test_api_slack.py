@@ -193,3 +193,57 @@ def test_channel_status_reports_channel_not_found(monkeypatch):
     assert body["configured"] is True
     assert body["is_member"] is None
     assert body["error"] == "channel_not_found"
+
+
+# ---- GET/POST /slack/channel — the Settings page's own "which channel" control ------------------
+
+def test_get_slack_channel_reports_env_default_when_no_override_set(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C_ENV_DEFAULT")
+    resp = client.get("/slack/channel")
+    assert resp.status_code == 200
+    assert resp.json() == {"channel_id": "C_ENV_DEFAULT", "source": "env"}
+
+
+def test_get_slack_channel_reports_unset_when_neither_override_nor_env_is_set(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "")
+    resp = client.get("/slack/channel")
+    assert resp.status_code == 200
+    assert resp.json() == {"channel_id": None, "source": "unset"}
+
+
+def test_post_slack_channel_sets_an_override_that_wins_over_the_env_default(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C_ENV_DEFAULT")
+    resp = client.post("/slack/channel", json={"channel_id": "C_FROM_UI"})
+    assert resp.status_code == 200
+    assert resp.json() == {"channel_id": "C_FROM_UI", "source": "override"}
+    # Reflected back on a plain GET too — not just the POST response.
+    assert client.get("/slack/channel").json() == {"channel_id": "C_FROM_UI", "source": "override"}
+
+
+def test_post_slack_channel_with_empty_string_clears_the_override(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C_ENV_DEFAULT")
+    client.post("/slack/channel", json={"channel_id": "C_FROM_UI"})
+    resp = client.post("/slack/channel", json={"channel_id": ""})
+    assert resp.status_code == 200
+    assert resp.json() == {"channel_id": "C_ENV_DEFAULT", "source": "env"}
+
+
+@respx.mock
+def test_channel_status_checks_the_override_not_the_env_default(monkeypatch):
+    """The whole point of the override: it must actually be what gets checked (and, by the same
+    `_slack_channel_id()` helper, what live cards post to) — not just what the GET endpoint echoes
+    back while /slack/channel-status keeps reading the stale env value underneath it."""
+    monkeypatch.setenv("SALES_CYCLE_SLACK_CHANNEL_ID", "C_ENV_DEFAULT")
+    monkeypatch.setenv("SALES_CYCLE_SLACK_BOT_TOKEN", "xoxb-test")
+    client.post("/slack/channel", json={"channel_id": "C_FROM_UI"})
+    route = respx.get("https://slack.com/api/conversations.info").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True, "channel": {"id": "C_FROM_UI", "name": "ui-picked", "is_member": True},
+        })
+    )
+    resp = client.get("/slack/channel-status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["channel_id"] == "C_FROM_UI"
+    assert body["channel_name"] == "ui-picked"
+    assert route.calls[0].request.url.params["channel"] == "C_FROM_UI"

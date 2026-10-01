@@ -51,7 +51,10 @@ class Settings(BaseSettings):
     # Slack login token (static, or via OAuth below — same pick-one as HubSpot), a signing secret
     # (to prove an Events API request is really from Slack — a SEPARATE credential from the OAuth
     # ones below; it authenticates INCOMING calls from Slack, not our outgoing ones), and which
-    # channel feature-request messages get posted to.
+    # channel feature-request messages get posted to. slack_channel_id is this deployment's
+    # fallback — the Settings page's Slack card can set a runtime_settings override that wins over
+    # it (api.py's _slack_channel_id()), so an operator doesn't need an env var + restart just to
+    # switch channels.
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_channel_id: str = ""
