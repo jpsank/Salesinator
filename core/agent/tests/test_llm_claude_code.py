@@ -306,6 +306,14 @@ def test_transcript_bytes_sums_matching_session_files(tmp_path: Path):
     assert h.transcript_bytes(tmp_path, "missing") == 0
 
 
+def test_owns_session_id_recognizes_the_clis_uuid_shape():
+    h = ClaudeCodeHarness()
+    assert h.owns_session_id("5c1f661a-fbd0-4e1e-b089-cdba34fc724b") is True
+    assert h.owns_session_id("5C1F661A-FBD0-4E1E-B089-CDBA34FC724B") is True  # case-insensitive
+    assert h.owns_session_id("ses_f09ae4465ffeCaGP1bTLowRcYL") is False  # opencode's own shape
+    assert h.owns_session_id("") is False
+
+
 # ── ~/.claude/projects linking — must NEVER destroy real transcripts ─────────
 
 def _prepare_with_home(monkeypatch, home: Path, work: Path) -> Path:

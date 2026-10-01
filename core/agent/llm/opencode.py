@@ -387,6 +387,9 @@ class OpenCodeHarness:
         return 0  # resume-budget check only (_resume_id) — always "under budget" for opencode, same
                   # as before this fix; the durable file written in run_turn doesn't feed this check
 
+    def owns_session_id(self, sid: str) -> bool:
+        return sid.startswith("ses_")  # the opencode server's own id shape
+
     def preflight(self) -> Optional[str]:
         base_url = os.environ.get("VEXA_LLM_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL")
         if not base_url:

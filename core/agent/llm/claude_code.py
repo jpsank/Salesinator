@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
@@ -245,6 +246,11 @@ class ClaudeCodeHarness:
             except OSError:
                 continue
         return total
+
+    _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+
+    def owns_session_id(self, sid: str) -> bool:
+        return bool(self._UUID_RE.match(sid))  # the CLI's own session id shape
 
     def preflight(self) -> Optional[str]:
         return preflight_provider_guard()

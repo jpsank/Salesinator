@@ -114,6 +114,16 @@ class HarnessPort(Protocol):
         """Size of the stored transcript behind ``session_id`` (resume-cost accounting); 0 if unknown."""
         ...
 
+    def owns_session_id(self, sid: str) -> bool:
+        """True when ``sid`` is a well-formed token for THIS harness — a cheap upfront guess, not a
+        resume guarantee (a well-formed but genuinely stale id can still fail resume; that's what
+        the engine's retry heals). A MALFORMED id — e.g. another harness's id, left behind by a
+        runner switch — is never worth a round trip: the engine skips attempting resume with it
+        entirely instead of discovering the mismatch only after a failed turn. Reproduced live: a
+        thread's first opencode turn after a runner switch wasted a full extra turn's worth of
+        latency resuming a claude-code UUID opencode had never heard of, before falling back fresh."""
+        ...
+
     def preflight(self) -> Optional[str]:
         """Boot-time credential sanity check — a loud warning string, or None. May no-op."""
         ...

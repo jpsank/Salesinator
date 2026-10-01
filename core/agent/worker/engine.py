@@ -287,10 +287,18 @@ def _chat_resume_max_bytes() -> int:
 
 def _resume_id(work: Path, sess_file: Path, harness: HarnessPort) -> str | None:
     """The session id to resume, or None. The id is an OPAQUE per-harness token; the harness also
-    accounts the stored transcript size behind it so an over-budget resume restarts fresh."""
+    accounts the stored transcript size behind it so an over-budget resume restarts fresh.
+
+    A format-mismatched id (left behind by a runner switch — e.g. opencode finding a claude-code
+    UUID) is rejected HERE, upfront, rather than round-tripped: resuming with one always fails (the
+    other harness has never heard of it), which used to cost a full wasted turn's worth of latency
+    before the engine's stale-resume retry fell back fresh. A well-formed but genuinely stale id
+    still goes through that retry — there's no way to know that one's bad without trying."""
     if not sess_file.exists():
         return None
     sid = sess_file.read_text().strip()
+    if sid and not harness.owns_session_id(sid):
+        return None
     limit = _chat_resume_max_bytes()
     if sid and limit > 0 and harness.transcript_bytes(work, sid) > limit:
         return None

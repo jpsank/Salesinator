@@ -633,8 +633,10 @@ def test_run_turn_keeps_the_pointer_resolvable_during_a_failed_resume_retry(tmp_
 
     from worker import worker
 
+    # A WELL-FORMED claude-code id (owns_session_id passes) that the CLI nonetheless no longer
+    # recognizes (expired/evicted) — the one case that genuinely can't be known without trying.
     (tmp_path / ".claude" / "sessions").mkdir(parents=True)
-    (tmp_path / ".claude" / "sessions" / "main.session").write_text("STALE_SID")
+    (tmp_path / ".claude" / "sessions" / "main.session").write_text("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
     calls: list[bool] = []
 
@@ -654,7 +656,50 @@ def test_run_turn_keeps_the_pointer_resolvable_during_a_failed_resume_retry(tmp_
     sess_file = tmp_path / ".claude" / "sessions" / "main.session"
     chain_file = tmp_path / ".claude" / "sessions" / "main.chain"
     assert sess_file.read_text() == "FRESH_SID"
-    assert chain_file.read_text().splitlines() == ["STALE_SID"]  # still recorded, just not early
+    assert chain_file.read_text().splitlines() == ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"]  # still
+    # recorded, just not early
+
+
+def test_run_turn_skips_resume_entirely_for_a_foreign_format_id(tmp_path):
+    """Reproduced live: a thread's pointer still held a claude-code UUID after the deployment's
+    runner switched to opencode. Every turn resumed against it, opencode predictably had never heard
+    of it, and only THEN fell back fresh — a full wasted turn's worth of latency on every single
+    message. owns_session_id() lets _resume_id reject the mismatch upfront: the harness's exec
+    function must be called exactly ONCE (straight fresh dispatch), never attempting resume at all."""
+    import unittest.mock as mock
+
+    from worker import worker
+
+    (tmp_path / ".claude" / "sessions").mkdir(parents=True)
+    (tmp_path / ".claude" / "sessions" / "main.session").write_text("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+    call_count = {"n": 0}
+
+    class _FakeOpenCode:
+        name = "opencode"
+
+        def run_turn(self, work, prompt, *, allowed_tools=(), session=None, model=None, mcp_config=None):
+            call_count["n"] += 1
+            assert session is None  # the foreign id must never reach the harness as a resume target
+            yield {"type": "done", "ok": True, "reply": "ok", "sessionId": "ses_fresh"}
+
+        def prepare(self, work, chat_root=None):
+            pass
+
+        def transcript_bytes(self, work, session_id):
+            return 0
+
+        def owns_session_id(self, sid):
+            return sid.startswith("ses_")
+
+    with mock.patch.object(worker, "harness_factory", lambda: _FakeOpenCode()):
+        list(worker.run_turn_over_workspace(tmp_path, "hello", session="main"))
+
+    assert call_count["n"] == 1
+    assert (tmp_path / ".claude" / "sessions" / "main.session").read_text() == "ses_fresh"
+    assert (tmp_path / ".claude" / "sessions" / "main.chain").read_text().splitlines() == [
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    ]
 
 
 def test_run_turn_does_not_record_a_handoff_when_the_session_id_is_unchanged(tmp_path):

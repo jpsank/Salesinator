@@ -151,6 +151,13 @@ def test_write_durable_transcript_is_a_full_rewrite_each_time(tmp_path):
     assert len(path.read_text().splitlines()) == 2
 
 
+def test_owns_session_id_recognizes_the_servers_ses_shape():
+    h = OpenCodeHarness()
+    assert h.owns_session_id("ses_f09ae4465ffeCaGP1bTLowRcYL") is True
+    assert h.owns_session_id("5c1f661a-fbd0-4e1e-b089-cdba34fc724b") is False  # claude-code's own shape
+    assert h.owns_session_id("") is False
+
+
 def test_write_durable_transcript_never_raises_on_an_unwritable_path(tmp_path):
     """Best-effort: a save failure must never surface as a turn error — the conversation already
     succeeded for the user; losing the durable copy is a shame, not their error."""
