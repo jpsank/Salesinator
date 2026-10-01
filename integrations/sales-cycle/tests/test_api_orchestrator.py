@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import httpx
@@ -43,7 +44,8 @@ def test_process_approved_dispatches_then_pushes_then_opens_a_pr(monkeypatch, tm
 
     dispatched = store.list_dispatched_unpushed()
     assert len(dispatched) == 1
-    assert dispatched[0].branch == "feature/csv-export"
+    branch = dispatched[0].branch
+    assert re.fullmatch(r"feature/csv-export-[0-9a-f]{6}", branch)
     assert dispatched[0].workload_id == "agent-1"
 
     # Not ready yet (still on main) — a second sweep dispatches nothing new, pushes nothing.
@@ -57,11 +59,11 @@ def test_process_approved_dispatches_then_pushes_then_opens_a_pr(monkeypatch, tm
     # (list_pushed_unopened is re-queried fresh, so it sees what the push loop just marked) opens
     # its PR, all in one call.
     respx.get(f"{AGENT_API}/api/workspace/git").mock(
-        return_value=httpx.Response(200, json={"branch": "feature/csv-export", "changes": [], "commits": ["a"]})
+        return_value=httpx.Response(200, json={"branch": branch, "changes": [], "commits": ["a"]})
     )
     respx.post(f"{AGENT_API}/api/workspace/push").mock(
         return_value=httpx.Response(200, json={"remote": "vexa-sync", "url": "https://github.com/x/y",
-                                                "branch": "feature/csv-export", "head_sha": "abc"})
+                                                "branch": branch, "head_sha": "abc"})
     )
     respx.post(f"{AGENT_API}/api/workspace/pull-request").mock(
         return_value=httpx.Response(200, json={"url": "https://github.com/x/y/pull/7", "number": 7})

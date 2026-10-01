@@ -1,3 +1,4 @@
+import re
 import hashlib
 import hmac
 import json
@@ -82,7 +83,7 @@ def test_reaction_added_approves_and_dispatches_in_real_time(monkeypatch, tmp_pa
     dispatched = store.list_dispatched_unpushed()
     assert len(dispatched) == 1
     assert dispatched[0].title == "CSV export"
-    assert dispatched[0].branch == "feature/csv-export"
+    assert re.fullmatch(r"feature/csv-export-[0-9a-f]{6}", dispatched[0].branch)
 
 
 @respx.mock

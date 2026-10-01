@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 
 from sales_cycle._http import call
 
@@ -48,8 +49,11 @@ def slug_for(title: str) -> str:
     return s or "feature"
 
 
-def branch_for(title: str) -> str:
-    return f"feature/{slug_for(title)}"
+def branch_for(title: str, unique: str) -> str:
+    """One branch per dispatch attempt. Branch refs live in the product repo's shared object store, so
+    a title-only name would collide across a retry (the timed-out attempt's worktree still holds it) and
+    across two requests that share a title — `git checkout -b` would refuse the second."""
+    return f"feature/{slug_for(title)}-{unique}"
 
 
 def submit_implementation(
@@ -68,7 +72,7 @@ def submit_implementation(
     core/agent/llm/registry.py's HARNESS_RUNNERS); comes from the caller's settings.product_repo_runner,
     never a literal here, so a deployment can point the feature-implementer at a different harness
     (e.g. "opencode") without a code change."""
-    branch = branch_for(title)
+    branch = branch_for(title, uuid.uuid4().hex[:6])
     prompt = (
         f"A customer explicitly asked for this product capability:\n\n"
         f"Request: {title}\n"

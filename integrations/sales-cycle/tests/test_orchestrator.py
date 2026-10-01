@@ -1,4 +1,5 @@
 import json
+import re
 
 import httpx
 import pytest
@@ -22,8 +23,8 @@ def test_slug_for(title, expected):
     assert slug_for(title) == expected
 
 
-def test_branch_for_has_feature_prefix():
-    assert branch_for("CSV export") == "feature/csv-export"
+def test_branch_for_has_feature_prefix_and_a_per_attempt_suffix():
+    assert branch_for("CSV export", "ab12cd") == "feature/csv-export-ab12cd"
 
 
 @respx.mock
@@ -34,7 +35,8 @@ def test_submit_implementation_posts_invocation_and_returns_branch():
     result = submit_implementation(
         agent_api_url=AGENT_API, subject="cust-1", title="CSV export", body="wants it",
     )
-    assert result == {"workload_id": "agent-123", "branch": "feature/csv-export"}
+    assert result["workload_id"] == "agent-123"
+    assert re.fullmatch(r"feature/csv-export-[0-9a-f]{6}", result["branch"])
     sent = route.calls[0].request
     assert sent.headers["X-User-Id"] == "cust-1"
     body = json.loads(sent.content)
@@ -42,7 +44,7 @@ def test_submit_implementation_posts_invocation_and_returns_branch():
     assert "identity" in body and "principal" not in body["identity"]  # no signoff configured
     assert body["workspaces"] == [{"id": "cust-1", "mode": "rw"}]
     assert body["isolation"] == {"mode": "worktree"}
-    assert "git checkout -b feature/csv-export" in body["start"]["entrypoint"]["inline"]
+    assert f"git checkout -b {result['branch']}" in body["start"]["entrypoint"]["inline"]
     assert "Co-Authored-By" in body["start"]["entrypoint"]["inline"]  # instructed NOT to add one
 
 
@@ -186,3 +188,11 @@ def test_open_pull_request_raises_on_failure():
     respx.post(f"{AGENT_API}/api/workspace/pull-request").mock(return_value=httpx.Response(502))
     with pytest.raises(PullRequestError):
         open_pull_request(agent_api_url=AGENT_API, subject="cust-1", title="x", body="y", base="main")
+
+
+@respx.mock
+def test_two_dispatches_of_the_same_title_get_distinct_branches():
+    respx.post(f"{AGENT_API}/invocations").mock(return_value=httpx.Response(202, json={"workload_id": "w"}))
+    a = submit_implementation(agent_api_url=AGENT_API, subject="cust-1", title="CSV export", body="x")
+    b = submit_implementation(agent_api_url=AGENT_API, subject="cust-1", title="CSV export", body="x")
+    assert a["branch"] != b["branch"]
