@@ -64,6 +64,46 @@ def test_posts_feature_request_card_and_records_pending_approval():
 
 
 @respx.mock
+def test_a_bookkeeping_failure_on_one_card_does_not_end_the_tail(monkeypatch):
+    """The card was already posted to Slack; if recording it fails, the NEXT card must still be handled
+    (an escaping exception used to end the watcher, and the replay re-posted the same card forever)."""
+    respx.get(STREAM_URL).mock(return_value=httpx.Response(
+        200, content=_sse(_card("feature_request", "First"), _card("feature_request", "Second"), _card("feature_request", "First"), {"type": "meeting-end"}),
+    ))
+    respx.get(f"{MEETING_API}/meetings/1").mock(return_value=httpx.Response(200, json={"data": {}}))
+    slack_route = respx.post("https://slack.com/api/chat.postMessage").mock(
+        side_effect=[httpx.Response(200, json={"ok": True, "ts": "1.1"}), httpx.Response(200, json={"ok": True, "ts": "2.2"})]
+    )
+    store = Store(":memory:")
+    real = store.record_pending_approval
+    calls = []
+    def flaky(**kw):
+        calls.append(kw["title"])
+        if kw["title"] == "First":
+            raise RuntimeError("database is locked")
+        return real(**kw)
+    monkeypatch.setattr(store, "record_pending_approval", flaky)
+
+    _run(**_watcher_kwargs(store))
+
+    assert calls == ["First", "Second"]
+    assert slack_route.call_count == 2   # the replayed "First" was NOT posted a second time
+    assert store.approve(slack_channel="C1", slack_ts="2.2") is not None
+
+
+def test_recording_a_pending_approval_marks_its_key_seen_atomically():
+    store = Store(":memory:")
+    store.record_pending_approval(slack_channel="C1", slack_ts="1.1", workspace_id="w", source_key="live:1:x", title="X", body="b")
+    assert store.is_seen("live:1:x")
+    # a duplicate (channel, ts) violates UNIQUE and must leave NO seen row behind for a different key
+    try:
+        store.record_pending_approval(slack_channel="C1", slack_ts="1.1", workspace_id="w", source_key="live:1:y", title="Y", body="b")
+    except Exception:
+        pass
+    assert not store.is_seen("live:1:y")
+
+
+@respx.mock
 def test_ignores_non_feature_request_cards():
     respx.get(STREAM_URL).mock(return_value=httpx.Response(
         200, content=_sse(_card("note", "irrelevant"), {"type": "meeting-end"}),

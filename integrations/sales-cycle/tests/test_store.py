@@ -40,18 +40,22 @@ def test_entity_path_migrates_to_source_key_on_a_real_pre_existing_db(tmp_path):
     assert approved.title == "CSV export"
 
 
+def _record(s, ts, key):
+    s.record_pending_approval(slack_channel="C1", slack_ts=ts, workspace_id="w", source_key=key, title="T", body="b")
+
+
 def test_seen_requests_roundtrip():
     s = _store()
     assert s.is_seen("live:1:csv export") is False
-    s.mark_seen("live:1:csv export")
+    _record(s, "1.1", "live:1:csv export")
     assert s.is_seen("live:1:csv export") is True
     assert s.is_seen("live:1:sso") is False
 
 
-def test_mark_seen_is_idempotent():
+def test_recording_the_same_key_twice_does_not_raise_on_the_seen_row():
     s = _store()
-    s.mark_seen("live:1:csv export")
-    s.mark_seen("live:1:csv export")  # must not raise (UNIQUE/PRIMARY KEY conflict handled)
+    _record(s, "1.1", "live:1:csv export")
+    _record(s, "2.2", "live:1:csv export")  # a second post for the same key: the seen row is idempotent
     assert s.is_seen("live:1:csv export") is True
 
 

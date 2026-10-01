@@ -216,8 +216,11 @@ async def watch_meeting(
                 client=client, meeting_api_url=meeting_api_url, subject=subject,
                 meeting_id=meeting_id, unmapped_slug=unmapped_slug,
             )
+            posted_unrecorded: set[str] = set()   # posted to Slack, but the DB write failed — don't re-post on replay
             async for title, body in _feature_request_cards(client, url, subject):
                 key = f"{dedupe_prefix}{title.strip().casefold()}"
+                if key in posted_unrecorded:
+                    continue
                 # Sqlite calls below run directly, not through asyncio.to_thread: they're local,
                 # sub-millisecond, and fire at most once per distinct card (not a hot path) — an
                 # executor round-trip would cost more than the blocking call it avoids.
@@ -250,11 +253,18 @@ async def watch_meeting(
                             "will retry if the copilot re-surfaces it", title, meeting_id,
                         )
                     continue
-                store.record_pending_approval(
-                    slack_channel=channel, slack_ts=ts, workspace_id=workspace_id, source_key=key,
-                    title=title, body=body,
-                )
-                store.mark_seen(key)
+                try:
+                    store.record_pending_approval(
+                        slack_channel=channel, slack_ts=ts, workspace_id=workspace_id, source_key=key,
+                        title=title, body=body,
+                    )
+                except Exception:  # noqa: BLE001 — one card's bookkeeping must not end the whole tail
+                    posted_unrecorded.add(key)
+                    logger.exception(
+                        "live card %r was posted to Slack (ts=%s) but could not be recorded for "
+                        "meeting_id=%s — continuing with the next card", title, ts, meeting_id,
+                    )
+                    continue
                 # A previously-set error (from an EARLIER card in this same call) no longer applies
                 # once a post actually succeeds — clear it so the terminal doesn't keep showing a
                 # stale warning for a problem that's fixed. Best-effort, same as setting it.

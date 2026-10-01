@@ -155,12 +155,6 @@ class Store:
             row = conn.execute("SELECT 1 FROM seen_requests WHERE key = ?", (key,)).fetchone()
         return row is not None
 
-    def mark_seen(self, key: str) -> None:
-        with self._conn() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO seen_requests (key, seen_at) VALUES (?, ?)", (key, time.time())
-            )
-
     def record_watcher_started(self, meeting_id: str, subject: str) -> None:
         """Idempotent — a restart re-registering the SAME meeting_id just refreshes started_at,
         never duplicates a row (meeting_id is the primary key)."""
@@ -188,12 +182,18 @@ class Store:
         self, *, slack_channel: str, slack_ts: str, workspace_id: str, source_key: str,
         title: str, body: str,
     ) -> None:
+        """Records the posted card AND marks its `source_key` seen in ONE transaction — if the two
+        were separate writes, a failure between them would leave a posted card that is not marked
+        seen, and the next SSE replay would post it to Slack a second time."""
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO pending_approvals "
                 "(slack_channel, slack_ts, workspace_id, source_key, title, body, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (slack_channel, slack_ts, workspace_id, source_key, title, body, time.time()),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO seen_requests (key, seen_at) VALUES (?, ?)", (source_key, time.time())
             )
 
     def approve(self, *, slack_channel: str, slack_ts: str) -> PendingApproval | None:
