@@ -28,6 +28,20 @@ that we added ourselves (details below).
    review, and for your preview-hosting platform to build one (most only build previews for PRs, not
    bare branches).
 
+## How the pipeline is doing
+
+Each request records when it was posted, approved, pushed and had its PR opened, plus the PR link. Read the
+counts and timings with:
+
+```bash
+docker exec vexa-v012-sales-cycle-1 python -m sales_cycle.report            # everything
+docker exec vexa-v012-sales-cycle-1 python -m sales_cycle.report --days 7   # the last week
+```
+
+It prints, as JSON: requests per status, the approval rate, the share that reached a PR or failed, how many
+needed a retry, the median / p90 / max of each hop (posted→approved, approved→pushed, pushed→PR, posted→PR) and the
+PR links. Requests from before the stage timestamps existed are counted but left out of the timings.
+
 ## The pieces (file map)
 
 | File | What it does |
@@ -36,6 +50,7 @@ that we added ourselves (details below).
 | `resolver.py` | Ties a meeting to a customer's workspace, using HubSpot's answer. |
 | `calendar_resolver.py` | The automatic version of the above — reads attendee emails straight off Vexa's own notification, no extra lookup needed. |
 | `live_card_watcher.py` | Tails one call's live copilot-card stream for its whole duration and posts each `feature_request` to Slack the instant it appears. |
+| `report.py` | `python -m sales_cycle.report` — pipeline counts, per-hop timings and PR links from the store. |
 | `store.py` | A small local database tracking which requests are pending, approved, or done. |
 | `orchestrator.py` | Once approved: kicks off the AI coding turn (in its own isolated worktree), checks in until it's done, pushes it, then opens a pull request. |
 | `slack_client.py` / `slack_verify.py` | Talking to Slack, and proving a Slack request is really from Slack. |

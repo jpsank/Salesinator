@@ -61,6 +61,10 @@ class PendingApproval:
     created_at: float
     dispatched_at: float | None
     dispatch_attempts: int
+    approved_at: float | None = None
+    pushed_at: float | None = None
+    done_at: float | None = None
+    pr_url: str | None = None
 
 
 class Store:
@@ -125,6 +129,11 @@ class Store:
                 conn.execute(
                     "ALTER TABLE pending_approvals ADD COLUMN dispatch_attempts INTEGER NOT NULL DEFAULT 0"
                 )
+            # Migration: the stage timestamps + PR link `pipeline_stats` reads. Requests that finished before
+            # these columns existed keep NULLs, which the report simply leaves out of its timings.
+            for column, ddl in (("approved_at", "REAL"), ("pushed_at", "REAL"), ("done_at", "REAL"), ("pr_url", "TEXT")):
+                if column not in existing_cols:
+                    conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_connections (
                     provider TEXT PRIMARY KEY,
@@ -205,8 +214,9 @@ class Store:
             ).fetchone()
             if row is None:
                 return None
-            conn.execute("UPDATE pending_approvals SET status = 'approved' WHERE id = ?", (row["id"],))
-        return PendingApproval(**{**dict(row), "status": "approved"})
+            now = time.time()
+            conn.execute("UPDATE pending_approvals SET status = 'approved', approved_at = ? WHERE id = ?", (now, row["id"]))
+        return PendingApproval(**{**dict(row), "status": "approved", "approved_at": now})
 
     def list_approved_unprocessed(self) -> list[PendingApproval]:
         with self._conn() as conn:
@@ -281,16 +291,18 @@ class Store:
         a LATER sweep can no longer prove the push happened (the worktree is released once the PR opens,
         or reaped by age), so PR-open retries are driven by this store state, not by re-checking git."""
         with self._conn() as conn:
-            conn.execute("UPDATE pending_approvals SET status = 'pushed' WHERE id = ?", (approval_id,))
+            conn.execute("UPDATE pending_approvals SET status = 'pushed', pushed_at = ? WHERE id = ?",
+                         (time.time(), approval_id))
 
     def list_pushed_unopened(self) -> list[PendingApproval]:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'pushed'").fetchall()
         return [PendingApproval(**dict(r)) for r in rows]
 
-    def mark_done(self, approval_id: int) -> None:
+    def mark_done(self, approval_id: int, *, pr_url: str | None = None) -> None:
         with self._conn() as conn:
-            conn.execute("UPDATE pending_approvals SET status = 'done' WHERE id = ?", (approval_id,))
+            conn.execute("UPDATE pending_approvals SET status = 'done', done_at = ?, pr_url = ? WHERE id = ?",
+                         (time.time(), pr_url, approval_id))
 
     def get_oauth_connection(self, provider: str) -> OAuthConnection | None:
         with self._conn() as conn:

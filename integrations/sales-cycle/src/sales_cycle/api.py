@@ -509,7 +509,7 @@ def process_approved() -> dict:
 
     for approval in store.list_pushed_unopened():
         try:
-            open_pull_request(
+            pr = open_pull_request(
                 agent_api_url=settings.agent_api_internal_url, subject=settings.product_repo_subject,
                 title=approval.title, body=approval.body, base=settings.product_repo_default_branch,
                 unit_id=approval.workload_id,
@@ -518,7 +518,7 @@ def process_approved() -> dict:
             logger.exception("pull-request open failed for approval id=%s branch=%s — retrying next sweep",
                               approval.id, approval.branch)
             continue
-        store.mark_done(approval.id)
+        store.mark_done(approval.id, pr_url=(pr or {}).get("url"))
         opened_now.append(approval.id)
 
     return {
