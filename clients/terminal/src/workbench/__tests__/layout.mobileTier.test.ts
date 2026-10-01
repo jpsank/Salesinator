@@ -90,4 +90,38 @@ describe("layout service — single-pane tier", () => {
     layout.showCenter();
     expect(layout.store.getState().mobileFocus).toBe("left"); // untouched
   });
+
+  describe("opening content brings the center pane forward", () => {
+    function attachFakeApi(svc: LayoutService) {
+      const panels = new Map<string, { id: string }>();
+      const api = {
+        panels: [] as unknown[],
+        getPanel: (id: string) => (panels.has(id) ? { id, api: { setActive() {}, setTitle() {}, updateParameters() {}, close: () => { panels.delete(id); } } } : undefined),
+        addPanel: (d: { id: string }) => { panels.set(d.id, { id: d.id }); },
+        onDidActivePanelChange: () => ({ dispose() {} }),
+        onDidRemovePanel: () => ({ dispose() {} }),
+        onDidLayoutChange: () => ({ dispose() {} }),
+        toJSON: () => ({}), fromJSON: () => {}, clear: () => panels.clear(),
+        activePanel: undefined, groups: [] as unknown[],
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      svc.attach(api as any);
+    }
+    const tab = { id: "meeting:1", title: "M", kind: "meeting", params: {}, context: null };
+
+    it.each(["openTab", "openPreview", "openTabBeside"] as const)("%s switches a sidebar/chat-focused phone to the center pane", (method) => {
+      attachFakeApi(layout);
+      layout.setTier("single");
+      layout.setMobileFocus("left");
+      layout[method](tab);
+      expect(layout.store.getState().mobileFocus).toBe("center");
+    });
+
+    it("leaves mobileFocus alone at wider tiers", () => {
+      attachFakeApi(layout);
+      layout.setMobileFocus("left");
+      layout.openTab(tab);
+      expect(layout.store.getState().mobileFocus).toBe("left");
+    });
+  });
 });

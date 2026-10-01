@@ -138,6 +138,11 @@ export function createLayoutService(defaultList: string): LayoutService {
 
   /** drop the preview slot bookkeeping (the panel itself is handled by the caller). */
   const forgetPreview = () => { previewLogicalId = null; };
+  // Single-pane width shows ONE pane, chosen by mobileFocus: opening content from the sidebar or chat
+  // must bring the center pane forward, or the new tab opens off-screen behind the pane that launched it.
+  const focusCenterOnSingle = () => {
+    store.set((s) => (s.tier === "single" && s.mobileFocus !== "center" ? { ...s, mobileFocus: "center" } : s));
+  };
 
   /** addPanel that survives a corrupted/stale grid. A layout restored via
    *  fromJSON can land with no resolvable active group (dockview then throws
@@ -188,6 +193,7 @@ export function createLayoutService(defaultList: string): LayoutService {
     },
     openTab(d) {
       if (!api) return;
+      focusCenterOnSingle();
       histPush();
       // pinning the thing currently in preview → promote it: drop the preview slot so the
       // single shared tab is free again, and open the content as a persistent panel.
@@ -203,6 +209,7 @@ export function createLayoutService(defaultList: string): LayoutService {
     },
     openTabBeside(d) {
       if (!api) return;
+      focusCenterOnSingle();
       histPush();
       // already open anywhere (including as the preview's current content)? just activate.
       if (previewLogicalId === d.id) { api.getPanel(PREVIEW_PANEL)?.api.setActive(); return; }
@@ -252,6 +259,7 @@ export function createLayoutService(defaultList: string): LayoutService {
     },
     openPreview(d) {
       if (!api) return;
+      focusCenterOnSingle();
       histPush();
       // already pinned as a real tab? just activate it — don't spawn a preview duplicate.
       const pinned = api.getPanel(d.id);
