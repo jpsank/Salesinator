@@ -22,7 +22,7 @@ so a deployment that's already set up for a local/open-source model needs no sep
 config.
 
 Tool scoping: Claude Code's ``--allowedTools`` has no OpenCode CLI-flag equivalent — permissions are a
-per-agent CONFIG (``allow`` / ``ask`` / ``deny``), written into ``opencode.json`` per turn from the
+per-agent CONFIG (``allow`` / ``ask`` / ``deny``), passed to the server per turn (``OPENCODE_CONFIG_CONTENT``) from the
 unit's resolved ``allowed_tools`` (see ``shared/tools.py``). ``auto``-grant tools → ``allow``;
 anything not explicitly granted → ``deny`` (fail-closed, matches ``apply_tool_grant``'s own
 philosophy). Vexa's ``gate`` grant has no ``allowed_tools`` representation to translate FROM today
@@ -93,7 +93,7 @@ def _permission_key_for(tool_name: str) -> Optional[str]:
 def _mcp_servers_from_claude_config(mcp_config_path: Optional[str]) -> dict:
     """Read the ``.mcp.json`` ``shared/tools.py``'s ``apply_tool_grant`` already wrote (Claude
     Code's ``--mcp-config`` shape: ``{"mcpServers": {name: {command, args, env} | {url, type}}}``)
-    and translate each entry into OpenCode's ``opencode.json`` ``"mcp"`` shape. Local (stdio)
+    and translate each entry into OpenCode's config ``"mcp"`` shape. Local (stdio)
     servers translate cleanly (OpenCode wants ``command`` as ONE argv array, not split
     command+args); a remote (``url``) entry is not yet translated — OpenCode's remote-MCP config
     shape wasn't verified against a real server the way the local/stdio path was, so a url-shaped
@@ -118,7 +118,7 @@ def _mcp_servers_from_claude_config(mcp_config_path: Optional[str]) -> dict:
 
 def _opencode_config(*, base_url: str, model: Optional[str], allowed_tools: Iterable[str],
                      mcp_config: Optional[str]) -> dict:
-    """The ``opencode.json`` this adapter writes fresh for every turn: the one fixed local provider
+    """The OpenCode config this adapter builds fresh for every turn: the one fixed local provider
     (pointed at whatever completion endpoint this deployment already configures), a fail-closed
     permission map built from the unit's resolved toolbelt, and the turn's granted MCP servers."""
     models = {model: {"name": model}} if model else {}
@@ -147,16 +147,29 @@ class _Server:
     for why per-turn rather than a shared background process). Blocks in ``__enter__`` until the
     HTTP API actually answers — a caller must never race a server that hasn't finished booting."""
 
-    def __init__(self, cwd: str) -> None:
+    def __init__(self, cwd: str, config: Optional[dict] = None) -> None:
         self._cwd = cwd
+        self._config = config
         self._proc: Optional[subprocess.Popen] = None
         self.base_url = f"http://{OPENCODE_HOST}:{OPENCODE_PORT}"
+
+    def _env(self) -> dict:
+        """The config rides in the environment, never as a file in ``cwd``: ``cwd`` is the product
+        repo's worktree, where an untracked ``opencode.json`` would show up as a pending change (blocking
+        the push) and could be committed into the PR."""
+        env = harness_subprocess_env()
+        if self._config is not None:
+            env["OPENCODE_CONFIG_CONTENT"] = json.dumps(self._config)
+            # OpenCode deep-merges config sources; a repo-level opencode.json (agent-writable) would
+            # otherwise widen the fail-closed permission map above, so only this config applies.
+            env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
+        return env
 
     def __enter__(self) -> "_Server":
         self._proc = subprocess.Popen(
             ["opencode", "serve", "--hostname", OPENCODE_HOST, "--port", str(OPENCODE_PORT)],
             cwd=self._cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            env=harness_subprocess_env(),
+            env=self._env(),
         )
         deadline = time.monotonic() + _SERVER_READY_TIMEOUT_SEC
         with httpx.Client(timeout=2.0) as probe:
@@ -283,7 +296,7 @@ class OpenCodeHarness:
             return
         # `model` has no caller-independent source the way base_url does (ANTHROPIC_BASE_URL is a
         # real fallback chain) — a caller that doesn't thread one through (e.g. submit_implementation's
-        # dispatch body has no `model` field at all) silently got model=None, which built an opencode.json
+        # dispatch body has no `model` field at all) silently got model=None, which built a config
         # with an EMPTY provider.models map. OpenCode then reports "ProviderNoProvidersError: No
         # providers are available" — reproduced live, the turn failing before it ever reached the
         # model. VEXA_LLM_MODEL is the same deployment-default every other adapter already falls back
@@ -291,14 +304,11 @@ class OpenCodeHarness:
         if not model:
             model = os.environ.get("VEXA_LLM_MODEL") or None
 
-        config_path = Path(work) / "opencode.json"
-        config_path.write_text(json.dumps(
-            _opencode_config(base_url=base_url, model=model, allowed_tools=allowed_tools,
-                             mcp_config=mcp_config)
-        ))
+        config = _opencode_config(base_url=base_url, model=model, allowed_tools=allowed_tools,
+                                  mcp_config=mcp_config)
 
         try:
-            with _Server(str(work)) as server:
+            with _Server(str(work), config) as server:
                 with httpx.Client(base_url=server.base_url, timeout=10.0) as client:
                     if session:
                         session_id = session

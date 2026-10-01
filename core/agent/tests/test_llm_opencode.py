@@ -30,12 +30,14 @@ def test_opencode_config_models_is_empty_when_model_is_none():
 
 
 class _BoomOnEnter:
-    """Stands in for _Server: run_turn writes opencode.json BEFORE ever touching this, so a server
-    that fails immediately on __enter__ still lets us assert on the written config. Raises the SAME
-    exception type a real failed server start raises (OpenCodeServerError) so run_turn's own
-    `except OpenCodeServerError` catches it and yields a clean `done` event instead of propagating."""
-    def __init__(self, *_a, **_kw):
-        pass
+    """Stands in for _Server: run_turn builds the config BEFORE ever touching this, so a server that
+    fails immediately on __enter__ still lets us assert on the config it was handed (``last_config``).
+    Raises the SAME exception type a real failed server start raises (OpenCodeServerError) so run_turn's
+    own `except OpenCodeServerError` catches it and yields a clean `done` event instead of propagating."""
+    last_config: dict | None = None
+
+    def __init__(self, cwd, config=None):
+        type(self).last_config = config
 
     def __enter__(self):
         raise OpenCodeServerError("stub — never actually starts a real opencode process")
@@ -56,8 +58,8 @@ def test_run_turn_falls_back_to_vexa_llm_model_env_when_no_model_given(tmp_path,
     events = list(harness.run_turn(tmp_path, "do something", model=None))
     assert events == [{"type": "done", "ok": False, "reply": "stub — never actually starts a real opencode process"}]
 
-    written = json.loads((Path(tmp_path) / "opencode.json").read_text())
-    assert written["provider"]["local"]["models"] == {"llama3.2:3b": {"name": "llama3.2:3b"}}
+    assert _BoomOnEnter.last_config["provider"]["local"]["models"] == {"llama3.2:3b": {"name": "llama3.2:3b"}}
+    assert not (Path(tmp_path) / "opencode.json").exists()  # never a file in the worktree
 
 
 def test_run_turn_prefers_an_explicit_model_over_the_env(tmp_path, monkeypatch):
@@ -68,8 +70,7 @@ def test_run_turn_prefers_an_explicit_model_over_the_env(tmp_path, monkeypatch):
     harness = OpenCodeHarness()
     list(harness.run_turn(tmp_path, "do something", model="gemma4:latest"))
 
-    written = json.loads((Path(tmp_path) / "opencode.json").read_text())
-    assert written["provider"]["local"]["models"] == {"gemma4:latest": {"name": "gemma4:latest"}}
+    assert _BoomOnEnter.last_config["provider"]["local"]["models"] == {"gemma4:latest": {"name": "gemma4:latest"}}
 
 
 def test_run_turn_reports_a_clean_error_with_no_completion_endpoint(tmp_path, monkeypatch):
@@ -79,7 +80,7 @@ def test_run_turn_reports_a_clean_error_with_no_completion_endpoint(tmp_path, mo
     events = list(harness.run_turn(tmp_path, "do something"))
     assert events == [{"type": "done", "ok": False,
                         "reply": "no completion endpoint: set VEXA_LLM_BASE_URL for the opencode runner"}]
-    assert not (Path(tmp_path) / "opencode.json").exists()  # fails before writing anything
+    assert not (Path(tmp_path) / "opencode.json").exists()
 
 
 # ── durable transcript (chat history survives the worker/opencode-server being torn down) ───────
@@ -166,3 +167,12 @@ def test_write_durable_transcript_never_raises_on_an_unwritable_path(tmp_path):
     _write_durable_transcript(chat_root, "ses_x", [
         {"info": {"role": "user"}, "parts": [{"type": "text", "text": "hi"}]},
     ])  # must not raise
+
+
+def test_server_hands_the_config_over_in_the_environment_not_as_a_file(tmp_path, monkeypatch):
+    from llm.opencode import _Server
+    monkeypatch.setattr("llm.opencode.harness_subprocess_env", lambda: {"PATH": "/bin"})
+    env = _Server(str(tmp_path), {"provider": {"local": {}}})._env()
+    assert json.loads(env["OPENCODE_CONFIG_CONTENT"]) == {"provider": {"local": {}}}
+    assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1"   # a repo's own opencode.json must not merge in
+    assert list(tmp_path.iterdir()) == []
