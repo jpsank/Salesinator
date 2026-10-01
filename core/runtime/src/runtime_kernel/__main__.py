@@ -92,6 +92,30 @@ def _start_ticker(scheduler) -> None:
     threading.Thread(target=_loop, name="scheduler-tick", daemon=True).start()
 
 
+def _start_reaper(runtime) -> None:
+    """Background loop that destroys stopped workloads past their retention window (see
+    Runtime.reap_stopped's docstring for why stop() itself never does this). Both knobs are env so an
+    operator can tune or disable retention without a code change; RUNTIME_STOPPED_RETENTION_SEC
+    defaults well past meeting-api's untracked_grace (600s default) so a bot's clean-exit evidence is
+    never erased before a caller still polling it can observe it."""
+    retention = float(os.getenv("RUNTIME_STOPPED_RETENTION_SEC", "3600"))
+    interval = float(os.getenv("RUNTIME_REAP_INTERVAL_SEC", "300"))
+    if retention <= 0:
+        return
+
+    def _loop() -> None:
+        while True:
+            try:
+                reaped = runtime.reap_stopped(retention)
+                if reaped:
+                    logger.info("reaped %d stopped workload(s) past retention", len(reaped))
+            except Exception as e:  # noqa: BLE001 — a bad sweep must not kill the loop
+                logger.warning("stopped-workload reap error: %s", e)
+            time.sleep(interval)
+
+    threading.Thread(target=_loop, name="workload-reaper", daemon=True).start()
+
+
 def _build_backend():
     """Select the spawn backend from ``RUNTIME_BACKEND`` (default ``docker``). compose/desktop run
     ``docker`` (host socket API); a k8s deployment runs ``k8s`` (spawns Pods via kubectl under the
@@ -133,6 +157,13 @@ def build_production_app():
     from .config_preflight import preflight
     from .kernel import Runtime
     from .profiles import apply_command_overrides, default_registry, worker_image_for
+
+    # LOG_LEVEL's own config.v1.json entry already says "uvicorn/app log level" — but nothing ever
+    # called basicConfig, so every logger.info/warning in this package (preflight, scheduler
+    # recovery, adoption, the reaper below) was silently dropped; only uvicorn's own request-line
+    # logging reached the console. A no-op if a handler is already attached (e.g. under a test
+    # runner), so safe to call unconditionally here.
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "info").upper())
 
     # config.v1 boot preflight (ADR-0026): validate the declaration against the env — the runtime has
     # no required-explicit keys today, so this logs the capability tri-states (scheduler · bot_spawn ·
@@ -179,6 +210,7 @@ def build_production_app():
             )
     except Exception as e:  # noqa: BLE001 — adoption is a boot aid; it must never block the boot
         logger.warning("workload re-adoption failed: %s", e)
+    _start_reaper(runtime)
     return create_app(runtime, scheduler=scheduler)
 
 

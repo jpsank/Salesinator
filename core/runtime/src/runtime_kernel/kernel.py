@@ -286,6 +286,31 @@ class Runtime:
         self._emit(workload_id, RuntimeState.destroyed)
         return status
 
+    def reap_stopped(self, older_than_sec: float) -> list[str]:
+        """Destroy every ``stopped`` workload whose ``stoppedAt`` is older than ``older_than_sec``.
+
+        Nothing calls destroy() automatically otherwise — stop() deliberately leaves the record (and
+        its container) around so a consumer polling GET /workloads shortly after can still see
+        POSITIVE evidence of a clean exit (state=stopped, exitCode) rather than a 404, which some
+        callers (meeting-api's reconcile — see its untracked_grace, default 600s) treat as
+        inconclusive and respond to more cautiously. older_than_sec must clear the largest such grace
+        window with margin; the caller (the production ticker) is the single place that owns that
+        number so it stays one source of truth."""
+        now = datetime.now(timezone.utc)
+        reaped: list[str] = []
+        for record in self.store.list():
+            status = record.status
+            if status.state is not RuntimeState.stopped or not status.stoppedAt:
+                continue
+            try:
+                stopped_at = datetime.fromisoformat(status.stoppedAt)
+            except ValueError:
+                continue
+            if (now - stopped_at).total_seconds() >= older_than_sec:
+                self.destroy(status.workloadId)
+                reaped.append(status.workloadId)
+        return reaped
+
 
 def _coerce_registry(profiles) -> ProfileRegistry:
     """Normalize the `profiles` arg into a ProfileRegistry.

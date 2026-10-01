@@ -31,6 +31,13 @@ stop_native ollama
 if [ "${1:-}" = "--docker" ]; then
   echo "== docker services =="
   docker compose -f "$CD/docker-compose.yml" stop
+  # Dangling image layers (orphaned by a rebuild retagging the same name) have no consumer, ever —
+  # unlike the runtime's stopped-workload records, there's no grace window to respect, so pruning is
+  # safe any time. Only worth paying the cost here, alongside a full teardown, not on every dev-up
+  # (which optimizes for fast restart, not disk hygiene). -f, not -a: dangling only, never touches a
+  # tagged image still in use.
+  echo "== dangling image layers =="
+  docker image prune -f
 fi
 
 echo

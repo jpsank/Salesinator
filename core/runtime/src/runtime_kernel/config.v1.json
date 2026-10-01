@@ -50,6 +50,20 @@
    "targets": []
   },
   {
+   "key": "RUNTIME_STOPPED_RETENTION_SEC",
+   "class": "defaulted",
+   "default": "3600",
+   "description": "how long a stopped workload's record (and container) is kept before the background reaper destroys it; 0 disables the reaper. Must clear meeting-api's untracked_grace (600s default) with margin",
+   "targets": []
+  },
+  {
+   "key": "RUNTIME_REAP_INTERVAL_SEC",
+   "class": "defaulted",
+   "default": "300",
+   "description": "stopped-workload reaper sweep interval (s)",
+   "targets": []
+  },
+  {
    "key": "POD_NAMESPACE",
    "class": "defaulted",
    "default": "(unset — kubectl's current namespace)",
