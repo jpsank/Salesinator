@@ -1047,10 +1047,10 @@ services:
         # runtime and otherwise npm-installs it AT BOOT (slow, network-dependent, currently broken).
         RUNTIME_DEPS: ${TERMINAL_RUNTIME_DEPS:-prod}
         # sales-cycle add-on: the public URL the browser navigates to for "Connect HubSpot" (a real
-        # redirect, not a fetch — see salesCycleApi.ts). Set SALES_CYCLE_PUBLIC_URL when the terminal is served
+        # redirect, not a fetch — see salesCycleApi.ts). Set SALES_CYCLE_BROWSER_URL when the terminal is served
         # from a domain (the browser can't reach localhost). Baked in at build time like the other
         # NEXT_PUBLIC_* args above; rebuild the terminal image after changing it.
-        NEXT_PUBLIC_SALES_CYCLE_URL: ${SALES_CYCLE_PUBLIC_URL:-http://localhost:${SALES_CYCLE_PORT:-18300}}
+        NEXT_PUBLIC_SALES_CYCLE_URL: ${SALES_CYCLE_BROWSER_URL:-http://localhost:${SALES_CYCLE_PORT:-18300}}
     image: vexaai/v012-terminal:${IMAGE_TAG:-dev}
     ports:
       - "127.0.0.1:${TERMINAL_PORT:-13000}:3000"

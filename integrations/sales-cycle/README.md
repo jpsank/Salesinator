@@ -58,7 +58,8 @@ cards (transcript notes, tagged items — `feature_request` is one tag) on a per
 moment each one comes up, the same stream the Terminal's own live-call view renders from. For each
 call, `live_card_watcher.py` is started as a background task the instant that call's
 `meeting.started` webhook arrives, tails that one stream for the meeting's whole duration, and posts
-each `feature_request` card to Slack as soon as it appears — running as the call's own dispatching
+each `feature_request` card to Slack as soon as it appears (the post and the "already seen" mark are
+recorded together, and a failed write is logged without re-posting that card or ending the tail) — running as the call's own dispatching
 user (`data.meeting.user_id` off that webhook), which is what both the stream's ownership check and
 the workspace-binding lookup are keyed on. Workspace resolution happens per card, not once per
 call, since a customer tag can land after the call — and its first few cards — already started.
@@ -164,7 +165,8 @@ of step 9 are OAuth-specific.
    event to be delivered at all — Slack silently drops an event subscription the bot token
    doesn't hold the matching scope for).
 3. **OAuth & Permissions** → **Redirect URLs** → add `http://localhost:18300/oauth/slack/callback`
-   (this one's fine as `localhost` — it's your own browser that makes this request).
+   (fine as `localhost` for local use — it's your own browser that makes this request; when serving
+   from a domain, add the public one too — see "Serving it from a domain" below).
 4. **Give Slack a real address to reach `/slack/events` at.** Event Subscriptions is an INCOMING
    webhook — Slack's own servers make this request, and `localhost` means nothing to them (it
    only resolves to whatever machine is asking). If you're not already behind a real public
@@ -220,7 +222,36 @@ every rep's own "Connect GitHub" token card.
    VEXA_GITHUB_OAUTH_CLIENT_ID=...
    VEXA_GITHUB_OAUTH_CLIENT_SECRET=...
    ```
-   (`VEXA_GITHUB_OAUTH_REDIRECT_URI` / `VEXA_TERMINAL_URL` already default correctly for local dev.)
+   (`VEXA_GITHUB_OAUTH_REDIRECT_URI` / `VEXA_TERMINAL_URL` already default correctly for local dev; behind a domain, set both to your public URLs — see "Serving it from a domain".)
+
+If GitHub later revokes or expires a saved token, loading the repo list returns `409` ("GitHub rejected
+your saved token … disconnect and reconnect GitHub") and the card shows that message — reconnect to fix
+it. A GitHub outage or other upstream failure stays a `502`. When a rep picks the product repo, their
+*saved* token is copied to the shared `product-repo` identity; a one-time token sent with the request
+is used for that call only and never stored.
+
+### Serving it from a domain
+
+The Connect buttons are real browser redirects, so every address in the OAuth round trip has to be
+one the browser can reach. Four settings carry them, and they are independent — setting one does not
+change the others:
+
+| Setting | What it is | Default |
+|---|---|---|
+| `SALES_CYCLE_BROWSER_URL` | Where the terminal's "Connect HubSpot/Slack" button sends the browser. Baked into the **terminal image at build time** — `./redeploy.sh` rebuilds it; a plain `docker compose up` does not. Only the terminal reads it. | `http://localhost:${SALES_CYCLE_PORT}` |
+| `SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI` / `SALES_CYCLE_SLACK_OAUTH_REDIRECT_URI` | Where HubSpot/Slack send the browser after consent. Must match the redirect URL registered in the provider's app **exactly**. | `http://localhost:18300/oauth/<provider>/callback` |
+| `SALES_CYCLE_TERMINAL_URL` | Where the browser lands once the connection is saved. | `http://localhost:13000` |
+
+For `https://sales-cycle.example.com` and `https://terminal.example.com`:
+```
+SALES_CYCLE_BROWSER_URL=https://sales-cycle.example.com
+SALES_CYCLE_HUBSPOT_OAUTH_REDIRECT_URI=https://sales-cycle.example.com/oauth/hubspot/callback
+SALES_CYCLE_SLACK_OAUTH_REDIRECT_URI=https://sales-cycle.example.com/oauth/slack/callback
+SALES_CYCLE_TERMINAL_URL=https://terminal.example.com
+```
+GitHub is configured separately (`VEXA_GITHUB_OAUTH_REDIRECT_URI` and `VEXA_TERMINAL_URL`, above).
+When running agent-api natively via `run-agent-api-native.sh`, it reads both from `.env`
+(falling back to localhost), so they follow the same file.
 
 ### The product repo
 
@@ -253,7 +284,11 @@ which subject the picker (and the curl fallback above) is allowed to act on beha
 **Every implementation turn gets its own isolated `git worktree`** (agent-api's
 `isolation.mode: "worktree"`, opt-in per dispatch) — without it, two feature requests approved close
 together would run their `git checkout -b`/`git commit` against the SAME shared directory and
-corrupt each other. This is automatic; nothing to configure.
+corrupt each other. This is automatic; nothing to configure. The unit id names the worktree directory,
+so it must be a single path component (anything else is refused with a 400), and a worktree whose
+pull request never opened is released after three days, the next time one is provisioned for that
+subject. Each dispatch attempt also gets its own branch (`feature/<title-slug>-<short random suffix>`),
+so a retry, or two requests with the same title, never collide on a branch name.
 
 **Attribution — optional, but worth setting if the product repo is one you (or your org) actually
 maintain**, e.g. if you're dogfooding SalesCycle on Vexa itself:
@@ -268,6 +303,10 @@ line (agent-api installs the standard `prepare-commit-msg` hook once per subject
 fails. If the product repo has its OWN `pre-push` git hook configured (any repo with a normal
 contribution process might), that hook runs too, the same as it would for a human's local
 `git push` — a genuinely broken change gets refused before it reaches GitHub, not just committed.
+The hook runs with a minimal environment (toolchain, proxy and git-identity variables — never
+agent-api's own secrets) and is cut off after ten minutes, which counts as a failed check. The same
+minimal environment applies to `VEXA_WORKSPACE_WORKTREE_SETUP_CMD`; name any extra variable it needs
+(such as a private-registry token) in `VEXA_WORKSPACE_WORKTREE_SETUP_ENV`.
 
 **A pull request opens automatically once a branch is pushed** (`SALES_CYCLE_PRODUCT_REPO_DEFAULT_BRANCH`,
 default `main`) — not just for human review: most preview-hosting platforms (Vercel, Netlify, …)
@@ -283,7 +322,9 @@ what "the product repo" is):
 - Vexa's meeting-notes agent didn't have a way to know which customer's notes-folder it should
   write into. `core/agent/control_plane/transcription_watcher.py`'s `SALES_CYCLE_WORKSPACE_RESOLVE`
   (on by default) reads "which customer is this meeting tagged as" and uses that instead of writing
-  every single call's notes into one shared folder. For any meeting that isn't tagged, it falls
+  every single call's notes into one shared folder. A rep may tag a call after it starts, so until a
+  tag is found the meeting owner's folder is only a provisional answer and is re-checked (throttled)
+  rather than fixed for the whole call. For any meeting that isn't tagged, it falls
   straight through to the old behavior — proved by running Vexa's own full test suite with the flag
   both on and off.
 - Per-turn worktree isolation (`isolation.mode: "worktree"` on a unit.v1 dispatch,

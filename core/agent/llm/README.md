@@ -23,8 +23,12 @@ fakes.
   `claude_cli.py` (beats via the claude CLI on mounted SUBSCRIPTION credentials — no API key;
   slower per beat; for subscription-only deployments).
 - **Harnesses**: `claude_code.py` (the `claude` CLI — argv build, stream-json parsing, `.claude/`
-  continuity + skills wiring, credential preflight). Open-source runners (OpenCode, Aider, Goose)
-  slot in as new adapter files + one registry line.
+  continuity + skills wiring, credential preflight) · `opencode.py` (`opencode serve` driven over its
+  HTTP API, one server per turn; points a fixed `local` provider at the deployment's
+  OpenAI-compatible completion endpoint, so it needs no separate credentials; the per-turn tool
+  permissions travel in `OPENCODE_CONFIG_CONTENT` with the working directory's own project config
+  disabled — nothing is written into the worktree). Other open-source runners (Aider, Goose) slot in
+  as new adapter files + one registry line.
 
 Raw `httpx`, no vendor SDKs — the protocols are ~10 lines each and a pinned SDK is a heavier
 supply-chain surface than the dialect itself.
@@ -38,7 +42,7 @@ supply-chain surface than the dialect itself.
 | `VEXA_LLM_API_KEY` | credential (optional for local runtimes) | falls back `ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` |
 | `VEXA_LLM_MODEL` | deployment-default model (free string) | empty → fail-loud at completion call |
 | `VEXA_LLM_MAX_TOKENS` | Messages-API max_tokens | 4096 |
-| `VEXA_RUNNER` | harness adapter key | `claude-code` |
+| `VEXA_RUNNER` | harness adapter key: `claude-code` \| `opencode` | `claude-code` |
 | `ANTHROPIC_*`, `HOST_CLAUDE_CREDENTIALS` | claude-code adapter ONLY | — |
 
 ## Rules

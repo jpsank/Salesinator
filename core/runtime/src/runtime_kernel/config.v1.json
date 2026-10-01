@@ -53,7 +53,7 @@
    "key": "RUNTIME_STOPPED_RETENTION_SEC",
    "class": "defaulted",
    "default": "3600",
-   "description": "how long a stopped workload's record (and container) is kept before the background reaper destroys it; 0 disables the reaper. Must clear meeting-api's untracked_grace (600s default) with margin",
+   "description": "how long a stopped workload's record (and container) is kept before the background reaper destroys it; 0 disables the reaper; a workload that cannot be destroyed is logged and retried next sweep without stopping the rest. Must clear meeting-api's untracked_grace (600s default) with margin",
    "targets": []
   },
   {

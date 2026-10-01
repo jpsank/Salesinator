@@ -22,7 +22,7 @@
 #      (deliberately kept stopped — see run-agent-api-native.sh), so building/restarting the DOCKER
 #      side of it would be pure waste. Instead the NATIVE process is unconditionally killed and
 #      relaunched (cheap — a few seconds) so it always runs current source, no change-detection
-#      needed.
+#      needed. Its previous log is kept as agent-api.log.prev (the new run starts a fresh agent-api.log).
 #
 # Usage: ./redeploy.sh   (from deploy/compose/, or anywhere)
 set -eu

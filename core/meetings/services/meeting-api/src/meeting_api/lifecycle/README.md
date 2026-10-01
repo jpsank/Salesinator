@@ -49,7 +49,8 @@ record's status at write-time, never the bot's stale payload) · `error_details`
 `status_transition[]` trail (one entry per hop: `{from, to, timestamp, source, [reason,
 completion_reason, failure_stage, error_details]}`) · terminal forensics (`bot_logs` capped at 50 KiB
 trimmed oldest-first + `bot_resources`). `MeetingRecord.data` is the `meeting.data` JSONB projection
-the parent persists. Each advance returns a `StatusChange` carrying the `meeting.status_change`
+the parent persists; on `rehydrate` a record's in-memory history is rebuilt from that persisted
+`status_transition[]` trail, so a restart does not lose it. Each advance returns a `StatusChange` carrying the `meeting.status_change`
 webhook body `{old_status, new_status, reason, transition_source ∈ user_stop|bot_callback|scheduler_timeout}`.
 
 ## P3d taxonomy
