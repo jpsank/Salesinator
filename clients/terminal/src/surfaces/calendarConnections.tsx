@@ -234,10 +234,16 @@ export function CalendarConnectionsPanel() {
   const [busy, setBusy] = useState<string | null>(null);   // "new" | "<id>:sync|update|delete"
   const [adding, setAdding] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const webhookChecked = useRef(false);   // once per mount — idempotent server-side anyway
 
+  // Same stuck-forever bug found live elsewhere tonight (OAuthConnectionCard, ProductRepoPicker):
+  // this ran once on mount and never again, so a transient failure (expired/rejected key, a
+  // network blip) left the error banner up with no way back short of a full page reload. `checking`
+  // + the Retry button below let a caller re-run this exact fetch instead.
   const refresh = useCallback(async () => {
+    setChecking(true);
     try {
       const list = await listCalendars();
       setCals(list); setErr(null);
@@ -253,6 +259,8 @@ export function CalendarConnectionsPanel() {
       }
     } catch (e: unknown) {
       setCals([]); setErr(presentError(e).headline);
+    } finally {
+      setChecking(false);
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -324,7 +332,12 @@ export function CalendarConnectionsPanel() {
         themselves; with auto-join on, the bot joins them when they start. Each calendar carries its own
         auto-join policy and bot name.
       </div>
-      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+      {err && (
+        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--danger)" }}>
+          <span style={{ flex: 1 }}>⚠ {err}</span>
+          <button disabled={checking} onClick={() => void refresh()} style={btn}>{checking ? "Retrying…" : "Retry"}</button>
+        </div>
+      )}
       {note && <div role="status" style={{ fontSize: 11.5, color: "var(--green)" }}>✓ {note}</div>}
 
       {cals === null ? (

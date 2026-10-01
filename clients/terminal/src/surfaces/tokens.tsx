@@ -6,7 +6,7 @@
  *  the user server-side from the auth cookies — no user_id ever leaves this component (P20). The
  *  minted token value is shown ONCE (copy it now); it is never listed again.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../ui-kit";
 import { copyText } from "../ui-kit/ContextMenu";
 import { cardBtn, cardField, cardMeta, cardPrimaryBtn, OAuthConnectionCard, PasteTokenFallback, type OAuthStatus } from "./integrationCard";
@@ -147,6 +147,9 @@ function ProductRepoPicker() {
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [reposChecking, setReposChecking] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   useEffect(() => {
     let on = true;
@@ -161,13 +164,24 @@ function ProductRepoPicker() {
     return () => { on = false; };
   }, [targetSubject]);
 
-  useEffect(() => {
-    let on = true;
-    listMyGitHubRepos()
-      .then((r) => { if (!on) return; setRepos(r); if (r.length > 0) { setSelected(r[0].clone_url); setRef(r[0].default_branch); } })
-      .catch((e: unknown) => on && setErr(presentError(e).headline));
-    return () => { on = false; };
+  // Same stuck-forever bug as OAuthConnectionCard, found live in production: this call is exactly
+  // the one the gateway's logs showed 502ing (GitHub rate limit / network blip / stale token) — on
+  // a failure here `repos` stays null and `err` stays set permanently, since this effect runs once
+  // on mount and never again. `loadRepos` is reusable so Retry below re-runs the same fetch instead
+  // of requiring a full page reload.
+  const loadRepos = useCallback(() => {
+    setReposChecking(true); setErr(null);
+    return listMyGitHubRepos()
+      .then((r) => {
+        if (!mountedRef.current) return;
+        setRepos(r);
+        if (r.length > 0) { setSelected(r[0].clone_url); setRef(r[0].default_branch); }
+      })
+      .catch((e: unknown) => { if (mountedRef.current) setErr(presentError(e).headline); })
+      .finally(() => { if (mountedRef.current) setReposChecking(false); });
   }, []);
+
+  useEffect(() => { void loadRepos(); }, [loadRepos]);
 
   const pick = (cloneUrl: string) => {
     setSelected(cloneUrl);
@@ -203,9 +217,14 @@ function ProductRepoPicker() {
         Once a feature request is approved (✓ in Slack), an agent implements it as a branch on this
         repo and pushes it for review.
       </div>
-      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+      {err && (
+        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--danger)" }}>
+          <span style={{ flex: 1 }}>⚠ {err}</span>
+          <button disabled={reposChecking} onClick={() => void loadRepos()} style={cardBtn}>{reposChecking ? "Retrying…" : "Retry"}</button>
+        </div>
+      )}
       {(!hasRepo || picking) && (
-        repos === null ? <div style={cardMeta}>Loading your repos…</div>
+        repos === null ? (reposChecking ? <div style={cardMeta}>Loading your repos…</div> : null)
         : repos.length === 0 ? <div style={cardMeta}>No repos found on this GitHub account.</div>
         : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

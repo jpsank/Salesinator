@@ -125,6 +125,27 @@ describe("the list", () => {
     render(<CalendarConnectionsPanel />);
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/can't reach a backend service/i));
   });
+
+  it("retry recovers from a failed list without a reload — same stuck-forever bug found live elsewhere tonight", async () => {
+    let listCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u === "/api/user/calendars") {
+        listCalls += 1;
+        if (listCalls === 1) return new Response(JSON.stringify({ detail: "rejected" }), { status: 401 });
+        return new Response(JSON.stringify({ calendars: [cal()] }), { status: 200 });
+      }
+      // sync-status / webhook probes: best-effort, each already caught independently by the panel.
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    render(<CalendarConnectionsPanel />);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/sign in again/i));
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByText("Work")).toBeTruthy());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });
 
 describe("the feed address is write-only", () => {

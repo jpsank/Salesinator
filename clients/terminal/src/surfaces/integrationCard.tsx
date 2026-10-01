@@ -6,7 +6,7 @@
  *  differences crept in (padding, font-size, spacing). One definition now; every card imports these
  *  instead of rolling its own.
  */
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { presentError } from "./apiClient";
 
 export const cardField: CSSProperties = { width: "100%", boxSizing: "border-box", fontSize: 12, padding: "6px 9px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)" };
@@ -106,14 +106,27 @@ export function OAuthConnectionCard({
   const [status, setStatus] = useState<OAuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const redirectFeedback = useOAuthRedirectFeedback(provider);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
-  useEffect(() => {
-    let on = true;
-    getStatus().then((s) => on && setStatus(s)).catch((e: unknown) => on && setErr(presentError(e).headline));
-    return () => { on = false; };
+  // A transient failure (GitHub rate-limited, a network blip, agent-api mid-restart) used to leave
+  // this card stuck on its error banner forever — the status check ran once on mount and never
+  // again, so the only way out was a full page reload. Reproduced live: the gateway's own logs
+  // showed a 502 burst, then NOTHING for the next 28 hours, while the card kept showing the same
+  // stale error the whole time. `refresh` is reusable so the Retry button below re-runs the exact
+  // same check instead of needing a reload.
+  const refresh = useCallback(() => {
+    setChecking(true); setErr(null);
+    return getStatus()
+      .then((s) => { if (mountedRef.current) setStatus(s); })
+      .catch((e: unknown) => { if (mountedRef.current) setErr(presentError(e).headline); })
+      .finally(() => { if (mountedRef.current) setChecking(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
 
   const doDisconnect = async () => {
     setBusy(true); setErr(null);
@@ -127,21 +140,23 @@ export function OAuthConnectionCard({
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--t1)" }}>{label}</span>
         <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)" }}>
-          {status === null ? "Checking…"
+          {status === null ? (checking ? "Checking…" : "")
             : status.connected ? `Connected${status.account_label ? ` · ${status.account_label}` : ""}`
             : "Not connected"}
         </span>
+        {/* status === null + err: the check failed — true state unknown, so neither Connect nor
+            Disconnect is shown (either would be a guess); the Retry button below is the only action. */}
         {status?.connected ? (
           <button disabled={busy} onClick={() => void doDisconnect()} style={{ ...cardBtn, color: "var(--danger)" }}>
             {busy ? "Disconnecting…" : "Disconnect"}
           </button>
         ) : status?.configured === false ? (
           <span style={{ fontSize: 11.5, color: "var(--t3)" }}>OAuth not registered on this deployment</span>
-        ) : (
+        ) : status !== null ? (
           <a href={connectUrl} style={{ ...cardPrimaryBtn, textDecoration: "none", display: "inline-block" }}>
             Connect
           </a>
-        )}
+        ) : null}
       </div>
       <div style={cardMeta}>{description}</div>
       {status !== null && !status.connected && fallback?.(setStatus)}
@@ -152,7 +167,12 @@ export function OAuthConnectionCard({
       {redirectFeedback.error && (
         <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ Connecting {label} failed: {redirectFeedback.error}</div>
       )}
-      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+      {err && (
+        <div role="alert" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--danger)" }}>
+          <span style={{ flex: 1 }}>⚠ {err}</span>
+          <button disabled={checking} onClick={() => void refresh()} style={cardBtn}>{checking ? "Retrying…" : "Retry"}</button>
+        </div>
+      )}
     </div>
   );
 }
