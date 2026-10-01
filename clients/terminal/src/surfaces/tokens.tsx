@@ -255,16 +255,18 @@ export function GitHubTokenCard() {
   const getStatus = useCallback(async () => toOAuthStatus(await getGitToken()), []);
   const disconnect = useCallback(async () => toOAuthStatus(await setGitToken(null)), []);
   return (
-    <OAuthConnectionCard provider="github" label="GitHub"
-      description="Lets an agent push a finished feature-request branch to your product repo for review."
-      connectUrl="/api/github/oauth/authorize" getStatus={getStatus} disconnect={disconnect}
-      fallback={(onConnected) => (
-        <PasteTokenFallback
-          description="Or paste your own fine-grained PAT (revocable on GitHub anytime):"
-          placeholder="ghp_…" saveToken={async (v) => toOAuthStatus(await setGitToken(v))}
-          onConnected={onConnected} />
-      )}
-      extra={() => <ProductRepoPicker />} />
+    <div style={{ maxWidth: 640 }}>
+      <OAuthConnectionCard provider="github" label="GitHub"
+        description="Lets an agent push a finished feature-request branch to your product repo for review."
+        connectUrl="/api/github/oauth/authorize" getStatus={getStatus} disconnect={disconnect}
+        fallback={(onConnected) => (
+          <PasteTokenFallback
+            description="Or paste your own fine-grained PAT (revocable on GitHub anytime):"
+            placeholder="ghp_…" saveToken={async (v) => toOAuthStatus(await setGitToken(v))}
+            onConnected={onConnected} />
+        )}
+        extra={() => <ProductRepoPicker />} />
+    </div>
   );
 }
 
