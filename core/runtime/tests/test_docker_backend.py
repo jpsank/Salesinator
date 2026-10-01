@@ -14,8 +14,16 @@ from runtime_kernel.models import RuntimeState, WorkloadSpec
 from runtime_kernel.profiles import Runnable
 
 
+def _backend_socket_exists() -> bool:
+    """DockerBackend talks to DOCKER_HOST's unix socket directly (default /var/run/docker.sock), not via
+    the docker CLI — which can resolve a different socket (Docker Desktop's context). Only run when the
+    socket the BACKEND will use is there."""
+    host = os.getenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    return not host.startswith("unix://") or os.path.exists(host[len("unix://"):])
+
+
 def _docker_ok() -> bool:
-    return bool(shutil.which("docker")) and subprocess.run(
+    return bool(shutil.which("docker")) and _backend_socket_exists() and subprocess.run(
         ["docker", "info"], capture_output=True
     ).returncode == 0
 
