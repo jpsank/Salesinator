@@ -589,6 +589,14 @@ export function Chat({ params = {} }: ChatProps) {
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
+  // Opening a chat (or switching sessions) must land on the latest message, not the top of history —
+  // the scroll container is reused across sessions, so a fresh load otherwise keeps whatever scrollTop
+  // the PREVIOUS session left behind (often 0, since a brand-new mount never scrolled at all).
+  useEffect(() => {
+    if (!chatState.loaded) return;
+    stickToBottomRef.current = true;
+    window.setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 0);
+  }, [chatKey, chatState.loaded]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentSeqRef = useRef(0);
