@@ -92,6 +92,13 @@ export VEXA_INTERNAL_API_SECRET="${VEXA_INTERNAL_API_SECRET:-$(env_val INTERNAL_
 export VEXA_BOT_API_KEY="${VEXA_BOT_API_KEY:-$(env_val VEXA_BOT_API_KEY)}"
 export VEXA_GITHUB_OAUTH_CLIENT_ID="${VEXA_GITHUB_OAUTH_CLIENT_ID:-$(env_val VEXA_GITHUB_OAUTH_CLIENT_ID)}"
 export VEXA_GITHUB_OAUTH_CLIENT_SECRET="${VEXA_GITHUB_OAUTH_CLIENT_SECRET:-$(env_val VEXA_GITHUB_OAUTH_CLIENT_SECRET)}"
+# Unlike its sibling secrets above, this never fell back to .env's own value — it only ever checked
+# the CALLING SHELL's env, so .env's correct public-tunnel URL (agent-api.jsanker.com) was silently
+# ignored in favor of the localhost default below. Reproduced live: GitHub refused the OAuth
+# authorize request outright ("redirect_uri is not associated with this application") for any
+# caller that isn't Julian's own Mac, since localhost:18100 is meaningless to anyone else and
+# doesn't match what's registered on the GitHub OAuth App.
+export VEXA_GITHUB_OAUTH_REDIRECT_URI="${VEXA_GITHUB_OAUTH_REDIRECT_URI:-$(env_val VEXA_GITHUB_OAUTH_REDIRECT_URI)}"
 export VEXA_GITHUB_OAUTH_REDIRECT_URI="${VEXA_GITHUB_OAUTH_REDIRECT_URI:-http://localhost:18100/api/workspace/git-token/oauth/callback}"
 
 exec "$REPO/core/agent/.venv/bin/uvicorn" control_plane.api:app --host 0.0.0.0 --port 18100
