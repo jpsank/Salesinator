@@ -224,7 +224,9 @@ every rep's own "Connect GitHub" token card.
    ```
    (`VEXA_GITHUB_OAUTH_REDIRECT_URI` / `VEXA_TERMINAL_URL` already default correctly for local dev; behind a domain, set both to your public URLs — see "Serving it from a domain".)
 
-If GitHub later revokes or expires a saved token, loading the repo list returns `409` ("GitHub rejected
+The card asks GitHub whether the saved token still works each time it loads (`GET /api/workspace/git-token?verify=true`);
+when GitHub rejects it, the card says so and offers **Reconnect**, and hides the repo picker until it is fixed. No verdict
+(a GitHub outage or rate limit) is never treated as a rejection. If GitHub revokes or expires a saved token, loading the repo list returns `409` ("GitHub rejected
 your saved token … disconnect and reconnect GitHub") and the card shows that message — reconnect to fix
 it. A GitHub outage or other upstream failure stays a `502`. When a rep picks the product repo, their
 *saved* token is copied to the shared `product-repo` identity; a one-time token sent with the request
@@ -265,6 +267,12 @@ No clone URL typed, no token pasted, and no second "Connect GitHub" click for a 
 — whoever's GitHub is already connected on that card is who authenticates the attach, and a copy
 of that token is kept server-side under the `product-repo` subject too, so later pushes (which run
 as that subject, not as whoever set it up) keep working on their own.
+
+The product repo is one deployment-wide setting, so **only an admin** sees the picker and may act as the
+`product-repo` subject: the terminal's workspace proxy refuses `?for=` and `for_subject` from anyone else
+(`403`). That gate lives in the terminal, where admin status is known; agent-api itself only checks that the
+name equals the configured `VEXA_WORKSPACE_DELEGATE_SUBJECT`, so a caller holding a Vexa API key who talks to
+the gateway directly is not stopped by it — keep API keys to people you would trust with the product repo.
 
 **Fallback: curl**, for a scripted/headless setup (attaches the repo the exact same way the UI
 does, just called directly with an explicit token since there's no browser session to source one
