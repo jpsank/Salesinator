@@ -91,11 +91,16 @@ export async function createSharedWorkspace(name: string): Promise<{ workspace_i
  *  `target_subject` (GET only) is the one non-caller identity a workspace init/attached/swap call may
  *  act on behalf of (e.g. sales-cycle's shared product-repo picker) — read from here so a client never
  *  hardcodes a value this deployment owns. */
-export interface SavedGitToken { set: boolean; masked: string | null; oauth_configured?: boolean; target_subject?: string }
+export interface SavedGitToken {
+  set: boolean; masked: string | null; oauth_configured?: boolean; target_subject?: string;
+  /** Only with `getGitToken(true)`: `false` = GitHub rejected the saved token (revoked/expired),
+   *  `null` = GitHub gave no verdict (rate limit, network). */
+  valid?: boolean | null;
+}
 
 /** Read whether a reusable GitHub token is saved (masked preview only — the clear value never leaves the server). */
-export async function getGitToken(): Promise<SavedGitToken> {
-  return getJson(`/api/workspace/git-token`);
+export async function getGitToken(verify = false): Promise<SavedGitToken> {
+  return getJson(`/api/workspace/git-token${verify ? "?verify=true" : ""}`);
 }
 
 /** Save (non-empty) or CLEAR (empty/null) the caller's reusable GitHub token. Returns the masked state. */

@@ -66,4 +66,30 @@ describe("OAuthConnectionCard", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
   });
+  it("a saved credential the provider rejected says so and offers Reconnect, not the repo picker", async () => {
+    render(
+      <OAuthConnectionCard
+        provider="github" label="GitHub" description="desc" connectUrl="/api/github/oauth/authorize"
+        getStatus={async () => ({ connected: true, rejected: true })} disconnect={async () => ({ connected: false })}
+        extra={() => <div>picker</div>}
+      />
+    );
+    await waitFor(() => expect(screen.getByText("GitHub rejected the saved token")).toBeTruthy());
+    expect(screen.getByRole("link", { name: /reconnect/i }).getAttribute("href")).toBe("/api/github/oauth/authorize");
+    expect(screen.getByRole("button", { name: /disconnect/i })).toBeTruthy();
+    expect(screen.queryByText("picker")).toBeNull();
+  });
+
+  it("a working connection shows Connected and its extra, with no Reconnect", async () => {
+    render(
+      <OAuthConnectionCard
+        provider="github" label="GitHub" description="desc" connectUrl="/api/github/oauth/authorize"
+        getStatus={async () => ({ connected: true, account_label: "••••abcd" })} disconnect={async () => ({ connected: false })}
+        extra={() => <div>picker</div>}
+      />
+    );
+    await waitFor(() => expect(screen.getByText("Connected · ••••abcd")).toBeTruthy());
+    expect(screen.queryByRole("link", { name: /reconnect/i })).toBeNull();
+    expect(screen.getByText("picker")).toBeTruthy();
+  });
 });

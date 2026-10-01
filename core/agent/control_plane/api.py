@@ -1841,21 +1841,34 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown workspace")
 
     @app.get("/api/workspace/git-token")
-    def ws_git_token_get(request: Request):
+    def ws_git_token_get(request: Request, verify: bool = False):
         """Whether the caller has a SAVED reusable GitHub token, and a masked (last-4) preview of it.
         The clear value is NEVER returned — server-side only (git_credentials). `oauth_configured`
         lets the Settings UI show "OAuth not registered" instead of sending the rep into
         /authorize's raw 503. `target_subject` is the one non-caller identity a workspace
         init/attached/swap call may act on behalf of (e.g. sales-cycle's shared product-repo
-        picker) — surfaced here so a client never has to hardcode a value this deployment owns."""
+        picker) — surfaced here so a client never has to hardcode a value this deployment owns.
+        ``?verify=true`` also asks GitHub whether the saved token still works and adds ``valid``:
+        ``false`` when GitHub rejected it (revoked/expired), ``null`` when GitHub could not give a
+        verdict (rate limit, network) — never a guess in either direction."""
         subject = subject_of(request)
         oauth_configured = bool(
             settings is not None and settings.github_oauth_client_id and settings.github_oauth_redirect_uri
         )
-        return {"set": git_creds.read_github_token(wsr.root, subject) is not None,
-                "masked": git_creds.masked_github_token(wsr.root, subject),
-                "oauth_configured": oauth_configured,
-                "target_subject": settings.workspace_delegate_subject if settings is not None else ""}
+        saved = git_creds.read_github_token(wsr.root, subject)
+        out = {"set": saved is not None,
+               "masked": git_creds.masked_github_token(wsr.root, subject),
+               "oauth_configured": oauth_configured,
+               "target_subject": settings.workspace_delegate_subject if settings is not None else ""}
+        if verify and saved is not None:
+            try:
+                github_oauth.verify_token(token=saved)
+                out["valid"] = True
+            except github_oauth.GitHubTokenRejected:
+                out["valid"] = False
+            except github_oauth.GitHubOAuthError:
+                out["valid"] = None
+        return out
 
     @app.post("/api/workspace/git-token")
     def ws_git_token_set(request: Request, body: GitTokenBody = Body(default=GitTokenBody())):

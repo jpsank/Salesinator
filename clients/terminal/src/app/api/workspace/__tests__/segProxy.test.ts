@@ -6,11 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../proxyAuth", () => ({ resolveApiKey: async () => "alice-tok" }));
 vi.mock("../../../mode", () => ({ meetingsOnly: () => false }));
+const requireAdmin = vi.fn(async () => null as unknown);
+vi.mock("../../admin/gate", () => ({ requireAdmin: () => requireAdmin() }));
 
-import { DELETE as deleteRoute, GET as getRoute } from "../[...seg]/route";
+import { DELETE as deleteRoute, GET as getRoute, POST as postRoute } from "../[...seg]/route";
 
 function makeReq(): import("next/server").NextRequest {
-  return { nextUrl: { search: "" } } as unknown as import("next/server").NextRequest;
+  return { nextUrl: { search: "", searchParams: new URLSearchParams() } } as unknown as import("next/server").NextRequest;
 }
 const ctx = (...seg: string[]) => ({ params: Promise.resolve({ seg }) });
 
@@ -51,4 +53,31 @@ describe("workspace/[...seg] proxy", () => {
     const res = await getRoute(makeReq(), ctx("file"));
     expect(res.status).toBe(200);
   });
+describe("workspace/[...seg] proxy — the shared product-repo identity is admin-only", () => {
+  const reqWith = (search: string, body = ""): import("next/server").NextRequest => ({
+    nextUrl: { search, searchParams: new URLSearchParams(search) },
+    text: async () => body, body: null, headers: new Headers(),
+  } as unknown as import("next/server").NextRequest);
+
+  it("refuses a non-admin acting for the shared identity (?for= and swap's for_subject) without calling agent-api", async () => {
+    requireAdmin.mockResolvedValue(null);
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    expect((await getRoute(reqWith("?for=product-repo"), ctx("attached"))).status).toBe(403);
+    expect((await postRoute(reqWith("?for=product-repo"), ctx("init"))).status).toBe(403);
+    expect((await postRoute(reqWith("", JSON.stringify({ repo: "x", for_subject: "product-repo" })), ctx("swap"))).status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("lets a non-admin use their own workspace, and an admin act for the shared one", async () => {
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    requireAdmin.mockResolvedValue(null);
+    expect((await getRoute(reqWith(""), ctx("attached"))).status).toBe(200);
+    expect((await postRoute(reqWith("", JSON.stringify({ repo: "x", for_subject: null })), ctx("swap"))).status).toBe(200);
+    requireAdmin.mockResolvedValue({ email: "a@b.c", userId: 1 });
+    expect((await getRoute(reqWith("?for=product-repo"), ctx("attached"))).status).toBe(200);
+    expect((await postRoute(reqWith("", JSON.stringify({ for_subject: "product-repo" })), ctx("swap"))).status).toBe(200);
+  });
+});
 });

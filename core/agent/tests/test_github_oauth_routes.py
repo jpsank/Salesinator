@@ -284,6 +284,34 @@ def test_attached_for_the_shared_subject_reports_its_own_empty_shape(tmp_path):
     assert "slots" in r.json() and "active_set" in r.json()
 
 
+def test_git_token_get_verify_reports_whether_github_still_accepts_the_saved_token(tmp_path, monkeypatch):
+    import io, json as _json, urllib.error
+    git_creds.set_github_token(tmp_path, "u_jane", "ghu_saved")
+    c = _client(tmp_path)
+
+    class _Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", lambda req, timeout=10: _Resp(_json.dumps({"login": "jane"}).encode()))
+    assert c.get("/api/workspace/git-token?verify=true", headers=H).json()["valid"] is True
+
+    def _401(req, timeout=10):
+        raise urllib.error.HTTPError(req.full_url, 401, "Bad credentials", {}, None)
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", _401)
+    assert c.get("/api/workspace/git-token?verify=true", headers=H).json()["valid"] is False
+
+    def _500(req, timeout=10):
+        raise urllib.error.HTTPError(req.full_url, 500, "boom", {}, None)
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", _500)
+    assert c.get("/api/workspace/git-token?verify=true", headers=H).json()["valid"] is None   # no verdict ≠ rejected
+
+    # without ?verify there is no GitHub call and no verdict, so the status poll stays free
+    def _boom(req, timeout=10): raise AssertionError("must not call GitHub")
+    monkeypatch.setattr(github_oauth.urllib.request, "urlopen", _boom)
+    assert "valid" not in c.get("/api/workspace/git-token", headers=H).json()
+
+
 def test_repos_reports_a_rejected_saved_token_as_a_reconnect_prompt_not_a_gateway_fault(tmp_path, monkeypatch):
     import urllib.error
     git_creds.set_github_token(tmp_path, "u_jane", "ghu_revoked")

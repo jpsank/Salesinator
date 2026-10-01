@@ -6,7 +6,7 @@
  *  the user server-side from the auth cookies — no user_id ever leaves this component (P20). The
  *  minted token value is shown ONCE (copy it now); it is never listed again.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../ui-kit";
 import { copyText } from "../ui-kit/ContextMenu";
 import { cardBtn, cardField, cardMeta, cardPrimaryBtn, OAuthConnectionCard, PasteTokenFallback, type OAuthStatus } from "./integrationCard";
@@ -17,8 +17,8 @@ import {
 } from "./workspaceApi";
 import { presentError } from "./apiClient";
 
-const toOAuthStatus = (s: { set: boolean; masked: string | null; oauth_configured?: boolean }): OAuthStatus =>
-  ({ connected: s.set, account_label: s.masked ?? undefined, configured: s.oauth_configured });
+const toOAuthStatus = (s: { set: boolean; masked: string | null; oauth_configured?: boolean; valid?: boolean | null }): OAuthStatus =>
+  ({ connected: s.set, account_label: s.masked ?? undefined, configured: s.oauth_configured, rejected: s.valid === false });
 
 const EXPIRIES: Array<{ label: string; seconds?: number }> = [
   { label: "never expires" },
@@ -247,12 +247,25 @@ function ProductRepoPicker() {
   );
 }
 
+/** Renders its children only once the server confirms the caller is an admin (`/api/admin/me` is a 404 for
+ *  everyone else) — the shared product repo is a deployment-wide setting, and the workspace proxy refuses
+ *  non-admins anyway, so showing them the picker would just be a dead end. */
+function AdminOnly({ children }: { children: ReactNode }) {
+  const [admin, setAdmin] = useState(false);
+  useEffect(() => {
+    let on = true;
+    fetch("/api/admin/me", { cache: "no-store" }).then((r) => { if (on) setAdmin(r.ok); }).catch(() => undefined);
+    return () => { on = false; };
+  }, []);
+  return admin ? <>{children}</> : null;
+}
+
 /** The SAVE-ONCE reusable GitHub token (git_credentials) — per-person, unlike HubSpot/Slack next to
  *  it. "Connect GitHub" (OAuth) is the default path; pasting a PAT is the fallback, both writing to
  *  the same store. Applied for push / pull / publish / attach across ALL of the user's repos — and,
  *  once connected, also for picking the shared product repo below (see ProductRepoPicker). */
 export function GitHubTokenCard() {
-  const getStatus = useCallback(async () => toOAuthStatus(await getGitToken()), []);
+  const getStatus = useCallback(async () => toOAuthStatus(await getGitToken(true)), []);
   const disconnect = useCallback(async () => toOAuthStatus(await setGitToken(null)), []);
   return (
     <div style={{ maxWidth: 640 }}>
@@ -265,7 +278,7 @@ export function GitHubTokenCard() {
             placeholder="ghp_…" saveToken={async (v) => toOAuthStatus(await setGitToken(v))}
             onConnected={onConnected} />
         )}
-        extra={() => <ProductRepoPicker />} />
+        extra={() => <AdminOnly><ProductRepoPicker /></AdminOnly>} />
     </div>
   );
 }

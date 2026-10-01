@@ -63,6 +63,25 @@ def build_authorize_url(*, client_id: str, redirect_uri: str, state: str, scopes
     return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
 
 
+def verify_token(*, token: str, timeout: float = 10.0) -> str:
+    """The login a token authenticates as — the cheapest call that proves GitHub still accepts it.
+    Raises ``GitHubTokenRejected`` on 401 (revoked/expired) and ``GitHubOAuthError`` on anything else
+    that stops a verdict (rate limit, network fault), which says nothing about the token itself."""
+    req = urllib.request.Request(
+        "https://api.github.com/user",
+        headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return str(json.loads(resp.read().decode()).get("login") or "")
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise GitHubTokenRejected("GitHub token check failed: HTTP 401") from e
+        raise GitHubOAuthError(f"GitHub token check failed: HTTP {e.code}") from e
+    except urllib.error.URLError as e:
+        raise GitHubOAuthError(f"GitHub token check failed: {e}") from e
+
+
 def list_repos(*, token: str, timeout: float = 10.0) -> list[dict]:
     """The connected account's own repos (owned + org-member), newest-active first — what the
     product-repo picker offers instead of making someone type a URL. Raises GitHubOAuthError on

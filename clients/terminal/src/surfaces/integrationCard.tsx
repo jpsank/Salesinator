@@ -26,6 +26,9 @@ export interface OAuthStatus {
   /** Whether this deployment even has the provider's OAuth app registered. Missing/undefined is
    *  treated as configured (older backends that predate this field never had a reason to say no). */
   configured?: boolean;
+  /** The provider said the saved credential no longer works (revoked/expired): still stored, but
+   *  useless until reconnected. Unset/false = no verdict or a working one. */
+  rejected?: boolean;
 }
 
 /** The one-time banner from an OAuth redirect landing back on this page
@@ -143,11 +146,17 @@ export function OAuthConnectionCard({
         <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--t1)" }}>{label}</span>
         <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)" }}>
           {status === null ? (checking ? "Checking…" : "")
+            : status.connected && status.rejected ? `${label} rejected the saved token`
             : status.connected ? `Connected${status.account_label ? ` · ${status.account_label}` : ""}`
             : "Not connected"}
         </span>
         {/* status === null + err: the check failed — true state unknown, so neither Connect nor
             Disconnect is shown (either would be a guess); the Retry button below is the only action. */}
+        {status?.connected && status.rejected && (
+          <a href={connectUrl} style={{ ...cardPrimaryBtn, textDecoration: "none", display: "inline-block" }}>
+            Reconnect
+          </a>
+        )}
         {status?.connected ? (
           <button disabled={busy} onClick={() => void doDisconnect()} style={{ ...cardBtn, color: "var(--danger)" }}>
             {busy ? "Disconnecting…" : "Disconnect"}
@@ -161,8 +170,8 @@ export function OAuthConnectionCard({
         ) : null}
       </div>
       <div style={cardMeta}>{description}</div>
-      {status !== null && !status.connected && fallback?.(setStatus)}
-      {status?.connected && extra?.(status)}
+      {status !== null && (!status.connected || status.rejected) && fallback?.(setStatus)}
+      {status?.connected && !status.rejected && extra?.(status)}
       {redirectFeedback.connected && (
         <div role="status" style={{ fontSize: 11.5, color: "var(--green)" }}>✓ {label} connected.</div>
       )}

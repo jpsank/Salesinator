@@ -6,7 +6,7 @@
  *  effect ran once on mount and never retried, so the stale error outlived the underlying blip by
  *  a day. Retry must actually recover without a page reload.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 
@@ -23,7 +23,11 @@ import { GitHubTokenCard } from "../tokens";
 import { ApiError } from "../apiClient";
 import * as workspaceApi from "../workspaceApi";
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+const asAdmin = (admin: boolean) =>
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: admin ? 200 : 404 })));
+
+beforeEach(() => asAdmin(true));
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 const REPO = { full_name: "jsank/Salesinator", clone_url: "https://github.com/jsank/Salesinator.git", default_branch: "main", private: false };
 
@@ -57,5 +61,14 @@ describe("ProductRepoPicker", () => {
     await waitFor(() => expect(screen.getByText("jsank/Salesinator")).toBeTruthy());
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+  it("is not offered to a non-admin — the shared product repo is an admin's setting", async () => {
+    asAdmin(false);
+    vi.mocked(workspaceApi.listMyGitHubRepos).mockResolvedValue([REPO]);
+    render(<GitHubTokenCard />);
+    await waitFor(() => expect(screen.getByText(/Connected/)).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("jsank/Salesinator")).toBeNull();
+    expect(workspaceApi.listMyGitHubRepos).not.toHaveBeenCalled();
   });
 });

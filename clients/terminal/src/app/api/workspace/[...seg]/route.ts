@@ -2,6 +2,7 @@
 import type { NextRequest } from "next/server";
 import { resolveApiKey } from "../../proxyAuth";
 import { meetingsOnly } from "../../../mode";
+import { requireAdmin } from "../../admin/gate";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,17 @@ function refusedResponse(): Response | null {
   return new Response(JSON.stringify({ error: "not_found", detail: "agent endpoints are disabled in meetings mode" }), { status: 404, headers: { "Content-Type": "application/json" } });
 }
 
+/** The shared product-repo identity (`?for=` on init/attached, `for_subject` on swap) is one deployment-wide
+ *  workspace, so acting on it is an admin's call — agent-api only checks the name is the configured one. */
+const forbiddenForShared = () => new Response(
+  JSON.stringify({ error: "forbidden", detail: "only an admin can act on the shared product repo" }),
+  { status: 403, headers: { "Content-Type": "application/json" } },
+);
+
+function bodyTargetsShared(body: string): boolean {
+  try { return Boolean(JSON.parse(body)?.for_subject); } catch { return false; }
+}
+
 // One authenticated edge: workspace KG reads go through the gateway (which injects X-User-Id), not agent-api directly.
 const GATEWAY_URL = (process.env.GATEWAY_URL || "http://127.0.0.1:18056").replace(/\/$/, "");
 
@@ -18,6 +30,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ seg: string
   const refused = refusedResponse();
   if (refused) return refused;
   const { seg } = await ctx.params;
+  if (req.nextUrl.searchParams.has("for") && !(await requireAdmin())) return forbiddenForShared();
   try {
     const apiKey = await resolveApiKey();
     const upstream = await fetch(`${GATEWAY_URL}/agent/workspace/${seg.join("/")}${req.nextUrl.search}`, {
@@ -40,11 +53,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ seg: strin
   const refused = refusedResponse();
   if (refused) return refused;
   const { seg } = await ctx.params;
+  // Only `swap` names its target in the body (small JSON); every other POST streams through untouched.
+  const swapBody = seg.join("/") === "swap" ? await req.text() : null;
+  const forShared = req.nextUrl.searchParams.has("for") || (swapBody !== null && bodyTargetsShared(swapBody));
+  if (forShared && !(await requireAdmin())) return forbiddenForShared();
   try {
     const apiKey = await resolveApiKey();
     const upstream = await fetch(`${GATEWAY_URL}/agent/workspace/${seg.join("/")}${req.nextUrl.search}`, {
       method: "POST",
-      body: req.body,
+      body: swapBody ?? req.body,
       headers: {
         "Content-Type": req.headers.get("Content-Type") ?? "",
         ...(apiKey ? { "X-API-Key": apiKey } : {}),
