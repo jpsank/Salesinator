@@ -32,6 +32,10 @@ enum Settings {
         set { d.set(newValue, forKey: "trustedBases") }
     }
     static func trust(_ base: URL) { trustedBases = TrustedBases.adding(d.stringArray(forKey: "trustedBases") ?? [], base) }
+    static var lastUpdateCheck: Date? {
+        get { d.object(forKey: "lastUpdateCheck") as? Date }
+        set { d.set(newValue, forKey: "lastUpdateCheck") }
+    }
     static var callLog: [CallRecord] {
         get { (d.data(forKey: "callLog").flatMap { try? JSONDecoder().decode([CallRecord].self, from: $0) }) ?? [] }
         set { d.set(try? JSONEncoder().encode(newValue), forKey: "callLog") }

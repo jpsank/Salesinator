@@ -22,6 +22,7 @@ enum DevCommands {
         if let i = args.firstIndex(of: "--send-bot"), i + 1 < args.count { sendBot(args, link: args[i + 1]); return true }
         if args.contains("--whoami") { whoAmI(args); return true }
         if args.contains("--check-setup") { checkSetup(); return true }
+        if args.contains("--check-update") { checkUpdate(); return true }
         if args.contains("--mic-test") { micTest(); return true }
         if let i = args.firstIndex(of: "--app-audio-test") { appAudioTest(i + 1 < args.count ? args[i + 1] : "zoom"); return true }
         if let i = args.firstIndex(of: "--play"), i + 1 < args.count { play(args, wav: args[i + 1]); return true }
@@ -71,6 +72,18 @@ enum DevCommands {
                 let (data, resp) = try await URLSession.shared.data(for: req)
                 print(BotRequest.interpretMe(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data))
             } catch { print("unavailable(\(error.localizedDescription))") }
+            done.signal()
+        }
+        done.wait()
+    }
+
+    static func checkUpdate() {
+        let done = DispatchSemaphore(value: 0)
+        Task {
+            print("version \(Updater.currentVersion), feed \(Updater.feed?.absoluteString ?? "none")")
+            let r = await Updater.check()
+            print(r)
+            if case .available(let o) = r, ProcessInfo.processInfo.environment["VEXA_FETCH_UPDATE"] != nil { print("fetch:", await Updater.fetch(o) ?? "ok — opened") }
             done.signal()
         }
         done.wait()

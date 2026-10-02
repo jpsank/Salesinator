@@ -186,5 +186,26 @@ do {
     check("it survives being saved and loaded", (try? JSONDecoder().decode([CallRecord].self, from: JSONEncoder().encode(log))) == log)
 }
 
-print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests, pairing, setup checks, call log." : "\n❌ \(failed) check(s) failed")
+// ── updates ──
+do {
+    check("0.10.0 is newer than 0.9.0", UpdateCheck.isNewer("0.10.0", than: "0.9.0"))
+    check("the same version is not newer", !UpdateCheck.isNewer("0.2.0", than: "0.2.0") && !UpdateCheck.isNewer("0.2", than: "0.2.0"))
+    check("an older version is not newer", !UpdateCheck.isNewer("0.1.9", than: "0.2.0"))
+    check("a version that isn't dotted numbers is never an update", !UpdateCheck.isNewer("beta", than: "0.1.0") && !UpdateCheck.isNewer("1.0.0", than: "x"))
+    let sum = String(repeating: "ab", count: 32)
+    func feed(_ version: String = "0.2.0", url: String = "https://example.com/v.dmg", sha: String? = nil) -> Data {
+        try! JSONSerialization.data(withJSONObject: ["version": version, "url": url, "sha256": sha ?? sum])
+    }
+    check("a well-formed feed is an offer", UpdateCheck.parse(feed()) == UpdateOffer(version: "0.2.0", url: URL(string: "https://example.com/v.dmg")!, sha256: sum))
+    check("a download that isn't https is refused", UpdateCheck.parse(feed(url: "http://example.com/v.dmg")) == nil)
+    check("a checksum of the wrong shape is refused", UpdateCheck.parse(feed(sha: "abc")) == nil && UpdateCheck.parse(feed(sha: String(repeating: "zz", count: 32))) == nil)
+    check("a newer feed → available", UpdateCheck.interpret(status: 200, body: feed(), current: "0.1.0") == .available(UpdateCheck.parse(feed())!))
+    check("the same version → up to date", UpdateCheck.interpret(status: 200, body: feed(), current: "0.2.0") == .upToDate)
+    if case .unavailable = UpdateCheck.interpret(status: 404, body: Data(), current: "0.1.0") { check("an error status → unavailable", true) } else { check("an error status → unavailable", false) }
+    if case .unavailable = UpdateCheck.interpret(status: 200, body: Data("nope".utf8), current: "0.1.0") { check("garbage → unavailable", true) } else { check("garbage → unavailable", false) }
+    check("sha256 of 'abc'", UpdateCheck.sha256Hex(Data("abc".utf8)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    check("feed addresses: https and local only", UpdateCheck.acceptableFeed("https://github.com/x/latest.json") != nil && UpdateCheck.acceptableFeed("http://localhost:8000/f.json") != nil && UpdateCheck.acceptableFeed("http://example.com/f.json") == nil)
+}
+
+print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests, pairing, setup checks, call log, updates." : "\n❌ \(failed) check(s) failed")
 exit(failed == 0 ? 0 : 1)

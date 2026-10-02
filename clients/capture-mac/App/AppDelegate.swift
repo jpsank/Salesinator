@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var searching = false                 // looking for the call's link / starting
     private var offered: CallPlatform?            // a call not handled automatically — waiting for the person
     private var announced = false
+    private var update: UpdateOffer?              // a newer build the update feed offered
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -45,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
         if needsSetup { setupWindow.present() } else { Notifier.requestPermission() }       // the setup window asks for notifications itself
+        checkForUpdate(announce: false)
     }
 
     // ── pairing with Vexa ──
@@ -323,6 +325,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true); a.runModal()
     }
 
+    // ── updates ──
+    /// Looks for a newer build — once a day on its own (quietly), or when asked from the menu (always with an answer).
+    private func checkForUpdate(announce: Bool) {
+        guard Updater.feed != nil else { if announce { problem("This build of Vexa Capture has no update address.") }; return }
+        let last = Settings.lastUpdateCheck
+        if !announce, let last, Date().timeIntervalSince(last) < 20 * 3600 { return }
+        Task {
+            let result = await Updater.check()
+            await MainActor.run {
+                if case .unavailable = result {} else { Settings.lastUpdateCheck = Date() }
+                switch result {
+                case .available(let o):
+                    let isNew = self.update != o
+                    self.update = o; self.rebuildMenu()
+                    if announce { self.installUpdate() } else if isNew { Notifier.post(title: "Vexa Capture \(o.version) is available", body: "Choose Update from the menu-bar icon.") }
+                case .upToDate: if announce { self.problem("Vexa Capture \(Updater.currentVersion) is the latest version.") }
+                case .unavailable(let why): if announce { self.problem("Couldn't check for updates: \(why).") }
+                }
+            }
+        }
+    }
+
+    @objc private func checkForUpdateFromMenu() { checkForUpdate(announce: true) }
+
+    @objc private func installUpdate() {
+        guard let o = update else { return }
+        let a = NSAlert()
+        a.messageText = "Vexa Capture \(o.version) is available"
+        a.informativeText = "You have \(Updater.currentVersion). Download opens the new version's disk image — drag Vexa Capture onto Applications to replace this one. Your connection and settings stay."
+        a.addButton(withTitle: "Download"); a.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        Task { if let why = await Updater.fetch(o) { await MainActor.run { self.problem("Couldn't get the update: \(why).") } } }
+    }
+
     // ── menu ──
     private var state: AppState {
         if needsSetup { return .attention }
@@ -386,9 +423,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         prefs.addItem(login)
         prefs.addItem(.separator())
         prefs.addItem(item("Advanced settings…", #selector(openSettings)))
+        if Updater.feed != nil { prefs.addItem(item("Check for updates…", #selector(checkForUpdateFromMenu))) }
         m.addItem(submenu("Preferences", prefs))
 
         m.addItem(.separator())
+        if let u = update { m.addItem(item("Update to \(u.version)…", #selector(installUpdate))) }
         if !needsSetup { m.addItem(item("Set up Vexa Capture…", #selector(openSetup))) }
         m.addItem(item("Quit Vexa Capture", #selector(quit)))
         statusItem.menu = m

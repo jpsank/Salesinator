@@ -63,6 +63,7 @@ notarization.
 APP="$HOME/Applications/Vexa Capture.app/Contents/MacOS/VexaCapture"
 $APP --probe                        # what Zoom/Teams are doing with audio, which permissions are granted
 $APP --check-setup                  # the setup checklist (prompts for browser Automation and notifications)
+$APP --check-update                 # what the update feed says (VEXA_FETCH_UPDATE=1 also downloads and opens it)
 $APP --whoami                       # does Vexa accept the saved key, and as whom
 $APP --find-link zoom               # the join link(s) found in your browsers' tabs / clipboard (prints only meeting links)
 $APP --send-bot <link>              # send Vexa's bot to a call link with the saved settings (or --api … --key …)
@@ -72,6 +73,28 @@ $APP --play call.wav --mic mic.wav --url wss://<host>/ingest --key <token>   # a
 VEXA_CAPTURE_SMOKE=1 $APP           # build the menu and exit (no dialogs)
 VEXA_CAPTURE_SHOT=out.png $APP      # render the setup window to a PNG and exit
 ```
+
+## Releasing a build people can install
+
+`./install.sh` is for you: it signs ad hoc, so macOS treats every rebuild as a new app — it asks for the Microphone, Screen Recording and
+Automation permissions again, and for your login password to read the saved key from the Keychain. A build signed with a Developer ID is
+one stable app, so none of that repeats, and it opens on anyone's Mac without a warning. `release.sh` makes it:
+
+```bash
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=vexa-notary \
+VEXA_ADDRESS=https://terminal.example.com VEXA_UPDATE_FEED=https://github.com/<owner>/<repo>/releases/latest/download/latest.json \
+./release.sh
+```
+
+It needs an Apple Developer account: a *Developer ID Application* certificate in your Keychain, and notarization credentials stored once
+with `xcrun notarytool store-credentials <name>` (the header of `release.sh` has the steps). It signs with the hardened runtime and
+`App.entitlements` (microphone and browser automation), notarizes and staples the app, packs it into `dist/VexaCapture-<version>.dmg`,
+notarizes that too, and writes `dist/latest.json`. Uploading the two files is left to you; it prints the `gh release create` line.
+
+**Updates.** A build made with `VEXA_UPDATE_FEED` checks that address once a day and when you choose *Preferences → Check for updates…*.
+If `latest.json` names a newer version the menu gains *Update to x.y.z…*, which downloads the disk image, checks it against the feed's
+checksum and opens it — drag Vexa Capture onto Applications. It does not replace itself: the new app is yours to drop in, and your
+connection and settings carry over. Bump `CFBundleShortVersionString` in `Info.plist` for each release.
 
 ## Limits
 
