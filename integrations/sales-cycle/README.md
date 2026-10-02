@@ -214,7 +214,13 @@ of step 9 are OAuth-specific.
    checkmark within a couple seconds) → under **Subscribe to bot events** add `reaction_added`
    and `reaction_removed` (the second lets a taken-back 👎 count at once; without it the sweep
    catches it within seconds) → save. **This step has no API — it can only be done here, by hand, once (and again each time an
-   ephemeral tunnel URL changes).**
+   ephemeral tunnel URL changes).** Keep **Socket Mode OFF** (Settings → Socket Mode): with it on, Slack
+   sends events over a WebSocket this service does not open and ignores the Request URL entirely, so
+   reactions silently do nothing. Settings → Integrations → Slack → **Slack events → Check that events
+   arrive** proves delivery end to end (the bot reacts 👀 to your latest card, waits for Slack to
+   report it, and takes it off) and says which way it failed: nothing arrived (Event Subscriptions off,
+   a different Request URL, Socket Mode on) or it arrived and was refused (the Signing Secret in
+   `SALES_CYCLE_SLACK_SIGNING_SECRET` does not match the app's).
 6. **Basic Information → App Credentials**: copy Client ID, Client Secret, and Signing Secret
    (three separate values — the signing secret verifies incoming Slack requests, unrelated to the
    OAuth pair).
