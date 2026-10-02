@@ -53,17 +53,27 @@ export type TranscriptWireMessage = TranscriptMessage | TranscriptRetractMessage
  * };
  * ```
  */
-export interface TranscriptManager<T extends TranscriptSegment = TranscriptSegment> {
-  /** Load initial segments from REST. Clears previous state. Returns ready-to-render segments. */
-  bootstrap(segments: T[]): T[];
-  /** Process a raw WS message. Returns updated segments if state changed, null otherwise. */
-  handleMessage(message: TranscriptWireMessage): T[] | null;
-  /** Get current deduplicated, sorted segments without processing a new message. */
-  getSegments(): T[];
-  /** Access the underlying state (for advanced use cases). */
-  getState(): TranscriptState<T>;
-  /** Reset all state. */
-  clear(): void;
+/** Export current segments as a CSV string. Empty string if no segments available. */
+exportToCSV(): string {
+  const segments = this.getSegments();
+  if (segments.length === 0) return "";
+
+  // CSV Headers: text, speaker, absolute_start_time, absolute_end_time
+  const header = "text,speaker,absolute_start_time,absolute_end_time\n";
+  
+  // Escape CSV characters (e.g., quotes inside text)
+  const escapeCsv = (str: string) => `"${str.replace(/"/g, '""')}"`;
+
+  const rows = segments.map(segment => 
+    [
+      escapeCsv(segment.text),
+      escapeCsv(segment.speaker || ""),
+      escapeCsv(segment.absolute_start_time || ""),
+      escapeCsv(segment.absolute_end_time || ""),
+    ].join(",")
+  ).join("\n");
+
+  return header + rows + "\n";
 }
 
 /**
