@@ -42,6 +42,16 @@ still active) is still rejected (409).
 > field — a typed `sessions` field is likewise a `vN+1`. `gate:contract-version` stays green (no
 > sealed schema touched).
 
+### `capture: "external"` — a call someone else captures
+`POST /bots` with `"capture": "external"` (accepted off the open request body like `continue_meeting`; documenting it as a
+public typed field needs a `vN+1`, flagged the same way) creates the meeting row through the SAME gates as a bot — STT
+configured, service-authority admission, dedupe (409), the concurrency cap — but spawns nothing: no MeetingToken, no
+workload, no `bot_container_id`. `data.capture_source` is `"external"`, no `meeting_url` is needed, and the router reports
+`joining` → `active` in-process through the lifecycle entry a bot's own callback uses, so the FSM, persistence, the
+`meeting.started` webhook and the live fan-out all fire as for a bot. The client that is capturing (the capture ingest,
+`core/meetings/services/desktop`) then writes segments to the stream, ends it with a Stop command or its own `completed`
+callback, and a capture that goes quiet is converged by the stale-nonterminal sweep like any bot whose workload is gone.
+
 ### P3e — max-bots (per-user concurrency)
 A pre-check BEFORE the runtime call: count the user's ACTIVE bots (status in
 `{requested, joining, awaiting_admission, active}`, **excluding** infra `browser_session` —

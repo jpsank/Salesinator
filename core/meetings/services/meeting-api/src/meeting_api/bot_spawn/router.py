@@ -40,6 +40,7 @@ from .ports import (
 from .invocation import SPAWNABLE_PLATFORMS
 from .service import (
     DuplicateMeeting,
+    _meeting_response,
     construct_meeting_url,
     request_bot,
     resolve_teams_base_host,
@@ -309,6 +310,14 @@ def build_router(
                 ),
             )
 
+        # `capture: "external"` — the audio is captured by a client streaming to the capture host, not by a bot
+        # this service spawns: the meeting row is created (same gates, dedupe and cap) and nothing is
+        # launched. Accepted off the OPEN request body like `continue_meeting` (see the bot_spawn README).
+        capture = body.get("capture")
+        if capture not in (None, "external"):
+            raise HTTPException(status_code=422, detail="'capture' must be \"external\" when present")
+        external_capture = capture == "external"
+
         platform = str(body.get("platform", "")).strip()
         native_meeting_id = str(body.get("native_meeting_id", "")).strip()
         meeting_url = body.get("meeting_url")
@@ -433,8 +442,9 @@ def build_router(
         # the invocation builder with an uncaught jsonschema error (→ 500): a meeting URL must be
         # CONSTRUCTIBLE — the platform has a URL template (google_meet/teams), or the caller supplied an
         # explicit meeting_url (required for zoom AND jitsi — a jitsi room name is deployment-scoped, so
-        # only the full URL says WHICH deployment to join).
-        if not meeting_url and construct_meeting_url(platform, native_meeting_id) is None:
+        # only the full URL says WHICH deployment to join). An external capture joins nothing, so it needs
+        # no URL — only an id that names the call.
+        if not external_capture and not meeting_url and construct_meeting_url(platform, native_meeting_id) is None:
             raise HTTPException(
                 status_code=422,
                 detail=(
@@ -478,6 +488,7 @@ def build_router(
                 webhook_url=x_user_webhook_url,
                 webhook_secret=x_user_webhook_secret,
                 webhook_events=webhook_events,
+                external_capture=external_capture,
             )
         except TranscriptionNotConfigured as e:
             raise HTTPException(status_code=503, detail=str(e))
@@ -528,6 +539,43 @@ def build_router(
         except SpawnFailed as e:
             raise HTTPException(status_code=502, detail=str(e) or "Failed to start bot workload")
 
+        if external_capture:
+            meeting = await _activate_external_capture(request, repo, meeting, user_id=user_id)
         return JSONResponse(status_code=201, content=meeting)
 
     return router
+
+
+async def _activate_external_capture(request: Request, repo: MeetingRepo, meeting: dict, *, user_id: int) -> dict:
+    """An external capture has no bot to report ``joining`` and ``active``, so they are reported here — through the
+    same in-process lifecycle entry a bot's own callback uses, so the FSM, persistence, the ``meeting.started``
+    webhook and the live fan-out all fire exactly as for a bot. The call is already underway when the capture host
+    asks for the row, so there is no lobby to wait in. A failure leaves nothing half-open: the row is failed, with
+    the reason, instead of lingering ``requested`` for a reaper to guess at."""
+    from datetime import datetime, timezone
+
+    from ..lifecycle.machine import TransitionSource
+
+    apply = getattr(request.app.state, "apply_lifecycle_event", None)
+    sessions = (meeting.get("data") or {}).get("sessions") or []
+    reason = None
+    if apply is None or not sessions:
+        reason = "the lifecycle receiver is not available to start a capture session"
+    else:
+        for status in ("joining", "active"):
+            code, content = await apply(
+                {"connection_id": sessions[-1], "status": status,
+                 "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")},
+                transition_source=TransitionSource.BOT_CALLBACK,
+            )
+            if code >= 400:
+                reason = f"capture session could not reach {status}: {content}"
+                break
+    if reason is not None:
+        try:
+            await repo.fail_meeting(meeting_id=meeting["id"], reason=reason, failure_stage="requested")
+        except Exception:  # noqa: BLE001 — best-effort; the 502 below carries the cause either way
+            pass
+        raise HTTPException(status_code=502, detail=reason)
+    fresh = await repo.get_meeting(meeting["id"]) if hasattr(repo, "get_meeting") else None
+    return _meeting_response(fresh, sessions=sessions) if fresh else meeting

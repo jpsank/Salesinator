@@ -431,8 +431,14 @@ async def request_bot(
     webhook_url: Optional[str] = None,
     webhook_secret: Optional[str] = None,
     webhook_events: Optional[dict] = None,
+    external_capture: bool = False,
 ) -> dict:
     """Run the spawn flow and return a MeetingResponse-shaped dict.
+
+    ``external_capture``: the audio is captured by something other than a bot this service spawns (a
+    desktop app streaming to the capture host), so the row is created — through the same STT gate,
+    service-authority admission, dedupe and concurrency cap as a bot — with its session, and NOTHING is
+    spawned. Its ``data.capture_source`` says so. The caller then reports the lifecycle itself.
 
     Raises ``DuplicateMeeting`` (409), ``MaxBotsExceeded`` / ``QuotaExceeded`` (429), or
     ``SpawnFailed`` (502/failed).
@@ -452,7 +458,7 @@ async def request_bot(
     # URL (Teams' own `?p=`) and stays off `data.constructed_meeting_url`, which every
     # MeetingResponse reads back. Both derive from the same constructed URL, so they address the
     # same meeting — they differ only in carrying the credential (#892 A1/A4).
-    join_url = apply_join_passcode(platform, constructed_url, passcode)
+    join_url = None if external_capture else apply_join_passcode(platform, constructed_url, passcode)
 
     # 1b. Resolve the transcription backend and gate BEFORE any DB write (C1, reorder not
     #     duplicate): the old router gate refused pre-insert; resolving here keeps that property —
@@ -683,6 +689,7 @@ async def request_bot(
                 "recording_enabled": recording_enabled,
                 "transcription_provider": transcription_provider,
                 "service_authority": authority_record,
+                **({"capture_source": "external"} if external_capture else {}),
             },
         )
     else:
@@ -691,6 +698,8 @@ async def request_bot(
             meeting_data["constructed_meeting_url"] = constructed_url
         meeting_data["transcribe_enabled"] = transcribe_enabled
         meeting_data["recording_enabled"] = recording_enabled
+        if external_capture:
+            meeting_data["capture_source"] = "external"
         if transcription_provider is not None:
             meeting_data["transcription_provider"] = transcription_provider
         meeting_data["service_authority"] = authority_record
@@ -725,6 +734,17 @@ async def request_bot(
             )
             raise
     meeting_id = row["id"]
+
+    if external_capture:
+        # No workload: the session row is what lets the caller's lifecycle events resolve to this meeting.
+        await repo.create_session(meeting_id=meeting_id, session_uid=connection_id)
+        sessions = await repo.list_sessions(meeting_id=meeting_id)
+        log_event(
+            "capture_session_requested", audience="user", span="bots.create",
+            user_id=user_id, meeting_id=f"{platform}/{native_meeting_id}",
+            fields={"platform": platform, "continued": reused_row is not None},
+        )
+        return _meeting_response(row, sessions=sessions)
 
     # 4. MeetingToken + invocation. connection_id IS the session_uid (parent's connectionId).
     redis_url = redis_url or os.getenv("REDIS_URL", "redis://redis:6379/0")
