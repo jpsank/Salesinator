@@ -18,7 +18,9 @@
 #      already: a "destroyed" container whose workload record still said "running" forever
 #      afterward, so every future touch silently no-opped instead of spawning fresh). The next
 #      message to that chat thread then spawns genuinely fresh on the new image.
-#   3. agent-api is special too: in native-hybrid mode its docker image is never actually run
+#   3. The meeting-bot image (BROWSER_IMAGE, when it is a local tag) is rebuilt if the sources it is built from changed — see
+#      bot-image.sh. Bots are spawned per meeting by the runtime, so nothing is restarted; the next bot uses the new image.
+#   4. agent-api is special too: in native-hybrid mode its docker image is never actually run
 #      (deliberately kept stopped — see run-agent-api-native.sh), so building/restarting the DOCKER
 #      side of it would be pure waste. Instead the NATIVE process is unconditionally killed and
 #      relaunched (cheap — a few seconds) so it always runs current source, no change-detection
@@ -30,6 +32,7 @@ set -eu
 CD="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_FILE="$CD/docker-compose.yml"
 . "$CD/docker-hygiene.sh"
+. "$CD/bot-image.sh"
 RUNTIME_API_URL="${RUNTIME_API_URL:-http://localhost:18090}"
 
 # `docker compose config --images <service>` does NOT filter by service in this compose version
@@ -137,6 +140,11 @@ while [ "$i" -lt 10 ]; do
 done
 curl -s -o /dev/null -w "  health http=%{http_code}\n" http://localhost:18100/health
 docker compose -f "$COMPOSE_FILE" stop agent-api ollama 2>/dev/null || true
+
+echo
+echo "== meeting bot image (the runtime spawns bots from BROWSER_IMAGE) =="
+ensure_bot_image "$(echo "$RESOLVED_CONFIG" | awk '/BROWSER_IMAGE:/ { print $2; exit }')" \
+  || echo "  bot image build failed — bots keep using the previous image"
 
 hygiene_after
 

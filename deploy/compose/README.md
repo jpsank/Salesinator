@@ -56,6 +56,14 @@ old 0.10 line and incompatible with this stack's `lifecycle.v1`) on demand and t
 agent worker (`vexaai/v012-agent-worker:v012`, a `build-only` compose profile); neither is a
 long-running compose service.
 
+## The bot image
+
+`redeploy.sh` also keeps the meeting-bot image current. The runtime spawns bots from `BROWSER_IMAGE`; when that is a locally
+built tag (not a published `vexaai/` one) `bot-image.sh` compares a fingerprint of the sources the bot Dockerfile copies in
+(all of `core/` plus the workspace manifests, uncommitted edits included) with the `vexa.bot-source` label on the image, and
+rebuilds it with `make bot` only when they differ. An unchanged tree is a no-op; the next bot uses the new image, bots already
+running keep the old one. A published `BROWSER_IMAGE` is left alone.
+
 ## Keeping the Docker disk from filling
 
 `redeploy.sh` and `restart-service.sh` both source `docker-hygiene.sh`. Before building, if the Docker VM disk has
