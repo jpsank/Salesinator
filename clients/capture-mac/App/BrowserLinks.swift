@@ -54,6 +54,24 @@ enum BrowserLinks {
         return (text, false)
     }
 
+    enum Access { case allowed, denied, unknown }
+    struct BrowserAccess { var name: String; var access: Access }
+
+    /// For each browser that is open: can Vexa Capture read its tabs? Asking is what makes macOS show its permission prompt, so
+    /// the setup check does it up front instead of in the middle of a call. Blocking (osascript): call off the main thread.
+    static func access() -> (running: [BrowserAccess], notRunning: [String]) {
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
+        var open: [BrowserAccess] = [], closed: [String] = []
+        for b in browsers {
+            guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: b.bundleID) != nil else { continue }   // not installed
+            guard running.contains(b.bundleID) else { closed.append(b.name); continue }
+            if let r = run("tell application id \"\(b.bundleID)\" to return name", timeout: 30) {   // long: the person may be answering a prompt
+                open.append(BrowserAccess(name: b.name, access: r.denied ? .denied : .allowed))
+            } else { open.append(BrowserAccess(name: b.name, access: .unknown)) }
+        }
+        return (open, closed)
+    }
+
     /// Blocking (osascript): call off the main thread.
     static func search(for platform: CallPlatform?) -> Search {
         var all: [String] = [], active: [String] = [], blocked: [String] = []

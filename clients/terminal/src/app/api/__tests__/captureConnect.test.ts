@@ -89,6 +89,49 @@ describe("connect", () => {
   });
 });
 
+describe("the Settings card's routes", () => {
+  it("status lists the user's own paired Macs, and nothing else they hold", async () => {
+    stub();
+    const res = await GET(getReq(), ctx("status"));
+    const body = await res.json() as { devices: Array<{ id: number }> };
+    expect(body.devices.map((d) => d.id)).toEqual([1, 2, 3, 4, 5]);               // the "ci" key (id 9) is not a Mac
+  });
+
+  it("status and pair need a signed-in user", async () => {
+    cookieJar = {};
+    stub();
+    expect((await GET(getReq(), ctx("status"))).status).toBe(401);
+    expect((await POST(postReq({}), ctx("pair"))).status).toBe(401);
+    expect((await POST(postReq({ id: 1 }), ctx("revoke"))).status).toBe(401);
+  });
+
+  it("pair hands the card a link carrying a code the app can redeem, and mints no key", async () => {
+    const calls = stub();
+    const res = await POST(postReq({}), ctx("pair"));
+    const { link } = await res.json() as { link: string };
+    expect(link).toMatch(/^vexacapture:\/\/connect\?code=[A-Za-z0-9_-]{20,}&base=http%3A%2F%2Flocalhost%3A13000$/);
+    expect(calls.some((c) => c.method === "POST" && c.url.includes("/tokens"))).toBe(false);
+    const code = decodeURIComponent(link.match(/code=([^&]+)/)![1]);
+    expect((await POST(postReq({ code }), ctx("exchange"))).status).toBe(200);    // the same code the connect page makes
+  });
+
+  it("revoke disconnects one of the user's own Macs", async () => {
+    const calls = stub();
+    const res = await POST(postReq({ id: 3 }), ctx("revoke"));
+    expect(res.status).toBe(200);
+    expect(calls.filter((c) => c.method === "DELETE").map((c) => c.url.split("/").pop())).toEqual(["3"]);
+  });
+
+  it("revoke refuses a key that is not one of their Macs (another user's, or a different kind of key)", async () => {
+    const calls = stub();
+    expect((await POST(postReq({ id: 9 }), ctx("revoke"))).status).toBe(404);     // their own "ci" key
+    expect((await POST(postReq({ id: 777 }), ctx("revoke"))).status).toBe(404);
+    expect((await POST(postReq({ id: "x" }), ctx("revoke"))).status).toBe(400);
+    expect((await POST(postReq({}), ctx("revoke"))).status).toBe(400);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+});
+
 describe("exchange", () => {
   it("trades the code, once, for a bot-scoped key and the addresses — and prunes the user's old keys", async () => {
     const calls = stub();

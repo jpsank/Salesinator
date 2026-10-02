@@ -7,6 +7,8 @@ import Foundation
 ///   VexaCapture --probe                 what each call app is doing with audio, and which permissions are granted
 ///   VexaCapture --find-link [zoom|teams]  look for the call's join link in the browsers' tabs and the clipboard (prints only
 ///                                        meeting links; asks macOS for permission to control each browser the first time)
+///   VexaCapture --whoami [--api … --key …]  ask Vexa who a key is (the setup check's first line)
+///   VexaCapture --check-setup          the whole setup checklist (this prompts for browser Automation and notifications)
 ///   VexaCapture --send-bot <link>      send Vexa's bot to a call link, using the saved settings (or --api/--key)
 ///   VexaCapture --mic-test             listen to the microphone for 2 s and report its level (lights the mic indicator)
 ///   VexaCapture --app-audio-test zoom   listen to an app's audio for 3 s and report the level (needs Screen Recording)
@@ -18,6 +20,8 @@ enum DevCommands {
         if args.contains("--probe") { probe(); return true }
         if let i = args.firstIndex(of: "--find-link") { findLink(i + 1 < args.count ? args[i + 1] : "zoom"); return true }
         if let i = args.firstIndex(of: "--send-bot"), i + 1 < args.count { sendBot(args, link: args[i + 1]); return true }
+        if args.contains("--whoami") { whoAmI(args); return true }
+        if args.contains("--check-setup") { checkSetup(); return true }
         if args.contains("--mic-test") { micTest(); return true }
         if let i = args.firstIndex(of: "--app-audio-test") { appAudioTest(i + 1 < args.count ? args[i + 1] : "zoom"); return true }
         if let i = args.firstIndex(of: "--play"), i + 1 < args.count { play(args, wav: args[i + 1]); return true }
@@ -56,6 +60,26 @@ enum DevCommands {
         if !found.blocked.isEmpty { print("Could not read (allow it under Privacy & Security → Automation): \(found.blocked.joined(separator: ", "))") }
         if found.candidates.isEmpty { print("No \(platform.displayName) link found.") }
         for l in found.candidates { print("  \(l.platform.rawValue): \(l.url)") }
+    }
+
+    static func whoAmI(_ args: [String]) {
+        let gateway = flag(args, "--api") ?? Settings.gatewayURL
+        guard let key = flag(args, "--key") ?? Settings.apiKey, let req = BotRequest.me(gateway: gateway, key: key) else { print("no API key or bad --api"); exit(2) }
+        let done = DispatchSemaphore(value: 0)
+        Task {
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                print(BotRequest.interpretMe(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data))
+            } catch { print("unavailable(\(error.localizedDescription))") }
+            done.signal()
+        }
+        done.wait()
+    }
+
+    static func checkSetup() {
+        let done = DispatchSemaphore(value: 0)
+        Task { print(SetupReport.format(await SetupCheck.run())); done.signal() }
+        done.wait()
     }
 
     static func sendBot(_ args: [String], link: String) {

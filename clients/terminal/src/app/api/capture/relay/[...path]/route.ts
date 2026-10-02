@@ -4,7 +4,7 @@
  *  This is deliberately not the catch-all /api proxy. That one authenticates as the signed-in browser user and falls back to the
  *  deployment's own key; here the caller is a native app with no cookie, so the identity is the app's own API key, taken ONLY from
  *  its X-API-Key header, and a request without one is refused rather than served as the deployment. The gateway resolves the key
- *  (and its scope and limits) exactly as for any API caller. Only the two calls the app makes are relayed.
+ *  (and its scope and limits) exactly as for any API caller. Only the calls the app makes are relayed: request a bot, remove it, and ask who its key is.
  */
 import type { NextRequest } from "next/server";
 
@@ -42,6 +42,11 @@ async function relay(req: NextRequest, params: Promise<{ path: string[] }>, allo
 
 export function POST(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   return relay(req, ctx.params, /^bots$/);
+}
+
+/** `GET auth/me` — the app's setup check asking "does Vexa accept my key, and as whom?". */
+export function GET(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
+  return relay(req, ctx.params, /^auth\/me$/);
 }
 
 export function DELETE(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {

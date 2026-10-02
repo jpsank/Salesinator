@@ -151,5 +151,24 @@ do {
           && ConnectLink.interpret(status: 200, body: body(#"{"api":"https://a","ingest":"wss://c"}"#)) == .failed("Vexa's answer wasn't a valid pairing."))
 }
 
-print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests, pairing." : "\n❌ \(failed) check(s) failed")
+// ── the setup checklist and trusted sites ──
+do {
+    let items = [SetupItem("Connected", .ok, "as a@b.c"), SetupItem("Chrome", .attention, "allow it under Automation"), SetupItem("Microphone", .info, "only for the audio fallback")]
+    check("the checklist marks each line", SetupReport.format(items) == "✓ Connected — as a@b.c\n✗ Chrome — allow it under Automation\n• Microphone — only for the audio fallback")
+    check("it says when something needs attention", SetupReport.needsAttention(items) && !SetupReport.needsAttention([items[0], items[2]]))
+    let site = URL(string: "https://terminal.example.com")!
+    check("a site the person already trusts is recognised", TrustedBases.contains(["http://localhost:13000", "https://terminal.example.com/"], site))
+    check("another site is not", !TrustedBases.contains(["http://localhost:13000"], site) && !TrustedBases.contains([], site))
+    check("a look-alike is not", !TrustedBases.contains(["https://terminal.example.com.evil.net"], site))
+    check("trusting a site once is enough", TrustedBases.adding(TrustedBases.adding([], site), site) == ["https://terminal.example.com"])
+    let me = BotRequest.me(gateway: "https://t.example.com/api/capture/relay/", key: "K")
+    check("the key check is GET /auth/me under the key", me?.url?.absoluteString == "https://t.example.com/api/capture/relay/auth/me" && me?.value(forHTTPHeaderField: "X-API-Key") == "K" && me?.httpMethod == "GET")
+    func body(_ j: String) -> Data { Data(j.utf8) }
+    check("200 names the account; 401/403 is a rejected key; anything else is trouble",
+          BotRequest.interpretMe(status: 200, body: body(#"{"email":"a@b.c"}"#)) == .account("a@b.c") && BotRequest.interpretMe(status: 200, body: body(#"{"user_id":7}"#)) == .account("user 7")
+          && BotRequest.interpretMe(status: 401, body: body("{}")) == .keyRejected && BotRequest.interpretMe(status: 403, body: body("{}")) == .keyRejected
+          && BotRequest.interpretMe(status: 502, body: body("{}")) == .unavailable("Vexa answered 502"))
+}
+
+print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests, pairing, setup checks." : "\n❌ \(failed) check(s) failed")
 exit(failed == 0 ? 0 : 1)

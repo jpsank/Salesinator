@@ -25,6 +25,32 @@ public enum BotRequest {
         return r
     }
 
+    /// "Who is this key?" — the setup check's proof that Vexa accepts it.
+    public static func me(gateway: String, key: String) -> URLRequest? {
+        guard let base = normalized(gateway), let url = URL(string: base + "/auth/me") else { return nil }
+        var r = URLRequest(url: url)
+        r.setValue(key, forHTTPHeaderField: "X-API-Key")
+        r.timeoutInterval = 15
+        return r
+    }
+
+    public enum Me: Equatable {
+        case account(String)
+        case keyRejected
+        case unavailable(String)
+    }
+
+    public static func interpretMe(status: Int, body: Data) -> Me {
+        let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        switch status {
+        case 200:
+            let who = (json?["email"] as? String) ?? (json?["user_id"].map { "user \($0)" }) ?? "this account"
+            return .account(who)
+        case 401, 403: return .keyRejected
+        default: return .unavailable("Vexa answered \(status)")
+        }
+    }
+
     /// http(s) only, no trailing slash.
     public static func normalized(_ gateway: String) -> String? {
         guard let c = URLComponents(string: gateway.trimmingCharacters(in: .whitespacesAndNewlines)),

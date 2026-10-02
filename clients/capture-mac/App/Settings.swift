@@ -22,6 +22,16 @@ enum Settings {
         get { d.string(forKey: "account") ?? "" }
         set { d.set(newValue, forKey: "account") }
     }
+    /// Sites the person has confirmed (typed the address, or approved a pairing); a build made for an address trusts it from the start.
+    static var trustedBases: [String] {
+        get {
+            var all = d.stringArray(forKey: "trustedBases") ?? []
+            if let baked = Bundle.main.object(forInfoDictionaryKey: "VexaDefaultAddress") as? String, !baked.isEmpty { all.append(baked) }
+            return all
+        }
+        set { d.set(newValue, forKey: "trustedBases") }
+    }
+    static func trust(_ base: URL) { trustedBases = TrustedBases.adding(d.stringArray(forKey: "trustedBases") ?? [], base) }
     /// The Vexa API (the gateway) — where the bot is requested. The ingest above is only for audio captured on this Mac.
     static var gatewayURL: String {
         get { d.string(forKey: "gatewayURL") ?? "http://localhost:18056" }

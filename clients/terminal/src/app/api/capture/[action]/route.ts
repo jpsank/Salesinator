@@ -53,21 +53,58 @@ function sweep(now: number): void {
   for (const [code, p] of pending) if (p.expires <= now) pending.delete(code);
 }
 
+/** A one-time code for this user and the `vexacapture://` link that carries it to the app. */
+function newLink(me: { userId: string | number; email: string }, origin: string): string {
+  const now = Date.now();
+  sweep(now);
+  const code = randomBytes(24).toString("base64url");
+  pending.set(code, { userId: me.userId, email: me.email, expires: now + CODE_TTL_MS });
+  return `vexacapture://connect?code=${encodeURIComponent(code)}&base=${encodeURIComponent(origin)}`;
+}
+
+async function myKeys(userId: string | number) {
+  const listed = await listUserTokens(userId);
+  return (listed.ok ? listed.data ?? [] : []).filter((t) => t.name === KEY_NAME);
+}
+
 async function connect(req: NextRequest): Promise<Response> {
   const origin = publicOrigin(req);
   const me = await currentUser();
   if (!me.ok) {
     return html(`<h2>Sign in to Vexa first</h2><p>Open <a href="${esc(origin)}/">${esc(origin)}</a>, sign in, then choose <b>Connect to Vexa</b> in Vexa Capture again.</p>`, 401);
   }
-  const now = Date.now();
-  sweep(now);
-  const code = randomBytes(24).toString("base64url");
-  pending.set(code, { userId: me.userId, email: me.email, expires: now + CODE_TTL_MS });
-  const link = `vexacapture://connect?code=${encodeURIComponent(code)}&base=${encodeURIComponent(origin)}`;
+  const link = newLink(me, origin);
   return html(
     `<h2>Connecting Vexa Capture…</h2><p>Signed in as <b>${esc(me.email)}</b>. If Vexa Capture doesn't open, <a id="open" href="${esc(link)}">open it</a>.</p>` +
     `<script>location.href=${JSON.stringify(link)}</script>`,
   );
+}
+
+/** Settings → Integrations: the Macs this user has paired (one bot-scoped key each, listed by when each last did anything). */
+async function status(): Promise<Response> {
+  const me = await currentUser();
+  if (!me.ok) return json({ error: me.error }, me.status);
+  const devices = (await myKeys(me.userId)).map((t) => ({ id: t.id, created_at: t.created_at ?? null, last_used_at: t.last_used_at ?? null }));
+  return json({ devices });
+}
+
+/** The same one-time code as the connect page, handed to the card, so pairing can start from where the user already is. */
+async function pair(req: NextRequest): Promise<Response> {
+  const me = await currentUser();
+  if (!me.ok) return json({ error: me.error }, me.status);
+  return json({ link: newLink(me, publicOrigin(req)) });
+}
+
+/** Disconnect one Mac: revoke its key — only ever one of the signed-in user's own. */
+async function revoke(req: NextRequest): Promise<Response> {
+  const me = await currentUser();
+  if (!me.ok) return json({ error: me.error }, me.status);
+  let id = NaN;
+  try { id = Number(((await req.json()) as { id?: unknown }).id); } catch { /* → 400 */ }
+  if (!Number.isInteger(id)) return json({ error: "Invalid id" }, 400);
+  if (!(await myKeys(me.userId)).some((t) => t.id === id)) return json({ error: "Not found" }, 404);
+  const done = await revokeToken(id);
+  return done.ok ? json({ ok: true }) : json({ error: "Couldn't disconnect that Mac." }, 502);
 }
 
 async function exchange(req: NextRequest): Promise<Response> {
@@ -80,8 +117,7 @@ async function exchange(req: NextRequest): Promise<Response> {
   if (!p || p.expires <= now) return json({ error: "That connection link has expired — choose Connect to Vexa again." }, 404);
   const addr = addresses(publicOrigin(req));
 
-  const listed = await listUserTokens(p.userId);
-  const mine = (listed.ok ? listed.data ?? [] : []).filter((t) => t.name === KEY_NAME).sort((a, b) => b.id - a.id);
+  const mine = (await myKeys(p.userId)).sort((a, b) => b.id - a.id);
   for (const old of mine.slice(KEEP_KEYS - 1)) await revokeToken(old.id);
   const minted = await mintUserToken(p.userId, { scopes: ["bot"], name: KEY_NAME });
   if (!minted.ok || !minted.data?.token) return json({ error: "Couldn't create a key for Vexa Capture." }, 502);
@@ -90,10 +126,15 @@ async function exchange(req: NextRequest): Promise<Response> {
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
   const { action } = await ctx.params;
-  return action === "connect" ? connect(req) : json({ error: "not_found" }, 404);
+  if (action === "connect") return connect(req);
+  if (action === "status") return status();
+  return json({ error: "not_found" }, 404);
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
   const { action } = await ctx.params;
-  return action === "exchange" ? exchange(req) : json({ error: "not_found" }, 404);
+  if (action === "exchange") return exchange(req);
+  if (action === "pair") return pair(req);
+  if (action === "revoke") return revoke(req);
+  return json({ error: "not_found" }, 404);
 }

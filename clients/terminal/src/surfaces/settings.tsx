@@ -14,6 +14,7 @@ import { presentError } from "./apiClient";
 import { CalendarConnectionsPanel } from "./calendarConnections";
 import { SalesCycleSection } from "./salesCycleConnection";
 import { ZoomCard } from "./zoomConnection";
+import { CaptureCard } from "./captureConnection";
 import { cardField as field, cardBtn as btn } from "./integrationCard";
 import { getModelPrefs, setModelPrefs, getTranscriptionPrefs, setTranscriptionPrefs, getGlobalSetting, setGlobalSetting, testModels, testTranscription, listAvailableModels, type ConfigTestResult } from "./settingsApi";
 
@@ -240,6 +241,8 @@ function IntegrationsSection() {
       <CalendarConnectionsPanel />
       <div style={{ ...head, marginTop: 22 }}>Zoom</div>
       <ZoomCard />
+      <div style={{ ...head, marginTop: 22 }}>Vexa Capture</div>
+      <CaptureCard />
       <div style={{ ...head, marginTop: 22 }}>GitHub</div>
       <GitHubTokenCard />
       <div style={{ ...head, marginTop: 22 }}>Sales Cycle (HubSpot &amp; Slack)</div>

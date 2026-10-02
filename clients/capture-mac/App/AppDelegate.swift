@@ -42,12 +42,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func confirmAndPair(_ r: ConnectLink.Request) {
-        let a = NSAlert()
-        a.messageText = "Connect Vexa Capture to \(r.base.host ?? r.base.absoluteString)?"
-        a.informativeText = "Your calls — requests for Vexa's bot, or audio captured on this Mac — will be sent to this Vexa. Only continue if you just chose Connect in your own Vexa."
-        a.addButton(withTitle: "Connect"); a.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        guard a.runModal() == .alertFirstButtonReturn else { return }
+        // A site the person already approved (typed it, or confirmed it before, or this build was made for it) needs no second
+        // confirmation: the click they just made in their own signed-in Vexa is the confirmation. Any other site still asks.
+        if !TrustedBases.contains(Settings.trustedBases, r.base) {
+            let a = NSAlert()
+            a.messageText = "Connect Vexa Capture to \(r.base.host ?? r.base.absoluteString)?"
+            a.informativeText = "Your calls — requests for Vexa's bot, or audio captured on this Mac — will be sent to this Vexa. Only continue if you just chose Connect in your own Vexa."
+            a.addButton(withTitle: "Connect"); a.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard a.runModal() == .alertFirstButtonReturn else { return }
+            Settings.trust(r.base)
+        }
         Task {
             let result: ConnectLink.Exchanged
             do {
@@ -60,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Settings.apiKey = p.key; Settings.gatewayURL = p.api; Settings.serverURL = p.ingest
                     Settings.terminalURL = r.base.absoluteString; Settings.account = p.account
                     Notifier.post(title: "Vexa Capture is connected", body: p.account.isEmpty ? "Ready for your next call." : "Signed in as \(p.account). Ready for your next call.")
+                    self.checkSetup(afterPairing: true)
                 case .failed(let why): self.problem(why)
                 }
                 self.rebuildMenu()
@@ -86,9 +92,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .alertFirstButtonReturn:
             guard let base = ConnectLink.acceptableBase(field.stringValue) else { problem("That isn't an https:// address (or http://localhost)."); return }
             Settings.terminalURL = base.absoluteString
+            Settings.trust(base)                                   // typing the address is the person's own choice of site
             connect()
         case .alertSecondButtonReturn: settingsWindow.present()
         default: break
+        }
+    }
+
+    // ── setup check ──
+    /// The checklist. After a pairing it is shown only if something needs attention; from the menu it is always shown.
+    @objc private func checkSetupFromMenu() { checkSetup(afterPairing: false) }
+
+    private func checkSetup(afterPairing: Bool) {
+        Task {
+            let items = await SetupCheck.run()
+            await MainActor.run {
+                let attention = SetupReport.needsAttention(items)
+                if afterPairing && !attention { return }
+                let a = NSAlert()
+                a.messageText = attention ? "A few things need attention" : "Vexa Capture is ready"
+                a.informativeText = SetupReport.format(items)
+                a.addButton(withTitle: "Done")
+                if attention { a.addButton(withTitle: "Open Privacy settings") }
+                NSApp.activate(ignoringOtherApps: true)
+                if a.runModal() == .alertSecondButtonReturn, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") { NSWorkspace.shared.open(url) }
+            }
         }
     }
 
@@ -340,6 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Settings.apiKey != nil { m.addItem(item("Disconnect", #selector(disconnect))) }
         let login = item("Open at login", #selector(toggleLogin)); login.state = opensAtLogin ? .on : .off
         m.addItem(login)
+        m.addItem(item("Check setup…", #selector(checkSetupFromMenu)))
         m.addItem(item("Settings…", #selector(openSettings)))
         m.addItem(item("Quit Vexa Capture", #selector(quit)))
         statusItem.menu = m

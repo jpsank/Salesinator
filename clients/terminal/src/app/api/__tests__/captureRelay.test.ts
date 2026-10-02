@@ -7,7 +7,7 @@ vi.mock("next/headers", () => ({
   cookies: async () => ({ get: (n: string) => (cookieJar[n] !== undefined ? { name: n, value: cookieJar[n] } : undefined) }),
 }));
 
-import { DELETE, POST } from "../capture/relay/[...path]/route";
+import { DELETE, GET, POST } from "../capture/relay/[...path]/route";
 
 const ctx = (...path: string[]) => ({ params: Promise.resolve({ path }) });
 const req = (method: string, headers: Record<string, string> = {}, body = "") =>
@@ -85,8 +85,24 @@ describe("DELETE /bots/{platform}/{id}", () => {
   });
 });
 
-describe("only those two calls", () => {
-  it("relays no other path, on either method", async () => {
+describe("GET /auth/me", () => {
+  it("lets the app ask who its key is, under its own key", async () => {
+    const seen = gateway(200, { user_id: 4, email: "a@b.c" });
+    const res = await GET(req("GET", { "x-api-key": "app-key" }), ctx("auth", "me"));
+    expect(res.status).toBe(200);
+    expect(seen[0]).toMatchObject({ url: "http://gateway.test:8000/auth/me", method: "GET" });
+    expect(seen[0].headers["X-API-Key"]).toBe("app-key");
+  });
+  it("needs the key, and relays no other read", async () => {
+    const seen = gateway();
+    expect((await GET(req("GET"), ctx("auth", "me"))).status).toBe(401);
+    for (const p of [["meetings"], ["bots", "status"], ["admin", "users"], ["auth", "me", "x"]]) expect((await GET(req("GET", { "x-api-key": "k" }), ctx(...p))).status).toBe(404);
+    expect(seen).toEqual([]);
+  });
+});
+
+describe("only those calls", () => {
+  it("relays no other path, on any method", async () => {
     const seen = gateway();
     for (const p of [["meetings"], ["bots", "status"], ["admin", "users"], ["agent", "chat"], ["bots", "zoom"], ["bots", "../admin", "x"], ["bots", "Zoom", "1"]]) {
       expect((await POST(req("POST", { "x-api-key": "k" }, "{}"), ctx(...p))).status).toBe(404);

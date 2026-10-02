@@ -34,11 +34,17 @@ VEXA_ADDRESS=https://terminal.example.com ./install.sh   # builds, copies to ~/A
 `VEXA_ADDRESS` is the address people open Vexa at; the first-run prompt offers it (default `http://localhost:13000`). `./build.sh`
 builds without installing.
 
-**Connect with one click.** On first run (or *Connect to Vexa…* in the menu) confirm that address: your browser opens Vexa, which —
-signed in as you — hands the app a one-time code (`/api/capture/connect` → `vexacapture://connect?code=…`). The app asks you to
-confirm which server it is connecting to, trades the code (once, within two minutes) for its own bot-scoped key named
-`vexa-capture (Mac)` plus the addresses to use, and shows *Connected as you@company*. Nothing to copy; the key is kept in the Keychain and
-never appears in a URL. *Disconnect* forgets it, and the settings window still takes the details by hand.
+**Connect with one click.** Either start from Vexa — **Settings → Integrations → Vexa Capture → Connect a Mac** (it also lists your paired
+Macs, when each last did anything, and disconnects one) — or from the app (first run, or *Connect to Vexa…* in the menu). Vexa, signed in as
+you, hands the app a one-time code (`vexacapture://connect?code=…`); the app trades it (once, within two minutes) for its own bot-scoped key
+named `vexa-capture (Mac)` plus the addresses to use, and shows *Connected as you@company*. Nothing to copy; the key is kept in the Keychain
+and never appears in a URL. The app asks "connect to this server?" only for a site it has not been told to trust — one you typed, one you
+approved before, or the one the build was made for — so the click in your own Vexa is the only confirmation after the first time, while a
+link from anywhere else still has to ask. *Disconnect* forgets the key; the settings window still takes the details by hand.
+
+**Check setup…** (menu; also run after pairing, and shown then only if something needs attention) lists what's ready — Vexa accepts the key,
+each open browser can be read (this is what makes macOS show its "control Chrome?" prompt, up front rather than mid-call), notifications are
+on, open at login is set — so nothing surprises you during a call.
 
 **One public address.** Unless told otherwise the app is pointed at the terminal's own relays — `/api/capture/relay` for bot requests
 (which take only the app's own key, never the terminal's cookie or deployment key) and a `/capture/ingest` WebSocket for audio — so the
@@ -54,6 +60,8 @@ notarization.
 ```bash
 APP="$HOME/Applications/Vexa Capture.app/Contents/MacOS/VexaCapture"
 $APP --probe                        # what Zoom/Teams are doing with audio, which permissions are granted
+$APP --check-setup                  # the setup checklist (prompts for browser Automation and notifications)
+$APP --whoami                       # does Vexa accept the saved key, and as whom
 $APP --find-link zoom               # the join link(s) found in your browsers' tabs / clipboard (prints only meeting links)
 $APP --send-bot <link>              # send Vexa's bot to a call link with the saved settings (or --api … --key …)
 $APP --mic-test                     # 2 s of microphone → level
