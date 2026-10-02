@@ -30,6 +30,7 @@ import time
 import httpx
 
 from sales_cycle.approvers import load_policy
+from sales_cycle.duplicates import Known, find_duplicate
 from sales_cycle.slack_client import SlackClient, SlackError
 from sales_cycle.store import Store
 
@@ -97,6 +98,50 @@ def _format_message(workspace_id: str, title: str, body: str, *, voting: bool = 
         f"{body}\n\n"
         f"{footer}"
     )
+
+
+# A request is a repeat of an earlier one from the same customer within this long; requests in the shared "unmapped" workspace (calls not tied to
+# a customer) only match within the same call, so two customers' requests are never merged.
+_REPEAT_WINDOW_SEC = 14 * 24 * 3600
+
+
+def _find_repeat(store: Store, *, workspace_id: str, unmapped_slug: str, call_prefix: str, title: str, body: str):
+    """The earlier request this one repeats, if any."""
+    known = store.known_requests(
+        workspace_id=workspace_id, since=time.time() - _REPEAT_WINDOW_SEC,
+        source_prefix=call_prefix if workspace_id == unmapped_slug else None,
+    )
+    hit = find_duplicate(title, body, [Known(a.id, a.title, a.body) for a in known])
+    return next((a for a in known if hit is not None and a.id == hit.id), None)
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _where_it_stands(a) -> str:
+    return {
+        "pending": "It is still waiting for approval.",
+        "approved": "It is approved and about to be built.",
+        "dispatching": "It is approved and the agent is starting on it.",
+        "dispatched": "It is approved and the agent is working on it.",
+        "pushed": "The agent has pushed a branch for it.",
+        "done": f"It is done{': ' + a.pr_url if a.pr_url else ''}.",
+    }.get(a.status, "")
+
+
+def _note_repeat(store: Store, slack, original, key: str, title: str, body: str) -> None:
+    """A repeat of a card already posted: say so in that card's thread instead of posting a second card (and inviting a second build of
+    the same thing). The thread reply is courtesy — the repeat is recorded either way."""
+    n = store.record_mention(approval_id=original.id, source_key=key, title=title, body=body)
+    snippet = body.strip().replace("\n", " ")
+    snippet = snippet if len(snippet) <= 200 else snippet[:197] + "…"
+    text = f":repeat: Raised again — the {_ordinal(n)} time: *{title}*" + (f" — {snippet}" if snippet else "") + f"\n{_where_it_stands(original)}"
+    try:
+        slack.post_thread_reply(channel=original.slack_channel, thread_ts=original.slack_ts, text=text.strip())
+    except SlackError:
+        logger.warning("could not note the repeat of %r on its card %s/%s", original.title, original.slack_channel, original.slack_ts, exc_info=True)
 
 
 def _seed_votes(slack, channel: str, ts: str) -> None:
@@ -248,6 +293,11 @@ async def watch_meeting(
                 if store.is_seen(key):
                     continue
                 workspace_id = await workspace.get()
+                original = _find_repeat(store, workspace_id=workspace_id, unmapped_slug=unmapped_slug,
+                                        call_prefix=dedupe_prefix, title=title, body=body)
+                if original is not None:
+                    await asyncio.to_thread(_note_repeat, store, slack, store.get_approval(original.id) or original, key, title, body)
+                    continue
                 voting = load_policy(store).configured
                 try:
                     ts = await asyncio.to_thread(

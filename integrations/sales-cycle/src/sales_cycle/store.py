@@ -167,6 +167,15 @@ class Store:
                                 ("waiting_notified", "INTEGER NOT NULL DEFAULT 0")):
                 if column not in existing_cols:
                     conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
+            # Each time the copilot raises a request that is a repeat of a card already posted, instead of a second card: what was said
+            # and when, so the repeat counts as demand for the original and nothing is lost.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS card_mentions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    approval_id INTEGER NOT NULL, source_key TEXT NOT NULL,
+                    title TEXT NOT NULL, body TEXT NOT NULL, mentioned_at REAL NOT NULL
+                )
+            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_connections (
                     provider TEXT PRIMARY KEY,
@@ -297,6 +306,40 @@ class Store:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'pending' AND waiting_notified = 1").fetchall()
         return [PendingApproval(**dict(r)) for r in rows]
+
+    def known_requests(self, *, workspace_id: str, since: float, source_prefix: str | None = None) -> list[PendingApproval]:
+        """The requests a new one could be a repeat of: this workspace's, since ``since``, that have not failed (a request whose
+        build failed deserves a fresh card when asked again). ``source_prefix`` narrows to one call's cards."""
+        sql = "SELECT * FROM pending_approvals WHERE workspace_id = ? AND created_at >= ? AND status != 'failed'"
+        args: list = [workspace_id, since]
+        if source_prefix is not None:
+            sql += " AND substr(source_key, 1, ?) = ?"
+            args += [len(source_prefix), source_prefix]
+        with self._conn() as conn:
+            rows = conn.execute(sql + " ORDER BY id", args).fetchall()
+        return [PendingApproval(**dict(r)) for r in rows]
+
+    def get_approval(self, approval_id: int) -> PendingApproval | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()
+        return PendingApproval(**dict(row)) if row else None
+
+    def record_mention(self, *, approval_id: int, source_key: str, title: str, body: str) -> int:
+        """Records a repeat of a card and marks its key seen (so a replayed card is not handled twice). Returns how many times the
+        request has been raised now, the original included."""
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO card_mentions (approval_id, source_key, title, body, mentioned_at) VALUES (?, ?, ?, ?, ?)",
+                (approval_id, source_key, title, body, time.time()),
+            )
+            conn.execute("INSERT OR IGNORE INTO seen_requests (key, seen_at) VALUES (?, ?)", (source_key, time.time()))
+            n = conn.execute("SELECT COUNT(*) FROM card_mentions WHERE approval_id = ?", (approval_id,)).fetchone()[0]
+        return 1 + n
+
+    def mention_count(self, approval_id: int) -> int:
+        """How many times a request has been raised, the original included."""
+        with self._conn() as conn:
+            return 1 + conn.execute("SELECT COUNT(*) FROM card_mentions WHERE approval_id = ?", (approval_id,)).fetchone()[0]
 
     def claim_waiting_notice(self, approval_id: int) -> bool:
         """True exactly once per request: the caller that gets it posts the "waiting for more 👍 than 👎" reply."""

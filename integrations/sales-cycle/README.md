@@ -304,6 +304,21 @@ By default **anyone's** ✅ on a feature-request card approves it. In Settings �
 Needs the extra scopes above and a **reconnect** of Slack in Settings after adding them. The approval records who approved and the
 tally (`approved_by`, `votes_up`, `votes_down`); older requests keep empty values.
 
+### Repeated requests
+
+The copilot words the same ask differently each time it hears it ("CSV Export of Results", then "Export results to CSV"). Rather than a
+second card — and, if approved, a second agent building the same thing — the watcher recognises a **repeat** and says so in the
+original card's thread: *Raised again — the 2nd time: …*, with where the original stands (waiting for approval, being built, or
+done with its pull request). Each mention is recorded (`card_mentions`), so a repeat counts as demand for the one card.
+
+- **How it decides** (`duplicates.py`): the title and body are reduced to their content words (filler such as "we should add a" is
+  dropped, plurals and endings trimmed) and scored by Jaccard overlap, at least 0.7, with at least two words in common. It leans toward
+  **not** merging — "export to PDF" and "export to CSV" stay two cards — because a missed repeat costs one extra card, while merging two
+  different requests would hide one.
+- **What it compares against:** the same customer's earlier requests from the last 14 days (a customer asking again on a later call is the
+  same request). Requests in the shared **unmapped** workspace — calls not tied to a customer — only match within the same call, so two
+  customers' requests are never merged. A request whose build **failed** does not block a new card.
+
 ### Zoom (the bot joins every call you start, scheduled or not)
 
 Each rep clicks **Connect Zoom** (Settings → Integrations → Zoom) and approves on Zoom's own screen. From then on,
