@@ -77,7 +77,7 @@ COPY --from=deps /app/node_modules ./node_modules
 # The built app + the custom server + runtime config it reads.
 COPY --from=build /app/.next ./.next
 COPY public ./public
-COPY server.mjs next.config.ts tsconfig.json ./
+COPY server.mjs wsProxy.mjs next.config.ts tsconfig.json ./
 # next-env.d.ts is gitignored (Next.js generates it during `next build`); take it from the build stage
 # rather than the build context, where it is absent on a clean clone.
 COPY --from=build /app/next-env.d.ts ./

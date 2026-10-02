@@ -148,9 +148,10 @@ edges:
   dashboard -req-> gateway  # dashboard → gateway /ws (live transcript view)
   slim -req-> gateway  # Python client; REST via gateway
   extension -req-> gateway  # browser extension client; live WS via gateway
-  capture-mac -req-> desktop  # audio of a detected call → the capture ingest (authenticated with the user's API key)
-  capture-mac -req-> gateway  # requests Vexa's bot for a detected call (POST /bots with the user's API key)
+  capture-mac -req-> terminal  # audio of a detected call → the terminal's /capture/ingest WebSocket relay → the capture ingest (authenticated there with the user's API key)
+  capture-mac -req-> terminal  # requests Vexa's bot for a detected call: POST /bots through the terminal's /api/capture/relay, with the user's own API key
   capture-mac -req-> terminal  # pairing: the user's browser opens the terminal's connect page, which opens the app with a one-time code the app exchanges for its bot-scoped key and the server addresses
+  terminal -req-> desktop  # relays the Mac app's audio WebSocket to the capture ingest, and its bot requests to the gateway (only the app's own key)
   flows-worker -write-> flows-rows
   flows-api -write-> flows-rows  # the second writer, recorded because it is real: POST /events admits a fact in the API process (flows_integrations/flows_api.py → flows.admit → INSERT INTO reaction) and the registry writes flow_version there too. The chart carried only flows-worker, so the one shared carrier in this domain read as single-writer
   flows-api -read-> flows-rows

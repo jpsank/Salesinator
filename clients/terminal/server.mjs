@@ -16,7 +16,8 @@
 import { createServer } from "node:http";
 import nextEnv from "@next/env";
 import next from "next";
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer } from "ws";
+import { attachSocketError, endSocket, logError, proxyTo } from "./wsProxy.mjs";
 
 const dev = process.env.NODE_ENV !== "production";
 const { loadEnvConfig } = nextEnv;
@@ -76,8 +77,14 @@ const server = createServer((req, res) => {
   });
 });
 
-// Browser-facing WS server — we do the upgrade ourselves (noServer) only for `/ws`.
+// Browser-facing WS server — we do the upgrade ourselves (noServer) only for `/ws` and `/capture/ingest`.
 const wss = new WebSocketServer({ noServer: true });
+
+// Vexa Capture (the Mac app) streams a call's audio to `/capture/ingest`, so a deployment needs ONE public address — this
+// site — rather than a second one for the capture service. The upgrade is relayed as-is, query included: the app's own
+// API key rides it (`?api_key=`) and is checked by the capture service, never by this server. No cookie, no env key.
+const CAPTURE_UPSTREAM = (process.env.CAPTURE_INGEST_UPSTREAM || "ws://127.0.0.1:19099/ingest").replace(/\/$/, "");
+const captureWss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });      // an audio frame is ~6 KB
 
 server.on("upgrade", (req, socket, head) => {
   let pathname;
@@ -85,6 +92,15 @@ server.on("upgrade", (req, socket, head) => {
     pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
   } catch {
     socket.destroy();
+    return;
+  }
+  if (pathname === "/capture/ingest") {
+    const search = new URL(req.url, `http://${req.headers.host}`).search;
+    let closeOnSocketError = () => endSocket(socket);
+    attachSocketError(socket, "capture client upgrade", () => closeOnSocketError());
+    captureWss.handleUpgrade(req, socket, head, (client) => {
+      closeOnSocketError = proxyTo(client, socket, `${CAPTURE_UPSTREAM}${search}`);
+    });
     return;
   }
   if (pathname !== "/ws") {
@@ -97,7 +113,7 @@ server.on("upgrade", (req, socket, head) => {
   let closeOnSocketError = () => endSocket(socket);
   attachSocketError(socket, "client upgrade", () => closeOnSocketError());
   wss.handleUpgrade(req, socket, head, (client) => {
-    closeOnSocketError = proxyToGateway(client, socket, apiKey);
+    closeOnSocketError = proxyTo(client, socket, `${GATEWAY_URL}/ws`, apiKey ? { "x-api-key": apiKey } : {});
   });
 });
 
@@ -113,101 +129,6 @@ server.on("error", (err) => {
 wss.on("error", (err) => {
   logError("websocket server error", err);
 });
-
-function proxyToGateway(client, clientSocket, apiKey) {
-  const target = `${GATEWAY_URL}/ws`;
-  const upstream = new WebSocket(target, {
-    headers: apiKey ? { "x-api-key": apiKey } : {},
-  });
-
-  const pending = [];
-  let upstreamOpen = false;
-
-  const closePair = () => {
-    pending.length = 0;
-    safeClose(client);
-    safeClose(upstream);
-  };
-  const onProxyError = (scope, err) => {
-    logError(scope, err);
-    closePair();
-  };
-
-  attachSocketError(clientSocket || client._socket, "client websocket", (err) => onProxyError("client websocket socket error", err));
-  attachSocketError(upstream._socket, "upstream websocket", (err) => onProxyError("upstream websocket socket error", err));
-
-  client.on("message", (data, isBinary) => {
-    if (upstreamOpen && upstream.readyState === WebSocket.OPEN) {
-      sendFrame(upstream, data, { binary: isBinary }, "client -> upstream", closePair);
-    } else if (upstream.readyState === WebSocket.CONNECTING) {
-      pending.push([data, isBinary]);
-    }
-  });
-
-  upstream.on("open", () => {
-    upstreamOpen = true;
-    attachSocketError(upstream._socket, "upstream websocket", (err) => onProxyError("upstream websocket socket error", err));
-    for (const [data, isBinary] of pending) {
-      sendFrame(upstream, data, { binary: isBinary }, "client -> upstream", closePair);
-    }
-    pending.length = 0;
-  });
-  upstream.on("upgrade", () => {
-    attachSocketError(upstream._socket, "upstream websocket", (err) => onProxyError("upstream websocket socket error", err));
-  });
-  upstream.on("message", (data, isBinary) => {
-    sendFrame(client, data, { binary: isBinary }, "upstream -> client", closePair);
-  });
-  upstream.on("unexpected-response", (_req, res) => {
-    logError("upstream websocket rejected upgrade", new Error(`HTTP ${res.statusCode}`));
-    closePair();
-  });
-
-  // Close each side when the other closes. Only forward a code if it's a valid
-  // application close code (1000 / 3000-4999); reserved codes like 1005/1006
-  // would throw, so fall back to a bare close.
-  client.on("close", (code, reason) => safeClose(upstream, code, reason));
-  upstream.on("close", (code, reason) => safeClose(client, code, reason));
-  client.on("error", (err) => onProxyError("client websocket error", err));
-  upstream.on("error", (err) => onProxyError("upstream websocket error", err));
-
-  return closePair;
-}
-
-const socketErrorHandlers = new WeakSet();
-
-function attachSocketError(socket, scope, onError) {
-  if (!socket || socketErrorHandlers.has(socket)) return;
-  socketErrorHandlers.add(socket);
-  socket.on("error", (err) => {
-    logError(scope, err);
-    onError?.(err);
-  });
-}
-
-function sendFrame(sock, data, options, scope, onError) {
-  if (sock.readyState !== WebSocket.OPEN) return;
-  try {
-    sock.send(data, options, (err) => {
-      if (!err) return;
-      logError(`${scope} send failed`, err);
-      onError?.(err);
-    });
-  } catch (err) {
-    logError(`${scope} send failed`, err);
-    onError?.(err);
-  }
-}
-
-function safeClose(sock, code, reason) {
-  if (!sock || sock.readyState === WebSocket.CLOSING || sock.readyState === WebSocket.CLOSED) return;
-  try {
-    if (code === 1000 || (code >= 3000 && code <= 4999)) sock.close(code, reason);
-    else sock.close();
-  } catch (err) {
-    logError("websocket close failed", err);
-  }
-}
 
 function sendProxyError(res) {
   if (res.destroyed || res.writableEnded) return;
@@ -226,21 +147,7 @@ function sendProxyError(res) {
   }
 }
 
-function endSocket(socket) {
-  if (!socket || socket.destroyed) return;
-  try {
-    socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
-  } catch (err) {
-    logError("socket end failed", err);
-  }
-}
-
-function logError(scope, err) {
-  // eslint-disable-next-line no-console
-  console.error(`[terminal-server] ${scope}`, err);
-}
-
 server.listen(port, hostname, () => {
   // eslint-disable-next-line no-console
-  console.log(`> Terminal ready on http://${hostname}:${port} (WS proxy /ws -> ${GATEWAY_URL}/ws)`);
+  console.log(`> Terminal ready on http://${hostname}:${port} (WS proxy /ws -> ${GATEWAY_URL}/ws, /capture/ingest -> ${CAPTURE_UPSTREAM})`);
 });

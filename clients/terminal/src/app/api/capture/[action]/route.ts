@@ -4,7 +4,7 @@
  *     page whose link opens the app: `vexacapture://connect?code=…&base=<this site>`.
  *  2. The app POSTs the code to /api/capture/exchange. The code is single-use and good for two minutes; only then is a
  *     bot-scoped Vexa key minted (so a code nobody redeems leaves nothing behind) and returned with the API and capture-
- *     ingest addresses the app should use.
+ *     ingest addresses the app should use — this site's own relays unless the deployment publishes the services itself.
  *
  *  The key travels only in the exchange response, never in a URL (browser history). The code is the sole secret on the link,
  *  and it names a user the server already authenticated.
@@ -39,13 +39,14 @@ function publicOrigin(req: NextRequest): string {
   return `${proto.split(",")[0]}://${host.split(",")[0]}`;
 }
 
-const isLocal = (origin: string): boolean => /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(origin);
-
-/** Where the app should send the bot request and stream audio: configured for a deployment, defaulted for a local one. */
-function addresses(origin: string): { api: string; ingest: string } | null {
-  const api = process.env.VEXA_CAPTURE_API_URL || (isLocal(origin) ? "http://localhost:18056" : "");
-  const ingest = process.env.VEXA_CAPTURE_INGEST_URL || (isLocal(origin) ? "ws://localhost:19099/ingest" : "");
-  return api && ingest ? { api, ingest } : null;
+/** Where the app should send the bot request and stream audio. By default both are THIS site — the REST relay at
+ *  /api/capture/relay and the WebSocket relay at /capture/ingest (server.mjs) — so one public address is enough. A deployment that
+ *  publishes the gateway and the capture service itself can point the app straight at them. */
+function addresses(origin: string): { api: string; ingest: string } {
+  return {
+    api: process.env.VEXA_CAPTURE_API_URL || `${origin}/api/capture/relay`,
+    ingest: process.env.VEXA_CAPTURE_INGEST_URL || `${origin.replace(/^http/, "ws")}/capture/ingest`,
+  };
 }
 
 function sweep(now: number): void {
@@ -57,9 +58,6 @@ async function connect(req: NextRequest): Promise<Response> {
   const me = await currentUser();
   if (!me.ok) {
     return html(`<h2>Sign in to Vexa first</h2><p>Open <a href="${esc(origin)}/">${esc(origin)}</a>, sign in, then choose <b>Connect to Vexa</b> in Vexa Capture again.</p>`, 401);
-  }
-  if (!addresses(origin)) {
-    return html(`<h2>Vexa Capture isn't set up on this server</h2><p>An administrator needs to set <code>CAPTURE_API_URL</code> and <code>CAPTURE_INGEST_URL</code> (the public addresses of the Vexa API and the capture service).</p>`, 503);
   }
   const now = Date.now();
   sweep(now);
@@ -81,7 +79,6 @@ async function exchange(req: NextRequest): Promise<Response> {
   sweep(now);
   if (!p || p.expires <= now) return json({ error: "That connection link has expired — choose Connect to Vexa again." }, 404);
   const addr = addresses(publicOrigin(req));
-  if (!addr) return json({ error: "Vexa Capture isn't set up on this server (CAPTURE_API_URL / CAPTURE_INGEST_URL)." }, 503);
 
   const listed = await listUserTokens(p.userId);
   const mine = (listed.ok ? listed.data ?? [] : []).filter((t) => t.name === KEY_NAME).sort((a, b) => b.id - a.id);

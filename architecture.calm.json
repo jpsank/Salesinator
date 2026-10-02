@@ -2490,31 +2490,29 @@
   },
   {
    "unique-id": "capture-mac-ingest",
-   "description": "audio of a detected call → the capture ingest (authenticated with the user's API key)",
+   "description": "audio of a detected call → the terminal's /capture/ingest WebSocket relay → the capture ingest (authenticated there with the user's API key)",
    "relationship-type": {
     "connects": {
      "source": {
       "node": "capture-mac"
      },
      "destination": {
-      "node": "desktop",
-      "interface": "desktop-ingest-ws"
+      "node": "terminal"
      }
     }
    },
    "protocol": "WebSocket"
   },
   {
-   "unique-id": "capture-mac-gateway",
-   "description": "requests Vexa's bot for a detected call (POST /bots with the user's API key)",
+   "unique-id": "capture-mac-relay",
+   "description": "requests Vexa's bot for a detected call: POST /bots through the terminal's /api/capture/relay, with the user's own API key",
    "relationship-type": {
     "connects": {
      "source": {
       "node": "capture-mac"
      },
      "destination": {
-      "node": "gateway",
-      "interface": "gateway-rest"
+      "node": "terminal"
      }
     }
    },
@@ -2534,6 +2532,22 @@
     }
    },
    "protocol": "HTTPS"
+  },
+  {
+   "unique-id": "terminal-capture-relay",
+   "description": "relays the Mac app's audio WebSocket to the capture ingest, and its bot requests to the gateway (only the app's own key)",
+   "relationship-type": {
+    "connects": {
+     "source": {
+      "node": "terminal"
+     },
+     "destination": {
+      "node": "desktop",
+      "interface": "desktop-ingest-ws"
+     }
+    }
+   },
+   "protocol": "WebSocket"
   },
   {
    "unique-id": "stack-deployed",

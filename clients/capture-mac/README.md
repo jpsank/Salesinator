@@ -22,25 +22,37 @@ customer started — and gets it into Vexa, in one of two ways:
 | **Send** (audio mode) | `capture.v1` frames (100 ms) over a WebSocket to `wss://<your capture host>/ingest` with the user's bot-scoped API key. Zoom/Teams use the ingest's mixed lane: the remote mix on channel 999, the mic on 1000 (labelled "You"). A dropped connection reconnects to the same call within the ingest's 20 s grace. |
 | **Say so** | The first run asks you to acknowledge that you will tell people on your calls; a bot is a visible participant, an audio capture posts a notification and shows `●` in the menu bar (`Ⅱ` while paused, `◉` when a bot is on the call); *Pause*, *Stop* and *Remove the bot* are one click. |
 
-## Build and run
+## Install and connect
 
 Needs only the Command Line Tools (macOS 13+, Apple silicon) — no Xcode, no SwiftPM:
 
 ```bash
-./test.sh      # the pure logic: wire frame (byte-identical to the TS codec), chunking, call detection, ingest URL
-./build.sh     # → .build/Vexa Capture.app, ad-hoc signed
-open ".build/Vexa Capture.app"
+./test.sh      # the pure logic: wire frame (byte-identical to the TS codec), chunking, call detection, links, pairing
+VEXA_ADDRESS=https://terminal.example.com ./install.sh   # builds, copies to ~/Applications, registers the vexacapture:// link, opens it
 ```
 
-Set the Vexa API address, the audio capture address and a bot-scoped API key (Vexa → Settings → Tokens) in the app's Settings; the
-key is kept in the Keychain. Add the app to *System Settings → General → Login Items* to start it at login. Ad-hoc signing means macOS asks
-for the Automation, Microphone and Screen Recording permissions again after each rebuild; a distributed build needs a Developer ID signature and
+`VEXA_ADDRESS` is the address people open Vexa at; the first-run prompt offers it (default `http://localhost:13000`). `./build.sh`
+builds without installing.
+
+**Connect with one click.** On first run (or *Connect to Vexa…* in the menu) confirm that address: your browser opens Vexa, which —
+signed in as you — hands the app a one-time code (`/api/capture/connect` → `vexacapture://connect?code=…`). The app asks you to
+confirm which server it is connecting to, trades the code (once, within two minutes) for its own bot-scoped key named
+`vexa-capture (Mac)` plus the addresses to use, and shows *Connected as you@company*. Nothing to copy; the key is kept in the Keychain and
+never appears in a URL. *Disconnect* forgets it, and the settings window still takes the details by hand.
+
+**One public address.** Unless told otherwise the app is pointed at the terminal's own relays — `/api/capture/relay` for bot requests
+(which take only the app's own key, never the terminal's cookie or deployment key) and a `/capture/ingest` WebSocket for audio — so the
+site you already expose is the only address needed. A deployment that publishes the gateway and capture service itself sets
+`CAPTURE_API_URL` and `CAPTURE_INGEST_URL` in `.env` instead.
+
+**Open at login** is a menu item (macOS accepts it for an app in an Applications folder). Ad-hoc signing means macOS asks for the
+Automation, Microphone and Screen Recording permissions again after each rebuild; a distributed build needs a Developer ID signature and
 notarization.
 
 ## Checks without a call
 
 ```bash
-APP=".build/Vexa Capture.app/Contents/MacOS/VexaCapture"
+APP="$HOME/Applications/Vexa Capture.app/Contents/MacOS/VexaCapture"
 $APP --probe                        # what Zoom/Teams are doing with audio, which permissions are granted
 $APP --find-link zoom               # the join link(s) found in your browsers' tabs / clipboard (prints only meeting links)
 $APP --send-bot <link>              # send Vexa's bot to a call link with the saved settings (or --api … --key …)

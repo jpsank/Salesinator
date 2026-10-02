@@ -65,9 +65,10 @@ flowchart LR
   dashboard -->|""| gateway
   slim -->|"HTTPS"| gateway
   extension -->|"WebSocket"| gateway
-  capture_mac -->|"WebSocket"| desktop
-  capture_mac -->|"HTTPS"| gateway
+  capture_mac -->|"WebSocket"| terminal
   capture_mac -->|"HTTPS"| terminal
+  capture_mac -->|"HTTPS"| terminal
+  terminal -->|"WebSocket"| desktop
   flows_worker -->|""| agent_api
   flows_worker -->|""| gateway
   flows_worker -->|""| admin_api

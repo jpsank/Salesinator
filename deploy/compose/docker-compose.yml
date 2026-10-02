@@ -1119,10 +1119,13 @@ services:
       # for everyone. Identity is VERIFIED against admin-api /internal/validate over the internal-tier
       # secret (never trusted from a cookie), and the same secret fronts agent-api's admin overview.
       - VEXA_ADMIN_EMAILS=${VEXA_ADMIN_EMAILS:-}
-      # Vexa Capture (the Mac app) pairs through /api/capture/connect and is told these two PUBLIC addresses: the Vexa API
-      # (the gateway) and the capture ingest (wss://…/ingest). Empty is fine on localhost, which defaults to the local ports.
+      # Vexa Capture (the Mac app) pairs through /api/capture/connect. By default it is told THIS site's own relays — /api/capture/relay for
+      # bot requests and /capture/ingest for audio — so one public address is enough. Set these only to publish the gateway / capture
+      # service directly instead.
       - VEXA_CAPTURE_API_URL=${CAPTURE_API_URL:-}
       - VEXA_CAPTURE_INGEST_URL=${CAPTURE_INGEST_URL:-}
+      # server.mjs relays the app's audio WebSocket (/capture/ingest) to the capture service, so this site is the one public address.
+      - CAPTURE_INGEST_UPSTREAM=ws://capture:9099/ingest
       # NO PLACEHOLDER FALLBACK. F95 removed the published `vexa-internal-secret` default from
       # every service that REFUSES it at boot; these two lines kept it, so an unconfigured stack
       # still PRESENTED the published literal as internal-tier authority. Unset is unset (A19).

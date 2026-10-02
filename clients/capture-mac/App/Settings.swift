@@ -10,8 +10,12 @@ enum Settings {
         set { d.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "serverURL") }
     }
     /// The Vexa web address the app pairs with (where the person is signed in) and who they connected as.
+    /// A build can bake in the address people open Vexa at (`VEXA_ADDRESS=https://… ./install.sh`); otherwise it is this Mac's.
+    private static var defaultAddress: String {
+        (Bundle.main.object(forInfoDictionaryKey: "VexaDefaultAddress") as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "http://localhost:13000"
+    }
     static var terminalURL: String {
-        get { d.string(forKey: "terminalURL") ?? "http://localhost:13000" }
+        get { d.string(forKey: "terminalURL") ?? defaultAddress }
         set { d.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "terminalURL") }
     }
     static var account: String {

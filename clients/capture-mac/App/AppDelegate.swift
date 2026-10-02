@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(page)
     }
 
-    private func askAddressAndConnect() {
+    @objc private func askAddressAndConnect() {
         let a = NSAlert()
         a.messageText = "Connect to Vexa"
         a.informativeText = "Enter the address you open Vexa at. Your browser will open to confirm — no token to copy."
@@ -336,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let auto = item("Act on calls automatically", #selector(toggleAuto)); auto.state = Settings.autoCapture ? .on : .off
         m.addItem(auto)
         m.addItem(.separator())
-        m.addItem(item(Settings.apiKey == nil ? "Connect to Vexa…" : "Reconnect to Vexa…", #selector(connect)))
+        m.addItem(item(Settings.apiKey == nil ? "Connect to Vexa…" : "Reconnect to Vexa…", #selector(askAddressAndConnect)))
         if Settings.apiKey != nil { m.addItem(item("Disconnect", #selector(disconnect))) }
         let login = item("Open at login", #selector(toggleLogin)); login.state = opensAtLogin ? .on : .off
         m.addItem(login)

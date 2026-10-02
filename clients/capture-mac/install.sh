@@ -1,5 +1,6 @@
 #!/bin/sh
 # Build Vexa Capture, put it in ~/Applications, register its vexacapture:// pairing link with macOS, and open it.
+#   VEXA_ADDRESS=https://terminal.example.com ./install.sh   — the address the first-run prompt offers (default: http://localhost:13000)
 # (macOS lets "Open at login" register an app that lives in an Applications folder.)
 set -eu
 cd "$(dirname "$0")"

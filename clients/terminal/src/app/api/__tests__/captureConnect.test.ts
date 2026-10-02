@@ -81,11 +81,11 @@ describe("connect", () => {
     expect(await res.text()).not.toContain("vexacapture://");
   });
 
-  it("says so when the server has no public addresses configured (a deployment, not localhost)", async () => {
+  it("needs no per-deployment setup: a site with nothing configured still pairs", async () => {
     stub();
     const res = await GET(getReq("terminal.example.com", { "x-forwarded-proto": "https" }), ctx("connect"));
-    expect(res.status).toBe(503);
-    expect(await res.text()).toContain("CAPTURE_API_URL");
+    expect(res.status).toBe(200);
+    expect(await codeFrom(res)).not.toBe("");
   });
 });
 
@@ -96,7 +96,7 @@ describe("exchange", () => {
     expect(code).not.toBe("");
     const res = await POST(postReq({ code }), ctx("exchange"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ key: "vxa_bot_new", api: "http://localhost:18056", ingest: "ws://localhost:19099/ingest", account: "alice@vexa.ai" });
+    expect(await res.json()).toEqual({ key: "vxa_bot_new", api: "http://localhost:13000/api/capture/relay", ingest: "ws://localhost:13000/capture/ingest", account: "alice@vexa.ai" });
     const mint = calls.find((c) => c.method === "POST" && c.url.includes("/admin/users/42/tokens"))!;
     expect(mint.url).toContain("scopes=bot");
     expect(mint.url).toContain("name=vexa-capture");
@@ -106,7 +106,15 @@ describe("exchange", () => {
     expect(again.status).toBe(404);                                       // single use
   });
 
-  it("uses the configured public addresses on a deployment", async () => {
+  it("points the app at this site's own relays — one public address — on a deployment too", async () => {
+    stub();
+    const hdr = { "x-forwarded-host": "terminal.example.com", "x-forwarded-proto": "https" };
+    const code = await codeFrom(await GET(getReq("terminal:3000", hdr), ctx("connect")));
+    const res = await POST(postReq({ code }, "terminal:3000", hdr), ctx("exchange"));
+    expect(await res.json()).toMatchObject({ api: "https://terminal.example.com/api/capture/relay", ingest: "wss://terminal.example.com/capture/ingest" });
+  });
+
+  it("uses the configured addresses instead when the deployment publishes the services itself", async () => {
     stub();
     process.env.VEXA_CAPTURE_API_URL = "https://api.x.com"; process.env.VEXA_CAPTURE_INGEST_URL = "wss://cap.x.com/ingest";
     const code = await codeFrom(await GET(getReq("terminal.example.com", { "x-forwarded-proto": "https" }), ctx("connect")));
