@@ -26,12 +26,14 @@ async function forward(req: NextRequest, params: Promise<{ path: string[] }>): P
   if (!(req.method === "GET" ? await requireUser() : await requireAdmin())) return deny(req.method === "GET" ? 401 : 403, "forbidden");
   const url = `${SALES_CYCLE_URL}/${path.join("/")}${req.nextUrl.search}`;
 
-  const init: RequestInit = { method: req.method, cache: "no-store" };
+  // The service is published, so its private routes want the shared secret — which only this server (having just verified the user) holds.
+  const headers: Record<string, string> = { "X-Internal-Secret": process.env.VEXA_INTERNAL_API_SECRET || "" };
+  const init: RequestInit = { method: req.method, cache: "no-store", headers };
   if (req.method !== "GET" && req.method !== "DELETE") {
     const body = await req.text();
     if (body) {
       init.body = body;
-      init.headers = { "Content-Type": "application/json" };
+      headers["Content-Type"] = "application/json";
     }
   }
 

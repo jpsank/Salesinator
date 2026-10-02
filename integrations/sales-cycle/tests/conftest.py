@@ -9,10 +9,19 @@ import sales_cycle.api as api_module
 from sales_cycle.api import app
 from sales_cycle.settings import get_settings
 
-client = TestClient(app)
+# The service's private routes need the shared secret (internal_auth.py); `client` carries it the way the Terminal and the sweep loop do,
+# and `bare` is a caller without it — what the internet looks like.
+INTERNAL_SECRET = "internal-secret"
+client = TestClient(app, headers={"X-Internal-Secret": INTERNAL_SECRET})
+bare = TestClient(app)
 GATEWAY = get_settings().vexa_gateway_url.rstrip("/")
 AGENT_API = get_settings().agent_api_internal_url.rstrip("/")
 MEETING_API = get_settings().meeting_api_internal_url.rstrip("/")
+
+
+@pytest.fixture(autouse=True)
+def _internal_secret(monkeypatch):
+    monkeypatch.setenv("SALES_CYCLE_INTERNAL_SECRET", INTERNAL_SECRET)
 
 
 @pytest.fixture(autouse=True)

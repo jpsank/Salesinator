@@ -60,6 +60,19 @@ describe("sales-cycle proxy gate", () => {
     expect((await POST(req("POST"), ctx("slack", "channel"))).status).toBe(200);
   });
 
+  it("presents the internal secret to the (published) backend — only after it has verified the user", async () => {
+    cookieJar["vexa-token"] = "admin-tok";
+    const seen: Array<Record<string, string>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/internal/validate")) return new Response(JSON.stringify({ user_id: 1, email: "a@example.com", is_admin: true }), { status: 200 });
+      seen.push((init?.headers || {}) as Record<string, string>);
+      return new Response("{}", { status: 200 });
+    }));
+    await GET(req("GET"), ctx("oauth", "slack", "status"));
+    await POST(req("POST"), ctx("slack", "channel"));
+    expect(seen.map((h) => h["X-Internal-Secret"])).toEqual(["internal-secret", "internal-secret"]);
+  });
+
   it("never proxies the backend's internal or dispatch routes, even for an admin", async () => {
     cookieJar["vexa-token"] = "admin-tok";
     const upstream = stubFetch();

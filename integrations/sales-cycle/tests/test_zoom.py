@@ -11,7 +11,7 @@ import respx
 
 import sales_cycle.api as api_module
 import sales_cycle.zoom_join as zoom_join
-from conftest import GATEWAY, client
+from conftest import GATEWAY, bare, client
 
 SECRET = "internal-secret"
 HOOK_SECRET = "zoom-hook-secret"
@@ -60,13 +60,13 @@ def _started(host="zu1", uuid="uuid-1", meeting_id="81234567890", topic="Acme de
 # ── the per-rep routes are the Terminal's alone ─────────────────────────────────────────────────────────
 
 def test_per_rep_routes_refuse_a_caller_without_the_internal_secret(monkeypatch):
-    for call in (lambda h: client.post("/zoom/authorize-link", headers=h, json={"vexa_user_id": "1", "vexa_token": "t"}),
-                 lambda h: client.get("/zoom/status", headers=h, params={"vexa_user_id": "1"}),
-                 lambda h: client.post("/zoom/disconnect", headers=h, json={"vexa_user_id": "1"})):
+    for call in (lambda h: bare.post("/zoom/authorize-link", headers=h, json={"vexa_user_id": "1", "vexa_token": "t"}),
+                 lambda h: bare.get("/zoom/status", headers=h, params={"vexa_user_id": "1"}),
+                 lambda h: bare.post("/zoom/disconnect", headers=h, json={"vexa_user_id": "1"})):
         assert call({}).status_code == 401
         assert call({"X-Internal-Secret": "wrong"}).status_code == 401
     monkeypatch.setenv("SALES_CYCLE_INTERNAL_SECRET", "")
-    assert client.get("/zoom/status", headers={"X-Internal-Secret": ""}, params={"vexa_user_id": "1"}).status_code == 503
+    assert bare.get("/zoom/status", headers={"X-Internal-Secret": ""}, params={"vexa_user_id": "1"}).status_code == 503
 
 
 def test_authorize_link_503_when_zoom_oauth_is_not_configured(monkeypatch):

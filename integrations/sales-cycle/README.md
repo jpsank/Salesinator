@@ -42,6 +42,16 @@ It prints, as JSON: requests per status, the approval rate, the share that reach
 needed a retry, the median / p90 / max of each hop (posted→approved, approved→pushed, pushed→PR, posted→PR) and the
 PR links. Requests from before the stage timestamps existed are counted but left out of the timings.
 
+## What the internet can reach
+
+This service has a public address because Slack, Zoom, HubSpot and the browser's OAuth redirects must reach it — and a public address
+exposes every route, so `internal_auth.py` makes the split explicit. **Public:** `/health`; the OAuth `authorize` redirect and
+`callback`; `/slack/events` and `/webhooks/*` (each verifies the sender's signature); `/tag` and `/dispatch` (they act only under a Vexa
+API key the caller must hold). **Everything else needs `X-Internal-Secret`** — connection status/disconnect/paste-a-token, the Slack
+channel settings, `/internal/*` (the sweeps) and `/zoom/*` — which only Vexa's Terminal and this stack's sweep loop hold
+(`SALES_CYCLE_INTERNAL_SECRET`, the same value as `INTERNAL_API_SECRET`). A route added later is private until it is listed as public, and
+with no secret configured the private routes answer 503 rather than open.
+
 ## The pieces (file map)
 
 | File | What it does |
@@ -51,6 +61,7 @@ PR links. Requests from before the stage timestamps existed are counted but left
 | `calendar_resolver.py` | The automatic version of the above — reads attendee emails straight off Vexa's own notification, no extra lookup needed. |
 | `live_card_watcher.py` | Tails one call's live copilot-card stream for its whole duration and posts each `feature_request` to Slack the instant it appears. |
 | `zoom_routes.py` / `zoom_oauth.py` / `zoom_join.py` / `zoom_verify.py` | "Connect Zoom": a rep's own Zoom account, the signed "meeting started" webhook, and sending the bot to a meeting they just started. |
+| `internal_auth.py` | Which routes are public and which need the shared secret. |
 | `report.py` | `python -m sales_cycle.report` — pipeline counts, per-hop timings and PR links from the store. |
 | `store.py` | A small local database tracking which requests are pending, approved, or done. |
 | `orchestrator.py` | Once approved: kicks off the AI coding turn (in its own isolated worktree), checks in until it's done, pushes it, then opens a pull request. |

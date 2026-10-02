@@ -451,10 +451,13 @@ services:
       - -c
       - |
         while true; do
-          curl -sf -X POST http://sales-cycle:8200/internal/process-approved || true
-          curl -sf -X POST http://sales-cycle:8200/internal/sweep-live-watchers || true
+          curl -sf -X POST -H "X-Internal-Secret: $$INTERNAL_API_SECRET" http://sales-cycle:8200/internal/process-approved || true
+          curl -sf -X POST -H "X-Internal-Secret: $$INTERNAL_API_SECRET" http://sales-cycle:8200/internal/sweep-live-watchers || true
           sleep 10
         done
+    environment:
+      # The same secret sales-cycle holds (SALES_CYCLE_INTERNAL_SECRET); its private routes refuse a request without it.
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
     depends_on:
       sales-cycle:
         condition: service_healthy

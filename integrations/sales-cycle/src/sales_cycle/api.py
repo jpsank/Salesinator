@@ -53,7 +53,7 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from sales_cycle import hubspot_oauth, slack_oauth
+from sales_cycle import hubspot_oauth, internal_auth, slack_oauth
 from sales_cycle.calendar_resolver import resolve_meeting_started
 from sales_cycle.hubspot_client import HubSpotClient
 from sales_cycle.live_card_watcher import watch_meeting
@@ -75,6 +75,7 @@ from sales_cycle.zoom_routes import register_zoom_routes
 logger = logging.getLogger("sales_cycle.api")
 
 app = FastAPI(title="vexa-sales-cycle")
+internal_auth.install(app)        # everything not listed as public there needs X-Internal-Secret
 
 _store: Store | None = None
 
