@@ -80,9 +80,13 @@ async function isAdmitted(page: Page): Promise<boolean> {
     // Before the weaker fallbacks, rule out the waiting room. The
     // waiting-room text is the most reliable disambiguator — it appears
     // ONLY in the waiting room.
+    // Compared normalised (typographic apostrophes straightened, whitespace collapsed, case ignored): Zoom renders "We've let
+    // them know you're here" with a curly apostrophe and in separate elements, which an exact substring match misses — and a
+    // missed waiting room reads as "admitted" through the fallbacks below.
     const inWaitingRoom = await page.evaluate((texts: string[]) => {
-      const bodyText = document.body?.innerText || '';
-      return texts.some(t => bodyText.includes(t));
+      const norm = (s: string) => s.replace(/[\u2018\u2019\u201B\u02BC]/g, "'").replace(/\s+/g, ' ').toLowerCase();
+      const body = norm(document.body?.innerText || '');
+      return texts.some(t => body.includes(norm(t)));
     }, zoomWaitingRoomTexts).catch(() => false);
     if (inWaitingRoom) return false;
 
@@ -129,8 +133,9 @@ async function isInWaitingRoom(page: Page): Promise<boolean> {
     }
     // Also check via JS text scan (more reliable for partial matches)
     return await page.evaluate((texts: string[]) => {
-      const bodyText = document.body.innerText || '';
-      return texts.some(t => bodyText.includes(t));
+      const norm = (s: string) => s.replace(/[\u2018\u2019\u201B\u02BC]/g, "'").replace(/\s+/g, ' ').toLowerCase();
+      const body = norm(document.body.innerText || '');
+      return texts.some(t => body.includes(norm(t)));
     }, zoomWaitingRoomTexts);
   } catch {
     return false;

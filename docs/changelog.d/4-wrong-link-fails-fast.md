@@ -6,3 +6,6 @@
   on the Mac when the bot ends without ever getting in.
   Seen live: a bot sent to a dead Zoom link failed as `validation_error` 14 s after it was requested, nothing re-spawned it, and
   Vexa Capture started capturing the call's audio a second later.
+  The Zoom bot also no longer mistakes the host's waiting room for the meeting: it compares Zoom's waiting-room sentence with straightened
+  apostrophes and collapsed whitespace, so a curly apostrophe or a line break in "Host has joined. We've let them know you're here" no
+  longer reads as "admitted" (seen live: the bot reported itself active while sitting in the waiting room).

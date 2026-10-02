@@ -14,7 +14,8 @@
  * Run: npx tsx src/zoom/admission.test.ts
  */
 
-import { waitForZoomMeetingAdmission } from "./admission";
+import { waitForZoomMeetingAdmission, checkForZoomAdmissionSilent } from "./admission";
+import { zoomMeetingAppSelector } from "./selectors";
 import { AdmissionError } from "../shared/admission";
 import { resetEscalation } from "../shared/escalation";
 
@@ -85,6 +86,37 @@ async function main() {
     const got = await outcomeOf(waitForZoomMeetingAdmission(page, 30_000, cfg));
     check("host rejection → AdmissionError('denial') — a re-knock cannot succeed",
       got === "AdmissionError:denial", got);
+  }
+
+  // ── the waiting room is recognised however Zoom formats its sentence ──
+  // Zoom renders "Host has joined. We've let them know you're here." with a typographic apostrophe, in separate elements
+  // (so a line break lands between the sentences), and inside the same `.meeting-app` shell as a real meeting. An exact
+  // substring match missed it, the shell fallback read "admitted", and the bot reported itself in the meeting while it sat
+  // in the host's waiting room (seen live, 2026-10-02). The shell is visible and the Leave button is not, as there.
+  function pageWithShell(bodyText: string): any {
+    const page = makePage(() => bodyText);
+    const plain = page.locator;
+    page.locator = (sel: string): any => {
+      const l = plain(sel);
+      l.isVisible = async () => sel === zoomMeetingAppSelector;
+      l.first = () => l;
+      return l;
+    };
+    return page;
+  }
+  {
+    const cases: [string, string][] = [
+      ["a curly apostrophe", "Host has joined. We\u2019ve let them know you\u2019re here."],
+      ["a line break between the sentences", "Host has joined.\nWe've let them know you're here."],
+      ["both, with extra spacing", "  Host has joined.\n\n  We\u2019ve   let them know you\u2019re here.  "],
+      ["different capitalisation", "HOST HAS JOINED. WE'VE LET THEM KNOW YOU'RE HERE."],
+    ];
+    for (const [what, text] of cases) {
+      const admitted = await checkForZoomAdmissionSilent(pageWithShell(text));
+      check(`waiting room with ${what} is not read as admitted`, admitted === false, `admitted=${admitted}`);
+    }
+    const inMeeting = await checkForZoomAdmissionSilent(pageWithShell("Julian Sanker  Vexa  Participants  Chat  Share Screen"));
+    check("a meeting shell with no waiting-room text is still admitted", inMeeting === true, `admitted=${inMeeting}`);
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);
