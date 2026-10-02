@@ -61,6 +61,7 @@ with no secret configured the private routes answer 503 rather than open.
 | `calendar_resolver.py` | The automatic version of the above — reads attendee emails straight off Vexa's own notification, no extra lookup needed. |
 | `live_card_watcher.py` | Tails one call's live copilot-card stream for its whole duration and posts each `feature_request` to Slack the instant it appears. |
 | `zoom_routes.py` / `zoom_oauth.py` / `zoom_join.py` / `zoom_verify.py` | "Connect Zoom": a rep's own Zoom account, the signed "meeting started" webhook, and sending the bot to a meeting they just started. |
+| `zoom_check.py` | `python -m sales_cycle.zoom_check` — is Connect Zoom ready: settings, redirect address, and the public webhook handshake. |
 | `internal_auth.py` | Which routes are public and which need the shared secret. |
 | `report.py` | `python -m sales_cycle.report` — pipeline counts, per-hop timings and PR links from the store. |
 | `store.py` | A small local database tracking which requests are pending, approved, or done. |
@@ -314,7 +315,12 @@ console changes names often — the app is a **user-managed OAuth app**, called 
    SALES_CYCLE_ZOOM_OAUTH_REDIRECT_URI=https://<host>/oauth/zoom/callback
    SALES_CYCLE_ZOOM_WEBHOOK_SECRET_TOKEN=...     # Event Subscriptions → Secret Token
    ```
-5. Until the app is published, only users in the **same Zoom account** can authorize it — enough for your own
+5. **Check it before clicking Validate:** `docker exec <sales-cycle container> python -m sales_cycle.zoom_check` confirms the
+   settings are present, the redirect address has the shape Zoom needs, and the public address answers the validation
+   handshake with the configured secret token, refuses an unsigned notification, and refuses the per-rep routes without the
+   internal secret (no secret is printed; `--base` probes another address). It cannot prove Zoom accepts the client id or
+   the fields of a real `meeting.started` — that is the first real call.
+6. Until the app is published, only users in the **same Zoom account** can authorize it — enough for your own
    company; another team self-hosting registers its own app. Zoom starts and stops delivering a connected user's
    events about a minute after they connect or disconnect.
 
