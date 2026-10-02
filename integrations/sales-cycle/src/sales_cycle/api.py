@@ -47,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
@@ -319,6 +320,89 @@ async def set_slack_channel(body: SetSlackChannelBody) -> SlackChannelConfig:
     return _slack_channel_config()
 
 
+class SlackEventsStatus(BaseModel):
+    last_event_at: float | None = None          # the last verified event Slack delivered (unix seconds)
+    last_rejected_at: float | None = None       # the last request that said it was from Slack but failed its signature check
+
+
+def _runtime_float(key: str) -> float | None:
+    raw = get_store().get_runtime_setting(key)
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
+
+@app.get("/slack/events-status", response_model=SlackEventsStatus)
+async def slack_events_status() -> SlackEventsStatus:
+    """When Slack last sent this service an event. Only a hint: a quiet channel and a broken connection look the same here — the check
+    below tells them apart."""
+    return SlackEventsStatus(last_event_at=_runtime_float("slack_last_event_at"), last_rejected_at=_runtime_float("slack_last_rejected_at"))
+
+
+class SlackEventsCheck(BaseModel):
+    delivered: bool
+    refused: bool = False                       # Slack's request reached us but its signature failed
+    target: str | None = None                   # what the bot reacted to
+    detail: str
+
+
+_EVENTS_CHECK_WAIT_S = 10.0
+
+
+@app.post("/slack/events-check", response_model=SlackEventsCheck)
+async def slack_events_check() -> SlackEventsCheck:
+    """Tests, end to end, that Slack is delivering events here: the bot puts a 👀 on your latest feature-request card (or, with no card yet,
+    on a short message it posts and deletes), waits for Slack to report that reaction back, then takes it off. Says which way it failed:
+    nothing arrived (Slack is not sending — Event Subscriptions off, a different Request URL, Socket Mode on) or it arrived and was refused
+    (the signing secret does not match)."""
+    slack, store = _slack(), get_store()
+    card = store.latest_card()
+    temp_ts: str | None = None
+    try:
+        if card is not None:
+            channel, ts, target = card.slack_channel, card.slack_ts, "your latest feature-request card"
+        else:
+            channel = _slack_channel_id()
+            if not channel:
+                return SlackEventsCheck(delivered=False, detail="No Slack channel is configured yet, so there is nothing to react to — set the channel first.")
+            temp_ts = ts = await run_in_threadpool(slack.post_message, channel=channel, text="Checking that Slack events reach Vexa — this message deletes itself.")
+            target = "a short message it posts and deletes"
+        started = time.time()
+        await run_in_threadpool(slack.reactions_add, channel=channel, ts=ts, name="eyes")
+        refused = False
+        while time.time() - started < _EVENTS_CHECK_WAIT_S:
+            seen = [d for d in _slack_deliveries if d["at"] >= started]
+            if any(d["ok"] and d["reaction"] == "eyes" and d["ts"] == ts for d in seen):
+                return SlackEventsCheck(delivered=True, target=target, detail=f"Slack delivered the test reaction in {time.time() - started:.1f}s — events are arriving.")
+            refused = any(not d["ok"] for d in seen)
+            if refused:
+                break
+            await asyncio.sleep(0.4)
+        if refused:
+            return SlackEventsCheck(delivered=False, refused=True, target=target, detail=(
+                "Slack sent the event but this service refused its signature — SALES_CYCLE_SLACK_SIGNING_SECRET does not match your Slack app's "
+                "Signing Secret (Basic Information → App Credentials)."))
+        return SlackEventsCheck(delivered=False, target=target, detail=(
+            f"Nothing arrived in {int(_EVENTS_CHECK_WAIT_S)}s — Slack is not sending events here. In your Slack app check: Event Subscriptions is on with this "
+            "service's address as the Request URL, reaction_added and reaction_removed are subscribed, and Socket Mode is OFF (with Socket Mode on, Slack "
+            "ignores the Request URL)."))
+    except SlackError as exc:
+        code = exc.error_code or "slack_error"
+        why = {"missing_scope": "the Slack app lacks the reactions:write permission — add it and reconnect Slack",
+               "not_in_channel": "the app is not in that channel — invite it with /invite",
+               "message_not_found": "the card's Slack message no longer exists", "channel_not_found": "the channel was not found"}.get(code, code)
+        return SlackEventsCheck(delivered=False, detail=f"Could not run the check: {why}.")
+    finally:
+        try:
+            if card is not None or temp_ts is not None:
+                await run_in_threadpool(slack.reactions_remove, channel=(card.slack_channel if card else channel), ts=(card.slack_ts if card else temp_ts), name="eyes")
+            if temp_ts is not None:
+                await run_in_threadpool(slack.delete_message, channel=channel, ts=temp_ts)
+        except Exception:  # noqa: BLE001 — cleaning up must not change the verdict
+            logger.warning("could not clean up after the Slack events check", exc_info=True)
+
+
 class SlackApprovers(BaseModel):
     """Who may give the go-ahead on a feature request. ``configured`` false = nobody set: the original rule applies (anyone's ✅)."""
     user_ids: list[str] = []
@@ -459,6 +543,20 @@ def _dispatch_one(store: Store, settings: Settings, approval: PendingApproval) -
 
 _bot_user_ids: dict[str, str] = {}      # bot token → the user id its own (seeded) reactions carry
 
+# What Slack has delivered to /slack/events recently, newest last: used by the delivery check (is Slack actually sending events?) and for the
+# "last event" the Settings page shows. In memory, per process; the last times are also kept in runtime_settings so a restart does not forget them.
+_slack_deliveries: deque[dict] = deque(maxlen=50)
+
+
+def _note_slack_delivery(*, ok: bool, event: dict | None = None) -> None:
+    now = time.time()
+    item = (event or {}).get("item") or {}
+    _slack_deliveries.append({"at": now, "ok": ok, "type": (event or {}).get("type"), "reaction": (event or {}).get("reaction"), "ts": item.get("ts")})
+    try:
+        get_store().set_runtime_setting("slack_last_event_at" if ok else "slack_last_rejected_at", repr(now))
+    except Exception:  # noqa: BLE001 — bookkeeping must never fail a delivery
+        logger.warning("could not record the Slack delivery time", exc_info=True)
+
 
 def _bot_user_id(slack: SlackClient) -> str:
     token = slack.bot_token
@@ -525,6 +623,10 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks) -> d
             body=body,
         )
     except SlackSignatureError as e:
+        # Only a request that says it is from Slack counts as a refused Slack delivery; anyone can POST here, and a stranger's guess must not
+        # make the Settings page report a bad signing secret.
+        if "slackbot" in request.headers.get("User-Agent", "").lower():
+            _note_slack_delivery(ok=False)
         raise HTTPException(status_code=401, detail=str(e)) from e
 
     payload = await request.json()
@@ -535,6 +637,7 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks) -> d
 
     if payload.get("type") == "event_callback":
         event = payload.get("event") or {}
+        _note_slack_delivery(ok=True, event=event)
         item = event.get("item") or {}
         store = get_store()
         if event.get("type") in ("reaction_added", "reaction_removed") and is_vote_reaction(event.get("reaction", "")) \

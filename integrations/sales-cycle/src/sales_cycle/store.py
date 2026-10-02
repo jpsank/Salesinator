@@ -319,6 +319,12 @@ class Store:
             rows = conn.execute(sql + " ORDER BY id", args).fetchall()
         return [PendingApproval(**dict(r)) for r in rows]
 
+    def latest_card(self) -> PendingApproval | None:
+        """The most recent feature-request card posted to Slack, whatever became of it."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM pending_approvals ORDER BY id DESC LIMIT 1").fetchone()
+        return PendingApproval(**dict(row)) if row else None
+
     def get_approval(self, approval_id: int) -> PendingApproval | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,)).fetchone()

@@ -92,6 +92,18 @@ class SlackClient:
             if e.error_code != "already_reacted":
                 raise
 
+    def reactions_remove(self, *, channel: str, ts: str, name: str) -> None:
+        """Takes the bot's own reaction off a message. Its not being there is not an error."""
+        try:
+            self._api("reactions.remove", json={"channel": channel, "timestamp": ts, "name": name})
+        except SlackError as e:
+            if e.error_code != "no_reaction":
+                raise
+
+    def delete_message(self, *, channel: str, ts: str) -> None:
+        """Deletes a message the bot itself posted."""
+        self._api("chat.delete", json={"channel": channel, "ts": ts})
+
     def reactions_get(self, *, channel: str, ts: str) -> dict[str, list[str]]:
         """Every reaction on a message and who used it, straight from Slack (``full``: the whole user list, not a sample)."""
         body = self._api("reactions.get", http_method="GET", params={"channel": channel, "timestamp": ts, "full": "true"})
