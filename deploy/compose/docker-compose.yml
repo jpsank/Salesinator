@@ -1127,6 +1127,7 @@ services:
       # service directly instead.
       - VEXA_CAPTURE_API_URL=${CAPTURE_API_URL:-}
       - VEXA_CAPTURE_INGEST_URL=${CAPTURE_INGEST_URL:-}
+      - VEXA_CAPTURE_DOWNLOAD_URL=${CAPTURE_DOWNLOAD_URL:-}
       # server.mjs relays the app's audio WebSocket (/capture/ingest) to the capture service, so this site is the one public address.
       - CAPTURE_INGEST_UPSTREAM=ws://capture:9099/ingest
       # NO PLACEHOLDER FALLBACK. F95 removed the published `vexa-internal-secret` default from

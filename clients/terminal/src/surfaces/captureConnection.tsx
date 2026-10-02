@@ -10,8 +10,12 @@ import { presentError } from "./apiClient";
 
 export interface CaptureDevice { id: number; created_at: string | null; last_used_at: string | null }
 
-export const getCaptureDevices = async (): Promise<CaptureDevice[]> =>
-  (await jsonOrThrow<{ devices: CaptureDevice[] }>(await fetch("/api/capture/status", { cache: "no-store" }))).devices;
+export interface CaptureStatus { devices: CaptureDevice[]; download: string | null }
+
+export const getCaptureStatus = async (): Promise<CaptureStatus> => {
+  const s = await jsonOrThrow<{ devices: CaptureDevice[]; download?: string | null }>(await fetch("/api/capture/status", { cache: "no-store" }));
+  return { devices: s.devices, download: s.download ?? null };
+};
 
 export const startPairing = async (): Promise<string> =>
   (await jsonOrThrow<{ link: string }>(await fetch("/api/capture/pair", { method: "POST" }))).link;
@@ -34,12 +38,13 @@ export function lastUsed(iso: string | null, now = Date.now()): string {
 
 export function CaptureCard({ now = () => Date.now() }: { now?: () => number }) {
   const [devices, setDevices] = useState<CaptureDevice[] | null>(null);
+  const [download, setDownload] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState(false);
 
   const refresh = useCallback(() => {
-    getCaptureDevices().then((d) => { setDevices(d); setErr(null); }).catch((e: unknown) => setErr(presentError(e).headline));
+    getCaptureStatus().then((s) => { setDevices(s.devices); setDownload(s.download); setErr(null); }).catch((e: unknown) => setErr(presentError(e).headline));
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -70,6 +75,7 @@ export function CaptureCard({ now = () => Date.now() }: { now?: () => number }) 
           <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)" }}>
             {devices === null ? "Checking…" : n === 0 ? "No Mac connected" : n === 1 ? "1 Mac connected" : `${n} Macs connected`}
           </span>
+          {download && n === 0 && <a href={download} style={{ ...cardBtn, textDecoration: "none" }}>Download for Mac</a>}
           <button disabled={busy} onClick={() => void connect()} style={cardPrimaryBtn}>{n === 0 ? "Connect a Mac" : "Connect another Mac"}</button>
         </div>
         <div style={cardMeta}>
@@ -82,9 +88,13 @@ export function CaptureCard({ now = () => Date.now() }: { now?: () => number }) 
             <button disabled={busy} onClick={() => void remove(d.id)} style={{ ...cardBtn, color: "var(--danger)" }}>Disconnect</button>
           </div>
         ))}
+        {download && n > 0 && (
+          <div style={cardMeta}><a href={download} style={{ color: "inherit" }}>Download for Mac</a> — for another Mac, or to update.</div>
+        )}
         {opened && (
           <div role="status" style={cardMeta}>
-            Allow your browser to open Vexa Capture. Nothing happened? Install the app first (<code style={{ fontFamily: "var(--mono)" }}>clients/capture-mac/install.sh</code>), then choose Connect again.
+            Allow your browser to open Vexa Capture. Nothing happened? Install the app first
+            {download ? <> (<a href={download} style={{ color: "inherit" }}>Download for Mac</a>)</> : <> (<code style={{ fontFamily: "var(--mono)" }}>clients/capture-mac/install.sh</code>)</>}, then choose Connect again.
           </div>
         )}
         {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}

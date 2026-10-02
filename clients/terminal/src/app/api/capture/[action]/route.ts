@@ -80,12 +80,18 @@ async function connect(req: NextRequest): Promise<Response> {
   );
 }
 
-/** Settings → Integrations: the Macs this user has paired (one bot-scoped key each, listed by when each last did anything). */
+/** Settings → Integrations: the Macs this user has paired (one bot-scoped key each, listed by when each last did anything), and where to get the app. */
 async function status(): Promise<Response> {
   const me = await currentUser();
   if (!me.ok) return json({ error: me.error }, me.status);
   const devices = (await myKeys(me.userId)).map((t) => ({ id: t.id, created_at: t.created_at ?? null, last_used_at: t.last_used_at ?? null }));
-  return json({ devices });
+  return json({ devices, download: downloadUrl() });
+}
+
+/** Where this deployment's signed Mac build is published (`CAPTURE_DOWNLOAD_URL`); only an https address is ever handed to the page. */
+function downloadUrl(): string | null {
+  const raw = (process.env.VEXA_CAPTURE_DOWNLOAD_URL || "").trim();
+  try { return new URL(raw).protocol === "https:" ? raw : null; } catch { return null; }
 }
 
 /** The same one-time code as the connect page, handed to the card, so pairing can start from where the user already is. */

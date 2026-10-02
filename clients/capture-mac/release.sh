@@ -12,7 +12,8 @@
 #   VEXA_UPDATE_FEED=https://github.com/<owner>/<repo>/releases/latest/download/latest.json \
 #   ./release.sh
 #
-# It writes dist/VexaCapture-<version>.dmg and dist/latest.json (what "Check for updates…" reads). Uploading both to the release
+# It writes dist/VexaCapture-<version>.dmg (plus a copy named VexaCapture.dmg for the Settings card's download link) and
+# dist/latest.json (what "Check for updates…" reads). Uploading both to the release
 # the feed address points at is yours to do — the script prints the command and does not run it.
 set -eu
 cd "$(dirname "$0")"
@@ -49,6 +50,7 @@ spctl --assess --type open --context context:primary-signature "$DMG"
 SUM="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
 BASE="${VEXA_UPDATE_FEED%/*}"
 printf '{"version": "%s", "url": "%s/%s", "sha256": "%s"}\n' "$VERSION" "$BASE" "$(basename "$DMG")" "$SUM" > "$OUT/latest.json"
+cp "$DMG" "$OUT/VexaCapture.dmg"        # the fixed name the Settings card's "Download for Mac" (CAPTURE_DOWNLOAD_URL) points at
 echo "✓ $DMG  (sha256 $SUM)"
-echo "  upload both files to the release the feed address points at, e.g.:"
-echo "    gh release create v$VERSION $DMG $OUT/latest.json --title \"Vexa Capture $VERSION\""
+echo "  upload these to the release the feed address points at, e.g.:"
+echo "    gh release create v$VERSION $DMG $OUT/VexaCapture.dmg $OUT/latest.json --title \"Vexa Capture $VERSION\""

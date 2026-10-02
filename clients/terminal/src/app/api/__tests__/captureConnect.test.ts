@@ -97,6 +97,17 @@ describe("the Settings card's routes", () => {
     expect(body.devices.map((d) => d.id)).toEqual([1, 2, 3, 4, 5]);               // the "ci" key (id 9) is not a Mac
   });
 
+  it("status carries the published download address only when it is https", async () => {
+    stub();
+    const prior = process.env.VEXA_CAPTURE_DOWNLOAD_URL;
+    try {
+      for (const [set, want] of [["https://example.com/v.dmg", "https://example.com/v.dmg"], ["http://example.com/v.dmg", null], ["javascript:alert(1)", null], ["", null]] as const) {
+        process.env.VEXA_CAPTURE_DOWNLOAD_URL = set;
+        expect(((await (await GET(getReq(), ctx("status"))).json()) as { download: string | null }).download).toBe(want);
+      }
+    } finally { if (prior === undefined) delete process.env.VEXA_CAPTURE_DOWNLOAD_URL; else process.env.VEXA_CAPTURE_DOWNLOAD_URL = prior; }
+  });
+
   it("status and pair need a signed-in user", async () => {
     cookieJar = {};
     stub();

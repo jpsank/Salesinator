@@ -36,6 +36,18 @@ describe("the card", () => {
     expect(screen.getByRole("button", { name: "Connect a Mac" })).toBeTruthy();
   });
 
+  it("offers Download for Mac when the deployment publishes a build, and not otherwise", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok({ devices: [], download: "https://example.com/VexaCapture.dmg" })));
+    const { unmount } = render(<CaptureCard now={() => NOW} />);
+    const link = await waitFor(() => screen.getByRole("link", { name: "Download for Mac" }));
+    expect(link.getAttribute("href")).toBe("https://example.com/VexaCapture.dmg");
+    unmount();
+    vi.stubGlobal("fetch", vi.fn(async () => ok({ devices: [], download: null })));
+    render(<CaptureCard now={() => NOW} />);
+    await waitFor(() => screen.getByText("No Mac connected"));
+    expect(screen.queryByRole("link", { name: "Download for Mac" })).toBeNull();
+  });
+
   it("Connect asks the server for a code and opens the app with it, staying on the page", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) =>
       url.includes("/pair") && init?.method === "POST" ? ok({ link: "vexacapture://connect?code=abc&base=https%3A%2F%2Fsite" }) : ok({ devices: [] }));

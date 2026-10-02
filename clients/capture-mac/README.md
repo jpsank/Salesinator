@@ -89,7 +89,7 @@ VEXA_ADDRESS=https://terminal.example.com VEXA_UPDATE_FEED=https://github.com/<o
 It needs an Apple Developer account: a *Developer ID Application* certificate in your Keychain, and notarization credentials stored once
 with `xcrun notarytool store-credentials <name>` (the header of `release.sh` has the steps). It signs with the hardened runtime and
 `App.entitlements` (microphone and browser automation), notarizes and staples the app, packs it into `dist/VexaCapture-<version>.dmg`,
-notarizes that too, and writes `dist/latest.json`. Uploading the two files is left to you; it prints the `gh release create` line.
+notarizes that too, and writes `dist/latest.json` plus a copy named `VexaCapture.dmg`. Uploading the files is left to you; it prints the `gh release create` line. Set `CAPTURE_DOWNLOAD_URL` in the deployment's `.env` to that copy's address (https only, e.g. `https://github.com/<owner>/<repo>/releases/latest/download/VexaCapture.dmg`) and the Vexa Capture card in Settings shows **Download for Mac**.
 
 **Updates.** A build made with `VEXA_UPDATE_FEED` checks that address once a day and when you choose *Preferences → Check for updates…*.
 If `latest.json` names a newer version the menu gains *Update to x.y.z…*, which downloads the disk image, checks it against the feed's
