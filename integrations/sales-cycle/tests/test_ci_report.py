@@ -36,8 +36,15 @@ def _opened(*, age_s=0.0, pr=PR):
     return store, a
 
 
-def _github(runs, *, sha="abc123"):
+RAW = "https://raw.githubusercontent.com/o/r"
+WORKSPACE = 'packages:\n  - "core/services/*"\n  - "clients/terminal"\n'
+
+
+def _github(runs, *, sha="abc123", files=(), workspace=None):
+    """Mocks the GitHub reads: the pull request's head, its check runs, the files it changes, and the repo's pnpm-workspace.yaml (none by default)."""
     respx.get(f"{GH}/pulls/2").mock(return_value=httpx.Response(200, json={"head": {"sha": sha}}))
+    respx.get(f"{GH}/pulls/2/files").mock(return_value=httpx.Response(200, json=[{"filename": f} for f in files]))
+    respx.get(f"{RAW}/{sha}/pnpm-workspace.yaml").mock(return_value=httpx.Response(404) if workspace is None else httpx.Response(200, text=workspace))
     return respx.get(f"{GH}/commits/{sha}/check-runs").mock(return_value=httpx.Response(200, json={"check_runs": runs}))
 
 
@@ -105,7 +112,7 @@ def test_with_no_checks_at_all_it_waits_then_says_nothing_ran_ci():
         c.execute("UPDATE pending_approvals SET done_at = ? WHERE id = ?", (time.time() - 9 * 60, a.id))
     _sweep(); _sweep()
     [text] = _texts(slack)
-    assert "No CI has run" in text and "Actions" in text and store.get_approval(a.id).ci_state == "none"
+    assert "No CI check has run" in text and "Actions" in text and store.get_approval(a.id).ci_state == "none"
 
 
 @respx.mock
@@ -152,3 +159,66 @@ def test_pull_requests_open_before_this_existed_are_never_given_a_verdict(tmp_pa
                  "VALUES ('C','1.1','w','k','T','B','done',1,'https://github.com/o/r/pull/1',1)")
     conn.commit(); conn.close()
     assert Store(path).list_awaiting_ci() == []
+
+
+# ── a green CI that did not look at what the agent changed ──
+
+@respx.mock
+def test_a_pass_says_what_ci_did_not_cover():
+    """The real case: CI passed on a pull request whose changed package is outside the pnpm workspace — CI never typechecked it."""
+    store, a = _opened()
+    _github([_run("node"), _run("static")], files=["packages/transcript-rendering/src/manager.ts", "packages/transcript-rendering/src/index.ts", "README.md"], workspace=WORKSPACE)
+    slack = _slack()
+    _sweep()
+    [text] = _texts(slack)
+    assert "CI passed" in text and "does not typecheck or test" in text and "review them by hand" in text
+    assert "`packages/transcript-rendering/src/manager.ts`" in text and "`packages/transcript-rendering/src/index.ts`" in text and "README.md" not in text
+    assert store.get_approval(a.id).ci_state == "passed"
+
+
+@respx.mock
+def test_a_pass_over_covered_files_is_plain():
+    _opened()
+    _github([_run("node")], files=["core/services/x/src/a.ts", "clients/terminal/src/b.tsx"], workspace=WORKSPACE)
+    slack = _slack()
+    _sweep()
+    assert "does not typecheck" not in _texts(slack)[0] and "CI passed" in _texts(slack)[0]
+
+
+@respx.mock
+def test_a_repository_without_a_pnpm_workspace_gets_no_coverage_claim():
+    _opened()
+    _github([_run("node")], files=["packages/x/src/a.ts"], workspace=None)
+    slack = _slack()
+    _sweep()
+    assert "does not typecheck" not in _texts(slack)[0]
+
+
+@respx.mock
+def test_if_the_changed_files_cannot_be_read_the_plain_verdict_still_stands():
+    _opened()
+    _github([_run("node")], workspace=WORKSPACE)
+    respx.get(f"{GH}/pulls/2/files").mock(return_value=httpx.Response(500))
+    slack = _slack()
+    _sweep()
+    assert "CI passed" in _texts(slack)[0] and "does not typecheck" not in _texts(slack)[0]
+
+
+@respx.mock
+def test_a_failure_does_not_make_a_coverage_claim():
+    _opened()
+    _github([_run("node", "failure")], files=["packages/x/src/a.ts"], workspace=WORKSPACE)
+    slack = _slack()
+    _sweep()
+    assert "CI failed" in _texts(slack)[0] and "does not typecheck" not in _texts(slack)[0]
+
+
+@respx.mock
+def test_upstream_process_checks_failing_do_not_make_the_verdict_a_failure():
+    """merge-card (upstream's contribution paperwork) fails on every agent pull request; the verdict is about the code checks."""
+    store, a = _opened()
+    _github([_run("gates"), _run("node"), _run("merge-card", "failure")], files=["core/services/x/a.ts"], workspace=WORKSPACE)
+    slack = _slack()
+    _sweep()
+    [text] = _texts(slack)
+    assert "CI passed" in text and "2 checks" in text and "merge-card" not in text

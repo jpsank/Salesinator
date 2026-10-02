@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # not switched on never calls its API.
     slack_oauth_scopes: str = "chat:write,channels:read,groups:read,reactions:read,reactions:write,users:read,usergroups:read"
 
+    # CI check names the verdict on the agent's pull request leaves out: upstream's contribution-process checks, which fail on every agent pull request
+    # (see github_checks.DEFAULT_IGNORED_CHECKS). Comma-separated; override with SALES_CYCLE_CI_IGNORED_CHECKS.
+    ci_ignored_checks: str = "merge-card,merge-card-comment,pr-value,pr-welcome,contribution-rights,contribution-rights-driver,comment,evaluate"
+
     # "Connect Zoom" — each rep authorizes THEIR OWN Zoom account, and every meeting they start (scheduled
     # or not) gets Vexa's bot. The OAuth app's identity is registered once by whoever operates this
     # deployment (marketplace.zoom.us → Develop → a user-managed OAuth app) and, like the other apps here,

@@ -328,6 +328,12 @@ the pull request opens, the sweep reads its check runs from GitHub every couple 
 minutes — *No CI has run for this pull request* (the usual cause on a fork: GitHub Actions has to be enabled once in the repository's Actions
 tab, "I understand my workflows, go ahead and enable them"). It gives up after an hour of checks still running.
 
+Two things keep the verdict honest. **Process checks are left out:** upstream's contribution-paperwork checks (`merge-card`, `pr-value`,
+`contribution-rights`, …) fail on every agent pull request and say nothing about the code, so they do not count
+(`SALES_CYCLE_CI_IGNORED_CHECKS`, comma-separated). **A pass says what CI did not look at:** CI typechecks, builds and tests only the packages in
+`pnpm-workspace.yaml`, so when the pull request changes TypeScript/JavaScript outside them (read from the repository's own workspace file) the
+message adds *CI does not typecheck or test … review them by hand* and names the files — a green tick on code CI never saw would mislead.
+
 It needs no token for a **public** repository (GitHub allows ~60 unauthenticated calls an hour, hence the slow polling); a repository that is not
 public is reported once as unreadable. Reading fails open: an unreachable GitHub or a rate limit just waits for the next sweep. Pull requests
 that were already open before this existed are never given a verdict.

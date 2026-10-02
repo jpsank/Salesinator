@@ -46,13 +46,61 @@ def parse_pr_url(url: str) -> PullRef | None:
     return PullRef(m.group(1), m.group(2), int(m.group(3))) if m else None
 
 
-def verdict(runs: list[dict], *, age_s: float, none_after_s: float = NONE_AFTER_S, give_up_after_s: float = GIVE_UP_AFTER_S, checks_url: str = "") -> tuple[str, str] | None:
+_CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+
+
+def workspace_globs(yaml_text: str) -> list[str]:
+    """The `packages:` globs of a pnpm-workspace.yaml (the only part that matters here), read without a YAML dependency."""
+    out: list[str] = []
+    in_packages = False
+    for raw in yaml_text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if not line.startswith((" ", "\t", "-")):                       # a top-level key
+            in_packages = line.strip() == "packages:"
+            continue
+        m = re.match(r"^\s*-\s*[\"']?([^\"'\s]+)[\"']?\s*$", line)
+        if in_packages and m:
+            out.append(m.group(1).strip("/"))
+    return out
+
+
+def _glob_regex(glob: str) -> re.Pattern:
+    """A workspace glob names package DIRECTORIES: `core/meetings/services/*` is every directory one level down, and a file is covered when it
+    lies inside one. `**` spans any depth."""
+    body = re.escape(glob).replace(r"\*\*", ".+").replace(r"\*", "[^/]+")
+    return re.compile(rf"^{body}/")
+
+
+def uncovered_by_ci(changed_files: list[str], globs: list[str]) -> list[str]:
+    """Changed TypeScript/JavaScript files that lie in no pnpm workspace package. CI's typecheck, build and test run over the workspace
+    packages only, so a green CI says nothing about these — the gap a pull request's thread should admit to."""
+    if not globs:
+        return []
+    covered = [_glob_regex(g) for g in globs]
+    return sorted(f for f in changed_files
+                  if f.endswith(_CODE_SUFFIXES) and "node_modules/" not in f and not any(rx.match(f) for rx in covered))
+
+
+# Upstream Vexa's process checks (contribution rights, merge card, PR value, welcome bot …): they are about how a contribution is documented, not
+# whether the code works, and they fail on every agent pull request — counting them would report "CI failed" on every card.
+DEFAULT_IGNORED_CHECKS = "merge-card,merge-card-comment,pr-value,pr-welcome,contribution-rights,contribution-rights-driver,comment,evaluate"
+
+
+def ignored_checks(setting: str) -> frozenset[str]:
+    return frozenset(n.strip() for n in setting.split(",") if n.strip())
+
+
+def verdict(runs: list[dict], *, age_s: float, none_after_s: float = NONE_AFTER_S, give_up_after_s: float = GIVE_UP_AFTER_S, checks_url: str = "",
+            uncovered: list[str] | None = None, ignore: frozenset[str] = frozenset()) -> tuple[str, str] | None:
     """The final word on a pull request's checks, or None to keep waiting. ``runs`` are GitHub check runs (name, status, conclusion);
     ``age_s`` is how long ago the pull request opened. Returns (state, text) with state one of passed, failed, none, timeout."""
     link = f" {checks_url}" if checks_url else ""
+    runs = [r for r in runs if r.get("name") not in ignore]
     if not runs:
         if age_s >= none_after_s:
-            return "none", (":information_source: No CI has run for this pull request, so nothing has checked the agent's code yet. If you expect "
+            return "none", (":information_source: No CI check has run for this pull request, so nothing has checked the agent's code yet. If you expect "
                             "CI here, check that GitHub Actions is enabled for the repository." + link)
         return None
     if any(r.get("status") != "completed" for r in runs):
@@ -64,7 +112,34 @@ def verdict(runs: list[dict], *, age_s: float, none_after_s: float = NONE_AFTER_
         shown = ", ".join(f"`{n}`" for n in failed[:6]) + (f" and {len(failed) - 6} more" if len(failed) > 6 else "")
         return "failed", f":x: CI failed on the agent's pull request: {shown}. Review the diff with care.{link}"
     ok = sum(1 for r in runs if r.get("conclusion") == "success")
-    return "passed", f":white_check_mark: CI passed on the agent's pull request ({ok} check{'s' if ok != 1 else ''}).{link}"
+    text = f":white_check_mark: CI passed on the agent's pull request ({ok} check{'s' if ok != 1 else ''})."
+    if uncovered:
+        shown = ", ".join(f"`{f}`" for f in uncovered[:5]) + (f" and {len(uncovered) - 5} more" if len(uncovered) > 5 else "")
+        text += (f" :warning: But CI does not typecheck or test the TypeScript/JavaScript this pull request changes outside the workspace packages: "
+                 f"{shown}. A green CI says nothing about them — review them by hand.")
+    return "passed", text + link
+
+
+def fetch_changed_files(ref: PullRef, *, timeout: float = 10.0, base: str = "https://api.github.com", limit: int = 300) -> list[str]:
+    """The paths a pull request changes (up to ``limit``; GitHub pages them 100 at a time)."""
+    out: list[str] = []
+    for page in range(1, limit // 100 + 1):
+        batch = _get(f"{base}/repos/{ref.owner}/{ref.repo}/pulls/{ref.number}/files?per_page=100&page={page}", timeout).json()
+        out += [f["filename"] for f in batch if f.get("filename")]
+        if len(batch) < 100:
+            break
+    return out
+
+
+def fetch_workspace_globs(ref: PullRef, sha: str, *, timeout: float = 10.0, base: str = "https://raw.githubusercontent.com") -> list[str]:
+    """The pnpm workspace globs of the repository at ``sha``; empty when it has no pnpm-workspace.yaml."""
+    try:
+        text = _get(f"{base}/{ref.owner}/{ref.repo}/{sha}/pnpm-workspace.yaml", timeout).text
+    except GitHubError as e:
+        if e.status == 404:
+            return []
+        raise
+    return workspace_globs(text)
 
 
 def fetch_head_sha(ref: PullRef, *, timeout: float = 10.0, base: str = "https://api.github.com") -> str:

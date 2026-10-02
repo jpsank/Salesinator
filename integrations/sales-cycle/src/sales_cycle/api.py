@@ -58,7 +58,9 @@ from sales_cycle import hubspot_oauth, internal_auth, slack_oauth
 from sales_cycle.approval_policy import APPROVE_REACTIONS, base_reaction, decide, is_vote_reaction, tally
 from sales_cycle.approvers import ApproverPolicy, InvalidPolicy, LeaderResolver, load_policy, save_policy
 from sales_cycle.calendar_resolver import resolve_meeting_started
-from sales_cycle.github_checks import GitHubError, fetch_check_runs, fetch_head_sha, parse_pr_url, verdict
+from sales_cycle.github_checks import (
+    GitHubError, fetch_changed_files, fetch_check_runs, fetch_head_sha, fetch_workspace_globs, ignored_checks, parse_pr_url, uncovered_by_ci, verdict,
+)
 from sales_cycle.hubspot_client import HubSpotClient
 from sales_cycle.live_card_watcher import watch_meeting
 from sales_cycle.oauth_routes import OAuthProviderConfig, register_oauth_routes
@@ -613,7 +615,17 @@ def _check_ci(store: Store, approval) -> None:
         else:
             logger.warning("could not read CI for %s (%s) — will try again", approval.pr_url, exc)
         return
-    result = verdict(runs, age_s=now - (approval.done_at or now), checks_url=ref.checks_url)
+    age = now - (approval.done_at or now)
+    ignore = ignored_checks(get_settings().ci_ignored_checks)
+    result = verdict(runs, age_s=age, checks_url=ref.checks_url, ignore=ignore)
+    if result is not None and result[0] == "passed":
+        # CI passed — say what it did NOT look at. Best-effort: if the file list or workspace cannot be read, the plain verdict stands.
+        try:
+            uncovered = uncovered_by_ci(fetch_changed_files(ref), fetch_workspace_globs(ref, sha))
+        except GitHubError as exc:
+            logger.warning("could not work out what CI left uncovered for %s (%s)", approval.pr_url, exc)
+            uncovered = []
+        result = verdict(runs, age_s=age, checks_url=ref.checks_url, uncovered=uncovered, ignore=ignore)
     if result is not None and store.finish_ci(approval.id, result[0]):
         _reply(_slack(), approval.slack_channel, approval.slack_ts, result[1])
 
