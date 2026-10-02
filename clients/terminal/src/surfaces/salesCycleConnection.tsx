@@ -7,8 +7,8 @@
 import { useEffect, useState } from "react";
 import { cardBtn, cardFieldGrow, cardLabelCol, cardLabelled, cardMeta, OAuthConnectionCard, PasteTokenFallback } from "./integrationCard";
 import {
-  disconnectOAuth, getOAuthStatus, getSlackChannel, getSlackChannelStatus, oauthConnectUrl, setOAuthToken,
-  setSlackChannel, type SlackChannelConfig, type SlackChannelStatus,
+  disconnectOAuth, getOAuthStatus, getSlackApprovers, getSlackChannel, getSlackChannelStatus, oauthConnectUrl, setOAuthToken,
+  setSlackApprovers, setSlackChannel, type SlackApprovers, type SlackChannelConfig, type SlackChannelStatus,
 } from "./salesCycleApi";
 import { presentError } from "./apiClient";
 
@@ -121,6 +121,75 @@ export function SlackChannelField({ onSaved = () => undefined }: { onSaved?: () 
   );
 }
 
+/** Slack ids typed into a box: commas, spaces or new lines between them. */
+const splitIds = (s: string): string[] => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+
+/** Who may give the go-ahead on a feature request. The team votes with 👍/👎 on the card and a leader's ✅ approves it once 👍
+ *  outnumber 👎; a leader is anyone who matches ANY of: the member ids listed here, a workspace admin/owner (when ticked), or a
+ *  member of a listed user group. Nothing chosen = the original rule, anyone's ✅ — and the card says so. */
+export function SlackApproversField() {
+  const [users, setUsers] = useState("");
+  const [groups, setGroups] = useState("");
+  const [admins, setAdmins] = useState(false);
+  const [initial, setInitial] = useState<SlackApprovers | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const apply = (a: SlackApprovers) => {
+    setUsers(a.user_ids.join(", ")); setGroups(a.usergroup_ids.join(", ")); setAdmins(a.include_admins); setInitial(a);
+  };
+  useEffect(() => {
+    let on = true;
+    getSlackApprovers().then((a) => on && apply(a)).catch((e: unknown) => on && setErr(presentError(e).headline));
+    return () => { on = false; };
+  }, []);
+
+  const dirty = initial !== null && (
+    splitIds(users).join(",") !== initial.user_ids.join(",") || splitIds(groups).join(",") !== initial.usergroup_ids.join(",") || admins !== initial.include_admins);
+  const save = async () => {
+    setBusy(true); setErr(null); setSaved(false);
+    try {
+      apply(await setSlackApprovers({ user_ids: splitIds(users), include_admins: admins, usergroup_ids: splitIds(groups) }));
+      setSaved(true);
+    } catch (e: unknown) { setErr(presentError(e).headline); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--t2)" }}>Who can approve</div>
+      {initial && (initial.configured
+        ? <div style={{ fontSize: 11.5, color: "var(--green)" }}>✓ The team votes with 👍/👎; a leader&rsquo;s ✅ approves once 👍 outnumber 👎.</div>
+        : <div role="status" style={{ fontSize: 11.5, color: "var(--warn, #b45309)" }}>⚠ Nobody chosen yet — anyone in the channel can approve with a ✅. Choose who can below.</div>)}
+      <label style={cardLabelled}>
+        <span style={cardLabelCol}>Leaders (member IDs)</span>
+        <input value={users} placeholder="U0123ABCD, U0456EFGH"
+          onChange={(e) => { setSaved(false); setUsers(e.target.value); }} style={cardFieldGrow} />
+      </label>
+      <label style={{ ...cardLabelled, alignItems: "center" }}>
+        <span style={cardLabelCol}>Workspace admins</span>
+        <input type="checkbox" checked={admins} aria-label="Workspace admins and owners can approve"
+          onChange={(e) => { setSaved(false); setAdmins(e.target.checked); }} />
+        <span style={cardMeta}>admins and owners of the Slack workspace</span>
+      </label>
+      <label style={cardLabelled}>
+        <span style={cardLabelCol}>User groups (IDs)</span>
+        <input value={groups} placeholder="S0123ABCD"
+          onChange={(e) => { setSaved(false); setGroups(e.target.value); }} style={cardFieldGrow} />
+      </label>
+      <div style={cardMeta}>Any one of these makes someone a leader. Find a member ID in Slack: profile &rarr; &#8942; &rarr; Copy member ID.</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button disabled={busy || !dirty} onClick={() => void save()} style={{ ...cardBtn, opacity: busy || !dirty ? 0.5 : 1 }}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {saved && <span style={{ fontSize: 11.5, color: "var(--green)" }}>Saved</span>}
+      </div>
+      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+    </div>
+  );
+}
+
 /** Field + live check together. `version` forces SlackChannelCheck to remount (its own effect has
  *  no deps, so a plain re-render wouldn't re-poll) after a save, so the ✓/⚠ verdict reflects the
  *  channel you just set instead of the one that was configured when the page loaded. */
@@ -162,12 +231,18 @@ export function SalesCycleSection() {
             At <code style={{ fontFamily: "var(--mono)" }}>api.slack.com/apps</code> → your app → Event
             Subscriptions: enable it, set the Request URL to your sales-cycle service&rsquo;s public
             address + <code style={{ fontFamily: "var(--mono)" }}>/slack/events</code>, then under
-            &ldquo;Subscribe to bot events&rdquo; add <code style={{ fontFamily: "var(--mono)" }}>reaction_added</code> and save.
+            &ldquo;Subscribe to bot events&rdquo; add <code style={{ fontFamily: "var(--mono)" }}>reaction_added</code> and{" "}
+            <code style={{ fontFamily: "var(--mono)" }}>reaction_removed</code>, and save. To approve by vote, the app also needs the{" "}
+            <code style={{ fontFamily: "var(--mono)" }}>reactions:write</code> scope (and <code style={{ fontFamily: "var(--mono)" }}>users:read</code>{" "}
+            / <code style={{ fontFamily: "var(--mono)" }}>usergroups:read</code> for admins or a user group) — then reconnect Slack.
           </div>
         )}
         extra={() => (
           <div style={{ borderTop: "1px dashed var(--line)", paddingTop: 8 }}>
             <SlackChannelSettings />
+            <div style={{ borderTop: "1px dashed var(--line)", marginTop: 10, paddingTop: 10 }}>
+              <SlackApproversField />
+            </div>
           </div>
         )} />
     </div>

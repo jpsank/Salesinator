@@ -14,7 +14,7 @@ const SALES_CYCLE_URL = (process.env.SALES_CYCLE_URL || "http://127.0.0.1:18300"
 
 /** Only the paths the terminal's own client calls (salesCycleApi.ts) — the backend's /internal/* and
  *  /dispatch endpoints are never reachable through the browser-facing proxy. */
-const ALLOWED_PATHS = [/^oauth\/[a-z0-9_-]+\/(status|disconnect|token)$/, /^slack\/channel(-status)?$/];
+const ALLOWED_PATHS = [/^oauth\/[a-z0-9_-]+\/(status|disconnect|token)$/, /^slack\/(channel(-status)?|approvers)$/];
 
 const deny = (status: number, error: string) =>
   new Response(JSON.stringify({ error }), { status, headers: { "Content-Type": "application/json" } });

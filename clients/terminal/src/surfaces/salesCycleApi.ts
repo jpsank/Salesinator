@@ -76,6 +76,27 @@ export async function setSlackChannel(channelId: string): Promise<SlackChannelCo
   }));
 }
 
+export interface SlackApprovers {
+  user_ids: string[];
+  include_admins: boolean;
+  usergroup_ids: string[];
+  /** false = nobody chosen: the original rule applies (anyone's ✅ approves). */
+  configured: boolean;
+}
+
+/** Who may give the go-ahead on a feature request (a leader's ✅ approves it once 👍 outnumber 👎). */
+export async function getSlackApprovers(): Promise<SlackApprovers> {
+  return jsonOrThrow(await fetch("/api/sales-cycle/slack/approvers", { cache: "no-store" }));
+}
+
+/** Sets who may approve: Slack member ids (U…), workspace admins/owners, user group ids (S…) — any one makes a leader.
+ *  Everything empty goes back to the original rule. The server validates the ids and answers 422 with what was wrong. */
+export async function setSlackApprovers(a: Pick<SlackApprovers, "user_ids" | "include_admins" | "usergroup_ids">): Promise<SlackApprovers> {
+  return jsonOrThrow(await fetch("/api/sales-cycle/slack/approvers", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a),
+  }));
+}
+
 /** A "Connect X" link's target. A real cross-origin navigation (the browser leaves the Terminal
  *  entirely, via the sales-cycle service and then the provider's own consent screen, before
  *  landing back here) — not a fetch, so this is the one place in the sales-cycle integration that
