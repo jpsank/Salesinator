@@ -62,7 +62,9 @@ long-running compose service.
 built tag (not a published `vexaai/` one) `bot-image.sh` compares a fingerprint of the sources the bot Dockerfile copies in
 (all of `core/` plus the workspace manifests, uncommitted edits included) with the `vexa.bot-source` label on the image, and
 rebuilds it with `make bot` only when they differ. An unchanged tree is a no-op; the next bot uses the new image, bots already
-running keep the old one. A published `BROWSER_IMAGE` is left alone.
+running keep the old one. A published `BROWSER_IMAGE` is left alone. `deploy/bin/redeploy-bot.sh` is a different, upstream
+script: it rebuilds the published tag `vexaai/vexa-bot:v012`, which this stack's runtime does not spawn from, so on this deployment use
+`redeploy.sh` (or `make bot BOT_IMAGE=…`) instead.
 
 ## Keeping the Docker disk from filling
 
