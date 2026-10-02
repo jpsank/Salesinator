@@ -49,10 +49,9 @@ enum SetupCheck {
             ? SetupItem("Open at login", .ok, "on")
             : SetupItem("Open at login", .info, "off — choose Open at login in the menu so it is running when a call starts"))
 
-        // Only for the audio fallback.
-        let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        let screen = CGPreflightScreenCaptureAccess()
-        items.append(SetupItem("Audio fallback", .info, "microphone \(mic ? "allowed" : "not allowed"), screen & system audio \(screen ? "allowed" : "not allowed") — only needed when a call's link can't be found"))
+        // Hearing a call on this Mac: the fallback when a call's link can't be found or the bot can't get in.
+        let audio = AudioAccess.describe(microphone: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, screen: CGPreflightScreenCaptureAccess())
+        items.append(SetupItem("Hearing calls on this Mac", audio.ok ? .ok : .attention, audio.detail))
         return items
     }
 }
@@ -67,6 +66,8 @@ struct SetupSnapshot {
     var notRunning: [String]
     var notifications: Bool
     var openAtLogin: Bool
+    var microphone: Bool
+    var screenAudio: Bool
 }
 
 extension SetupCheck {
@@ -88,6 +89,7 @@ extension SetupCheck {
         if includeBrowsers { let r = await Task.detached { BrowserLinks.access() }.value; browsers = r.running; notRunning = r.notRunning }
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         return SetupSnapshot(consent: Settings.consentAccepted, connection: connection, browsers: browsers, notRunning: notRunning,
-                             notifications: status == .authorized || status == .provisional, openAtLogin: SMAppService.mainApp.status == .enabled)
+                             notifications: status == .authorized || status == .provisional, openAtLogin: SMAppService.mainApp.status == .enabled,
+                             microphone: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, screenAudio: CGPreflightScreenCaptureAccess())
     }
 }

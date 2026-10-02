@@ -30,3 +30,17 @@ public enum TrustedBases {
         contains(trusted, base) ? trusted : trusted + [base.absoluteString]
     }
 }
+
+/// What this Mac lets Vexa Capture hear, in words for the setup window and the check. Hearing a call itself is how a call with no
+/// findable link, or a bot that never got in, still gets captured — so a missing permission is something to fix, not a footnote.
+public enum AudioAccess {
+    public static func describe(microphone: Bool, screen: Bool) -> (ok: Bool, detail: String) {
+        if microphone && screen { return (true, "On — if a call's link can't be found, its audio is captured on this Mac.") }
+        var missing: [String] = []
+        if !microphone { missing.append("Microphone") }
+        if !screen { missing.append("Screen & System Audio Recording") }
+        var detail = "Needs \(missing.joined(separator: " and ")) to capture a call's audio itself when its link can't be found — choose Allow."
+        if !screen { detail += " If Vexa Capture is already switched on under Screen & System Audio Recording but this still says it needs it, switch it off and on again, then quit and reopen the app." }
+        return (false, detail)
+    }
+}

@@ -177,6 +177,9 @@ do {
 do {
     let items = [SetupItem("Connected", .ok, "as a@b.c"), SetupItem("Chrome", .attention, "allow it under Automation"), SetupItem("Microphone", .info, "only for the audio fallback")]
     check("the checklist marks each line", SetupReport.format(items) == "✓ Connected — as a@b.c\n✗ Chrome — allow it under Automation\n• Microphone — only for the audio fallback")
+    check("audio access is fine only with both permissions", AudioAccess.describe(microphone: true, screen: true).ok && !AudioAccess.describe(microphone: true, screen: false).ok && !AudioAccess.describe(microphone: false, screen: true).ok)
+    check("it names exactly what is missing", AudioAccess.describe(microphone: false, screen: true).detail.hasPrefix("Needs Microphone to") && AudioAccess.describe(microphone: true, screen: false).detail.hasPrefix("Needs Screen & System Audio Recording to") && AudioAccess.describe(microphone: false, screen: false).detail.hasPrefix("Needs Microphone and Screen & System Audio Recording to"))
+    check("a screen-recording miss says what to do when the switch is already on", AudioAccess.describe(microphone: true, screen: false).detail.contains("switch it off and on again") && !AudioAccess.describe(microphone: false, screen: true).detail.contains("switch it off"))
     check("it says when something needs attention", SetupReport.needsAttention(items) && !SetupReport.needsAttention([items[0], items[2]]))
     let site = URL(string: "https://terminal.example.com")!
     check("a site the person already trusts is recognised", TrustedBases.contains(["http://localhost:13000", "https://terminal.example.com/"], site))

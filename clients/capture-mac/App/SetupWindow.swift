@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ServiceManagement
 import UserNotifications
 
@@ -13,6 +14,7 @@ final class SetupWindow: NSWindowController, NSWindowDelegate {
     private let connectButton = NSButton(title: "Connect", target: nil, action: nil)
     private let browserButton = NSButton(title: "Allow access", target: nil, action: nil)
     private let notifyButton = NSButton(title: "Turn on", target: nil, action: nil)
+    private let audioButton = NSButton(title: "Allow", target: nil, action: nil)
     private let login = NSButton(checkboxWithTitle: "Open Vexa Capture when I log in", target: nil, action: nil)
     private let done = NSButton(title: "Done", target: nil, action: nil)
     private var rows: [String: (icon: NSImageView, detail: NSTextField)] = [:]
@@ -20,7 +22,7 @@ final class SetupWindow: NSWindowController, NSWindowDelegate {
     private var timer: Timer?
 
     convenience init() {
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 600), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         w.title = "Set up Vexa Capture"
         w.isReleasedWhenClosed = false
         self.init(window: w)
@@ -53,16 +55,18 @@ final class SetupWindow: NSWindowController, NSWindowDelegate {
         connectButton.target = self; connectButton.action = #selector(connectTapped)
         browserButton.target = self; browserButton.action = #selector(allowBrowsers)
         notifyButton.target = self; notifyButton.action = #selector(turnOnNotifications)
+        audioButton.target = self; audioButton.action = #selector(allowAudio)
         login.target = self; login.action = #selector(loginToggled)
         done.target = self; done.action = #selector(doneTapped); done.keyEquivalent = "\r"
 
         let addressRow = NSStackView(views: [address, connectButton]); addressRow.spacing = 8
         let rowsView = NSStackView(views: [
-            label("Vexa Capture notices when you join a Zoom or Teams call and sends Vexa's bot to it. Four things to set:", size: 12, color: .secondaryLabelColor),
+            label("Vexa Capture notices when you join a Zoom or Teams call and sends Vexa's bot to it. Five things to set:", size: 12, color: .secondaryLabelColor),
             row("consent", title: "1. Tell the people on your calls", detail: "The bot is a visible participant; if it can't find your call's link, audio is captured on this Mac instead, and nobody is told. Many places need everyone's consent to transcribe a conversation.", control: consent),
             row("connect", title: "2. Connect to Vexa", detail: "Not connected", control: addressRow),
             row("browser", title: "3. Let it find your call's link", detail: "It reads your browser's open tabs for the meeting link — nothing else is kept.", control: browserButton),
             row("notify", title: "4. Notifications", detail: "How you're told a bot was sent.", control: notifyButton),
+            row("audio", title: "5. Hear calls on this Mac", detail: "If a call's link can't be found, or the bot can't get in, the app captures the call's audio itself.", control: audioButton),
             login,
         ])
         rowsView.orientation = .vertical; rowsView.alignment = .leading; rowsView.spacing = 16
@@ -128,6 +132,9 @@ final class SetupWindow: NSWindowController, NSWindowDelegate {
         }
         mark("notify", s.notifications, s.notifications ? "On — you'll be told when a bot is sent or audio is captured." : "Off — turn them on so you're reminded to tell people on the call.")
         notifyButton.isHidden = s.notifications
+        let audio = AudioAccess.describe(microphone: s.microphone, screen: s.screenAudio)
+        mark("audio", audio.ok, audio.detail)
+        audioButton.isHidden = audio.ok
         login.state = s.openAtLogin ? .on : .off
         let ready = s.consent && { if case .ok = s.connection { return true } else { return false } }()
         done.title = ready ? "Done" : "Later"
@@ -149,6 +156,26 @@ final class SetupWindow: NSWindowController, NSWindowDelegate {
                 self?.refresh(includeBrowsers: false)
                 if !granted, let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") { NSWorkspace.shared.open(url) }
             }
+        }
+    }
+    /// Asks for what is missing, in the order macOS needs: the microphone prompt, then Screen & System Audio Recording (which macOS
+    /// applies only to a freshly started app, so the person is told to reopen it).
+    @objc private func allowAudio() {
+        let micOK = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        func askScreen() {
+            if !CGPreflightScreenCaptureAccess() {
+                CGRequestScreenCaptureAccess()
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
+            }
+            refresh(includeBrowsers: false)
+        }
+        if micOK { askScreen(); return }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in DispatchQueue.main.async { askScreen() } }
+        default:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") { NSWorkspace.shared.open(url) }
+            refresh(includeBrowsers: false)
         }
     }
     @objc private func loginToggled() {

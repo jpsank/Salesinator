@@ -6,3 +6,5 @@
   The menu says "Vexa's bot is joining your call…" until Vexa reports the bot is in, and a bot that never got in is shown as
   such in Recent calls. `clients/capture-mac/make-local-signing-cert.sh` makes a local signing certificate that `build.sh` then
   uses, so rebuilds keep one identity and macOS stops re-asking for approvals.
+  Setup has a row for hearing calls on this Mac (Microphone, Screen & System Audio Recording) with an Allow button, and says what to do when
+  macOS shows the permission as on but the app can't use it.

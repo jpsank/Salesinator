@@ -388,7 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CGRequestScreenCaptureAccess()
         let a = NSAlert()
         a.messageText = "Allow Screen & System Audio Recording"
-        a.informativeText = "macOS only lets an app hear another app's audio through this permission (no screen is recorded or kept). Turn on Vexa Capture under Privacy & Security → Screen & System Audio Recording, then quit and reopen Vexa Capture."
+        a.informativeText = "macOS only lets an app hear another app's audio through this permission (no screen is recorded or kept). Turn on Vexa Capture under Privacy & Security → Screen & System Audio Recording — if it is already on, switch it off and on again — then quit and reopen Vexa Capture."
         a.addButton(withTitle: "Open System Settings"); a.addButton(withTitle: "Not now")
         NSApp.activate(ignoringOtherApps: true)
         if a.runModal() == .alertFirstButtonReturn,
