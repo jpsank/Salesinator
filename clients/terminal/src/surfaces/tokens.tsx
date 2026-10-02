@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../ui-kit";
 import { copyText } from "../ui-kit/ContextMenu";
-import { cardBtn, cardField, cardMeta, cardPrimaryBtn, OAuthConnectionCard, PasteTokenFallback, type OAuthStatus } from "./integrationCard";
+import { cardBtn, cardField, cardGrowText, cardMeta, cardPrimaryBtn, OAuthConnectionCard, PasteTokenFallback, type OAuthStatus } from "./integrationCard";
 import { listTokens, createToken, revokeToken, TOKEN_SCOPES, type TokenInfo, type TokenScope, type MintedToken } from "./tokensApi";
 import {
   getGitToken, setGitToken, initWorkspace, readAttachedWorkspaces, swapWorkspace, listMyGitHubRepos,
@@ -207,8 +207,8 @@ function ProductRepoPicker() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px dashed var(--line)", paddingTop: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--t1)" }}>Product repo</span>
-        <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)" }}>
+        <span style={{ flex: "none", fontSize: 12, fontWeight: 600, color: "var(--t1)" }}>Product repo</span>
+        <span style={{ ...cardGrowText, fontSize: 11.5, color: "var(--t3)" }}>
           {attached === null ? "Checking…" : hasRepo ? `${activeSlot!.repo} · ${activeSlot!.ref ?? "main"}` : "Not set"}
         </span>
         {hasRepo && !picking && <button onClick={() => setPicking(true)} style={cardBtn}>Change</button>}
@@ -219,7 +219,7 @@ function ProductRepoPicker() {
       </div>
       {err && (
         <div role="alert" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--danger)" }}>
-          <span style={{ flex: 1 }}>⚠ {err}</span>
+          <span style={cardGrowText}>⚠ {err}</span>
           <button disabled={reposChecking} onClick={() => void loadRepos()} style={cardBtn}>{reposChecking ? "Retrying…" : "Retry"}</button>
         </div>
       )}

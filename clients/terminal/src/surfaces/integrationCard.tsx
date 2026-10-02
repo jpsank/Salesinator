@@ -12,7 +12,11 @@ import { presentError } from "./apiClient";
 export const cardField: CSSProperties = { width: "100%", minWidth: 0, boxSizing: "border-box", fontSize: 12, padding: "6px 9px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)" };
 /** A field inside a `cardLabelled` row: takes the remaining width, wraps under its label when it would drop below 180px. */
 export const cardFieldGrow: CSSProperties = { ...cardField, flex: "1 1 180px" };
-export const cardBtn: CSSProperties = { fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)", cursor: "pointer" };
+export const cardBtn: CSSProperties = { flex: "none", fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--t1)", cursor: "pointer" };
+/** Variable text beside a label and a button (a repo, an account, an error): takes the remaining width and wraps inside it — `minWidth: 0`
+ *  lets a flex item shrink below its content, `overflowWrap: anywhere` breaks a long name that has no space or hyphen to break at.
+ *  Without them the text keeps its full width and pushes the button out past the card's edge. */
+export const cardGrowText: CSSProperties = { flex: 1, minWidth: 0, overflowWrap: "anywhere" };
 export const cardPrimaryBtn: CSSProperties = { ...cardBtn, background: "var(--accent)", color: "var(--on-accent)", border: "none" };
 export const cardRow: CSSProperties = { border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 };
 export const cardMeta: CSSProperties = { fontSize: 11, color: "var(--t3)", lineHeight: 1.5 };
@@ -143,8 +147,8 @@ export function OAuthConnectionCard({
   return (
     <div style={cardRow}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--t1)" }}>{label}</span>
-        <span style={{ flex: 1, fontSize: 11.5, color: "var(--t3)" }}>
+        <span style={{ flex: "none", fontSize: 12.5, fontWeight: 600, color: "var(--t1)" }}>{label}</span>
+        <span style={{ ...cardGrowText, fontSize: 11.5, color: "var(--t3)" }}>
           {status === null ? (checking ? "Checking…" : "")
             : status.connected && status.rejected ? `${label} rejected the saved token`
             : status.connected ? `Connected${status.account_label ? ` · ${status.account_label}` : ""}`
@@ -180,7 +184,7 @@ export function OAuthConnectionCard({
       )}
       {err && (
         <div role="alert" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--danger)" }}>
-          <span style={{ flex: 1 }}>⚠ {err}</span>
+          <span style={cardGrowText}>⚠ {err}</span>
           <button disabled={checking} onClick={() => void refresh()} style={cardBtn}>{checking ? "Retrying…" : "Retry"}</button>
         </div>
       )}

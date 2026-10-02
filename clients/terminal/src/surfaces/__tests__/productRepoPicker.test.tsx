@@ -72,3 +72,21 @@ describe("ProductRepoPicker", () => {
     expect(workspaceApi.listMyGitHubRepos).not.toHaveBeenCalled();
   });
 });
+
+describe("ProductRepoPicker layout", () => {
+  /** A long repo with no space or hyphen to break at used to keep its full width and push the Change button out past the
+   *  card's right edge (and squash the "Product repo" label onto two lines). jsdom does no layout, so this pins the styles that
+   *  prevent it: the repo text may shrink and wraps anywhere; the label and the button never shrink. */
+  it("lets a long repo name wrap inside the card instead of pushing Change out of it", async () => {
+    const long = "jsank/SalesinatorCustomerFacingProductRepositoryMonorepo";
+    vi.mocked(workspaceApi.readAttachedWorkspaces).mockResolvedValue({ active: "p", slots: { p: { repo: long, ref: "main" } } } as never);
+    vi.mocked(workspaceApi.listMyGitHubRepos).mockResolvedValue([REPO]);
+    render(<GitHubTokenCard />);
+    const text = await waitFor(() => screen.getByText(new RegExp(long)));
+    expect(text.style.minWidth).toBe("0px");
+    expect(text.style.overflowWrap).toBe("anywhere");
+    expect(screen.getByText("Product repo").style.flex).toMatch(/none|0 0 auto/);
+    const change = await waitFor(() => screen.getByRole("button", { name: "Change" }));
+    expect(change.style.flex).toMatch(/none|0 0 auto/);
+  });
+});
