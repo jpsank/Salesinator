@@ -29,6 +29,7 @@ set -eu
 
 CD="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_FILE="$CD/docker-compose.yml"
+. "$CD/docker-hygiene.sh"
 RUNTIME_API_URL="${RUNTIME_API_URL:-http://localhost:18090}"
 
 # `docker compose config --images <service>` does NOT filter by service in this compose version
@@ -56,6 +57,7 @@ image_of() {
 # on a ConfigError, because nothing actually wants it running here.
 SERVICES="admin-api runtime sales-cycle meeting-api gateway flows-api flows-worker mcp terminal"
 
+hygiene_preflight || exit 1
 echo "== building: $SERVICES agent-worker =="
 # BUILDX_NO_DEFAULT_ATTESTATIONS=1: Buildx's default provenance/SBOM attestations embed a build
 # timestamp into the image, so byte-IDENTICAL content still got a brand new image ID on every
@@ -135,6 +137,8 @@ while [ "$i" -lt 10 ]; do
 done
 curl -s -o /dev/null -w "  health http=%{http_code}\n" http://localhost:18100/health
 docker compose -f "$COMPOSE_FILE" stop agent-api ollama 2>/dev/null || true
+
+hygiene_after
 
 echo
 echo "Done."

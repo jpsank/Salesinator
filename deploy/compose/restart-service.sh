@@ -15,12 +15,14 @@
 set -eu
 
 CD="$(cd "$(dirname "$0")" && pwd)"
+. "$CD/docker-hygiene.sh"
 
 if [ "$#" -eq 0 ]; then
   echo "usage: $0 <service> [<service> ...]" >&2
   exit 1
 fi
 
+hygiene_preflight || exit 1
 echo "== building: $* =="
 docker compose -f "$CD/docker-compose.yml" build "$@"
 
@@ -32,6 +34,8 @@ docker compose -f "$CD/docker-compose.yml" up -d --no-deps "$@"
 # ALREADY-running stack), this puts them back to native-hybrid's intended state rather than leaving
 # a docker instance fighting the native one for a port.
 docker compose -f "$CD/docker-compose.yml" stop agent-api ollama 2>/dev/null || true
+
+hygiene_after
 
 echo
 echo "Done. If agent-api or ollama came up anyway, they've been stopped again — the native"

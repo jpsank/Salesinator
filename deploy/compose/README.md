@@ -56,6 +56,15 @@ old 0.10 line and incompatible with this stack's `lifecycle.v1`) on demand and t
 agent worker (`vexaai/v012-agent-worker:v012`, a `build-only` compose profile); neither is a
 long-running compose service.
 
+## Keeping the Docker disk from filling
+
+`redeploy.sh` and `restart-service.sh` both source `docker-hygiene.sh`. Before building, if the Docker VM disk has
+under 8 GB free, they drop the build cache, and refuse to build if less than 3 GB is still free (a full disk takes
+Postgres down — it also shows up as `apt` "invalid signature" in builds). After building, they trim build cache
+older than 72 h. Tune with `HYGIENE_MIN_FREE_GB`, `HYGIENE_ABORT_FREE_GB` and `HYGIENE_KEEP_HOURS`.
+`make dev` builds a second, `:dev`-tagged copy of every image next to the `:v012` set; remove those with
+`docker rmi` when you stop using that path. The compose gate removes its own containers, volumes and images.
+
 ## Usage
 
 ```bash
