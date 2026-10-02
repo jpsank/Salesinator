@@ -10,3 +10,4 @@
   macOS shows the permission as on but the app can't use it.
   When a call has no link to find, the app asks Vexa whether a bot is already on a call of that platform — Connect Zoom sends one the
   moment the rep starts a meeting — and, if so, takes it as the call's bot instead of capturing the audio a second time.
+  The same goes when a link was found but Vexa answers that a bot is already on the call: the app now shows that bot, and notices when it leaves.

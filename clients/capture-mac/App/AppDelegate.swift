@@ -267,7 +267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// No link to go on, but something else may already have sent a bot to this call — Connect Zoom does, the moment the rep starts a
     /// meeting. Ask Vexa; if a bot is on a call of this platform, take it as this call's bot instead of capturing the audio a second time.
-    private func adoptRunningBot(_ p: CallPlatform, orElse: @escaping () -> Void) {
+    /// `announce` is false when the caller has already said so (a link was found and Vexa answered that a bot is already there).
+    private func adoptRunningBot(_ p: CallPlatform, announce: Bool = true, orElse: @escaping () -> Void) {
         guard let key = Settings.apiKey else { orElse(); return }
         let gw = Settings.gatewayURL, server = p.rawValue
         Task {
@@ -278,8 +279,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     var call = BotCall(platform: p, serverPlatform: server, nativeId: b.nativeId)
                     call.wasIn = b.status == "active"
                     self.bot = call
-                    self.record(p, .botAlreadyThere)
-                    Notifier.post(title: "Vexa's bot is already on your \(p.displayName) call", body: "Not capturing the audio here as well.")
+                    if announce {
+                        self.record(p, .botAlreadyThere)
+                        Notifier.post(title: "Vexa's bot is already on your \(p.displayName) call", body: "Not capturing the audio here as well.")
+                    } else { self.rebuildMenu() }
                 } else { orElse() }
             }
         }
@@ -351,7 +354,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .sent(let platform, let id):
                     self.bot = BotCall(platform: p, serverPlatform: platform.isEmpty ? link.platform.rawValue : platform, nativeId: id)
                     self.record(p, .botSent)
-                case .alreadyThere: self.record(p, .botAlreadyThere)
+                case .alreadyThere:
+                    self.record(p, .botAlreadyThere)
+                    self.adoptRunningBot(p, announce: false) {}          // so the menu shows that bot, and sees it leave
                 case .keyRejected: self.setupWindow.present(); self.record(p, .failed, note: "Vexa didn't accept the saved key")
                 default: self.record(p, .failed, note: BotRequest.explain(outcome, platform: p.displayName))
                 }
