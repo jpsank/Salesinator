@@ -1,0 +1,29 @@
+{
+  "display_information": {
+    "display_name": "Vexa Bot",
+    "description": "Sends Vexa's meeting bot to the Zoom meetings you start.",
+    "discover_type": "UNLISTED"
+  },
+  "oauth_information": {
+    "usage": "USER_OPERATION",
+    "development_redirect_uri": "https://sales-cycle.jsanker.com/oauth/zoom/callback",
+    "oauth_allow_list": ["https://sales-cycle.jsanker.com/oauth/zoom/callback"],
+    "scopes": [
+      { "scope": "meeting:read:meeting", "optional": false },
+      { "scope": "user:read:user", "optional": false }
+    ]
+  },
+  "features": {
+    "event_subscription": {
+      "enable": true,
+      "events": [
+        {
+          "subscription_name": "meeting_started",
+          "event_types": ["meeting.started"],
+          "development_webhook_url": "https://sales-cycle.jsanker.com/webhooks/zoom",
+          "development_event_custom_header": { "custom_header_type": 0 }
+        }
+      ]
+    }
+  }
+}

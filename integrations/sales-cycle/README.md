@@ -299,6 +299,14 @@ internet, so the per-rep endpoints (`/zoom/*`) refuse anyone without `SALES_CYCL
 to the same `INTERNAL_API_SECRET` the Terminal presents; only `/oauth/zoom/callback` (protected by a one-time state) and
 `/webhooks/zoom` (protected by Zoom's signature) are meant to be public.
 
+**Faster: upload the manifest.** In Zoom, *Develop → Build from an app manifest*, upload `zoom-app.manifest.json` (change the host in it
+first if your sales-cycle address is not `sales-cycle.jsanker.com`), and Create. That does steps 1–3 below — the redirect URL, the two scopes
+and the *Start Meeting* subscription — and keeps the app **unlisted** (not in the Marketplace; only your Zoom account can authorize it).
+Zoom still generates the Client ID, Client Secret and event Secret Token itself, so step 4 stays yours. If Zoom rejects the file for a
+missing section, download Zoom's own template from the same screen and merge the two. If Zoom will not create the app because it cannot
+validate the webhook yet (it can only answer once the secret token is in `.env`), set `event_subscription.enable` to `false`, create the
+app, do step 4, then upload the manifest again with it `true`. `tests/test_zoom_manifest.py` keeps the file in step with the routes and scopes.
+
 One-time setup, by whoever operates the deployment, at [marketplace.zoom.us](https://marketplace.zoom.us) (Zoom's
 console changes names often — the app is a **user-managed OAuth app**, called a "General App" in the current one):
 
