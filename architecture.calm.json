@@ -731,6 +731,17 @@
    ]
   },
   {
+   "unique-id": "capture-mac",
+   "node-type": "webclient",
+   "name": "capture-mac",
+   "description": "Vexa Capture — Mac menu-bar app: detects a Zoom/Teams call by the app's audio activity, captures the app's audio and the microphone, streams capture.v1 to the capture ingest (no bot in the call)",
+   "metadata": [
+    {
+     "path": "clients/capture-mac"
+    }
+   ]
+  },
+  {
    "unique-id": "claude-plugin",
    "node-type": "webclient",
    "name": "claude-plugin",
@@ -2478,6 +2489,22 @@
    "protocol": "WebSocket"
   },
   {
+   "unique-id": "capture-mac-ingest",
+   "description": "audio of a detected call → the capture ingest (authenticated with the user's API key)",
+   "relationship-type": {
+    "connects": {
+     "source": {
+      "node": "capture-mac"
+     },
+     "destination": {
+      "node": "desktop",
+      "interface": "desktop-ingest-ws"
+     }
+    }
+   },
+   "protocol": "WebSocket"
+  },
+  {
    "unique-id": "stack-deployed",
    "description": "the long-running services ship as the deploy/compose stack (transcription has its own deploy unit)",
    "relationship-type": {
@@ -2492,7 +2519,8 @@
       "redis",
       "postgres",
       "minio",
-      "transcription"
+      "transcription",
+      "desktop"
      ]
     }
    }

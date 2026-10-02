@@ -39,6 +39,7 @@ flowchart LR
   end
   slim["slim"]
   extension["extension"]
+  capture_mac["capture-mac"]
   claude_plugin["claude-plugin"]
   terminal["terminal"]
   dashboard["dashboard (deprecated)"]
@@ -64,6 +65,7 @@ flowchart LR
   dashboard -->|""| gateway
   slim -->|"HTTPS"| gateway
   extension -->|"WebSocket"| gateway
+  capture_mac -->|"WebSocket"| desktop
   flows_worker -->|""| agent_api
   flows_worker -->|""| gateway
   flows_worker -->|""| admin_api
