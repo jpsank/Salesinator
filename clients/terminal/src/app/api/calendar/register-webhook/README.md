@@ -4,3 +4,6 @@
 after a rep connects a calendar, so its customer-mapping/feature-request pipeline reacts as soon
 as a calendar-synced call starts — instead of a rep hand-running `PUT /user/webhook` themselves.
 Never overwrites a `webhook_url` the account already has configured for something else of its own.
+
+[`registerWebhook.ts`](registerWebhook.ts) holds the logic, shared with "Connect Zoom" (`api/zoom/[action]`): a Zoom-joined
+bot is captured the same way, so connecting Zoom registers the same webhook.

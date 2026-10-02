@@ -13,6 +13,7 @@ import { GitHubTokenCard, TokensPanel } from "./tokens";
 import { presentError } from "./apiClient";
 import { CalendarConnectionsPanel } from "./calendarConnections";
 import { SalesCycleSection } from "./salesCycleConnection";
+import { ZoomCard } from "./zoomConnection";
 import { cardField as field, cardBtn as btn } from "./integrationCard";
 import { getModelPrefs, setModelPrefs, getTranscriptionPrefs, setTranscriptionPrefs, getGlobalSetting, setGlobalSetting, testModels, testTranscription, listAvailableModels, type ConfigTestResult } from "./settingsApi";
 
@@ -226,8 +227,8 @@ function ModelsSection() {
   );
 }
 
-/** Every external connection in one place — calendar, GitHub, and the sales-cycle add-on's HubSpot/
- *  Slack — instead of scattered across separate tabs. Calendar and GitHub are per-person (your own
+/** Every external connection in one place — calendar, Zoom, GitHub, and the sales-cycle add-on's HubSpot/
+ *  Slack — instead of scattered across separate tabs. Calendar, Zoom and GitHub are per-person (your own
  *  connection); HubSpot and Slack are one shared connection for the whole deployment (see
  *  salesCycleConnection.tsx). Grouped because a rep setting this up thinks "connect my tools," not
  *  "which of these four unrelated tabs do I need." */
@@ -237,6 +238,8 @@ function IntegrationsSection() {
     <div>
       <div style={head}>Calendar</div>
       <CalendarConnectionsPanel />
+      <div style={{ ...head, marginTop: 22 }}>Zoom</div>
+      <ZoomCard />
       <div style={{ ...head, marginTop: 22 }}>GitHub</div>
       <GitHubTokenCard />
       <div style={{ ...head, marginTop: 22 }}>Sales Cycle (HubSpot &amp; Slack)</div>

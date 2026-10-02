@@ -11,7 +11,7 @@ import type { OAuthStatus } from "./integrationCard";
 
 export type { OAuthStatus };
 
-async function jsonOrThrow<T>(r: Response): Promise<T> {
+export async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
     let detail = "";
     try {
