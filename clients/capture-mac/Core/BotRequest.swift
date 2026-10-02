@@ -50,23 +50,36 @@ public enum BotRequest {
     }
 
     public enum Presence: Equatable {
-        case running(Set<String>)          // "platform/native id" of every bot still running
+        case running([String: String])     // "platform/native id" → the bot's status ("" when Vexa didn't say) for every bot still running
         case unknown                       // no usable answer — never a reason to think the bot is gone
     }
 
     public static func interpretRunning(status: Int, body: Data) -> Presence {
         guard status == 200, let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let list = (json["running_bots"] ?? json["running"]) as? [[String: Any]] else { return .unknown }
-        return .running(Set(list.compactMap { b in
-            guard let p = b["platform"] as? String, let n = (b["native_meeting_id"] as? String) ?? (b["platform_specific_id"] as? String) else { return nil }
-            return "\(p)/\(n)"
-        }))
+        var all: [String: String] = [:]
+        for b in list {
+            guard let p = b["platform"] as? String, let n = (b["native_meeting_id"] as? String) ?? (b["platform_specific_id"] as? String) else { continue }
+            all["\(p)/\(n)"] = (b["status"] as? String) ?? ""
+        }
+        return .running(all)
     }
 
     /// True only when Vexa answered and this bot is not among the running ones.
     public static func isGone(_ presence: Presence, platform: String, nativeId: String) -> Bool {
-        if case .running(let all) = presence { return !all.contains("\(platform)/\(nativeId)") }
+        if case .running(let all) = presence { return all["\(platform)/\(nativeId)"] == nil }
         return false
+    }
+
+    /// How long a bot may take to get into the call before the app stops waiting for it.
+    public static let joinPatience: TimeInterval = 60
+
+    /// True when the bot is still outside the call after ``joinPatience`` — requested, joining or waiting to be admitted —
+    /// whatever the reason (a link that doesn't work, a waiting room, a host who refuses it). Only a clear status counts:
+    /// a bot Vexa gave no status for, or one already in or leaving, is never called stalled.
+    public static func hasStalled(_ presence: Presence, platform: String, nativeId: String, waited: TimeInterval) -> Bool {
+        guard waited > joinPatience, case .running(let all) = presence, let status = all["\(platform)/\(nativeId)"] else { return false }
+        return ["requested", "joining", "awaiting_admission"].contains(status)
     }
 
     /// "Who is this key?" — the setup check's proof that Vexa accepts it.

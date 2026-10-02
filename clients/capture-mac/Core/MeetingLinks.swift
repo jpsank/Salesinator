@@ -62,3 +62,20 @@ public enum MeetingLinks {
         return x.string ?? ""
     }
 }
+
+/// When the clipboard last changed, as far as this run has seen. A link on the clipboard is only evidence of the call being
+/// joined if it was copied for it, a moment ago — one left over from an earlier call would send the bot to the wrong meeting.
+/// What was already on the clipboard when the app started has an unknown age, so it is never fresh.
+public struct ClipboardAge {
+    private var count: Int?
+    private var changedAt: Date?
+    public init() {}
+    public mutating func observe(changeCount: Int, now: Date) {
+        if let c = count, c != changeCount { changedAt = now }
+        count = changeCount
+    }
+    public func isFresh(now: Date, within seconds: TimeInterval) -> Bool {
+        guard let t = changedAt else { return false }
+        return now.timeIntervalSince(t) <= seconds
+    }
+}

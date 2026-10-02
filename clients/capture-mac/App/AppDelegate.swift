@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var session: CaptureSession?          // audio captured on this Mac
     private var sessionState: CaptureSession.State = .stopped
+    private var stalledNoted: String?           // the bot we already told the person about, so it is said once
     private var bot: BotCall?                     // a Vexa bot sent to the call
     private var searching = false                 // looking for the call's link / starting
     private var offered: CallPlatform?            // a call not handled automatically — waiting for the person
@@ -135,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // ── detecting ──
     private func tick() {
         ticks += 1
+        BrowserLinks.noteClipboard()
         if ticks % 4 == 0 { watchBot() }
         var activity = ProcessAudioProbe.activity()
         for p in CallPlatform.allCases where !Settings.isEnabled(p) { activity[p] = .idle }
@@ -146,9 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// While a bot is on the call, ask Vexa every few seconds whether it still is: when the meeting ends — or someone removes the bot —
-    /// it is gone within moments, well before the audio going quiet would say so. Only a clear answer that the bot is not
-    /// running counts; a failed or unreadable one leaves things as they are.
+    /// While a bot is on the call, ask Vexa every few seconds how it is doing. When the meeting ends — or someone removes the bot —
+    /// it is gone within moments, well before the audio going quiet would say so. When it has not got into the call after a minute,
+    /// the app stops waiting for it and captures the call's audio here instead. Only a clear answer counts; a failed or unreadable
+    /// one leaves things as they are.
     private func watchBot() {
         guard let b = bot, !checkingBot, Date().timeIntervalSince(b.since) > 10,
               let key = Settings.apiKey else { return }
@@ -158,12 +161,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let presence = await BotClient.running(gateway: gw, key: key)
             await MainActor.run {
                 self.checkingBot = false
-                guard let now = self.bot, now.nativeId == b.nativeId, BotRequest.isGone(presence, platform: b.serverPlatform, nativeId: b.nativeId) else { return }
-                self.bot = nil
-                self.record(b.platform, .botLeft)
-                Notifier.post(title: "Vexa's bot left your \(b.platform.displayName) call", body: "It will be sent to your next call.")
+                guard let now = self.bot, now.nativeId == b.nativeId else { return }
+                if BotRequest.isGone(presence, platform: b.serverPlatform, nativeId: b.nativeId) {
+                    self.bot = nil
+                    self.record(b.platform, .botLeft)
+                    Notifier.post(title: "Vexa's bot left your \(b.platform.displayName) call", body: "It will be sent to your next call.")
+                } else if BotRequest.hasStalled(presence, platform: b.serverPlatform, nativeId: b.nativeId, waited: Date().timeIntervalSince(b.since)) {
+                    self.botNeverJoined(b, key: key)
+                }
             }
         }
+    }
+
+    /// The bot is still outside the call: take it off and hear the call from this Mac — unless this Mac can't capture audio yet,
+    /// in which case the bot is left trying and the person is told what would let the app help.
+    private func botNeverJoined(_ b: BotCall, key: String) {
+        guard detector.isInCall(b.platform), session == nil else { return }
+        guard audioCaptureAvailable() else {
+            if stalledNoted != b.nativeId {
+                stalledNoted = b.nativeId
+                Notifier.post(title: "Vexa's bot hasn't joined your \(b.platform.displayName) call", body: "Allow Microphone and Screen Recording for Vexa Capture (Setup) and it can capture the call's audio here instead.")
+            }
+            return
+        }
+        bot = nil
+        let gw = Settings.gatewayURL
+        Task { _ = await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) }
+        Notifier.post(title: "Vexa's bot couldn't get into your \(b.platform.displayName) call", body: "Capturing the call's audio on this Mac instead.")
+        beginAudio(b.platform)
     }
 
     private func callStarted(_ p: CallPlatform) {

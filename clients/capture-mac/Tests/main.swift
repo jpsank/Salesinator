@@ -115,6 +115,16 @@ do {
     check("a Teams call is offered Teams links", MeetingLinks.candidates(in: tabs, platform: .teams).map(\.platform) == [.teams])
     check("the active tab's link comes first", MeetingLinks.candidates(in: tabs, preferred: ["https://zoom.us/j/99999999999?pwd=b"], platform: .zoom).first?.url == "https://zoom.us/j/99999999999?pwd=b")
     check("no links → no candidates", MeetingLinks.candidates(in: ["https://example.com"], platform: .zoom).isEmpty)
+
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    var clip = ClipboardAge()
+    clip.observe(changeCount: 5, now: t0)
+    check("what was on the clipboard before the app saw it is never fresh", !clip.isFresh(now: t0, within: 300) && !clip.isFresh(now: t0 + 10_000, within: 300))
+    clip.observe(changeCount: 6, now: t0 + 100)
+    check("a copy made while running is fresh", clip.isFresh(now: t0 + 120, within: 300))
+    check("…until it is old", !clip.isFresh(now: t0 + 100 + 301, within: 300))
+    clip.observe(changeCount: 6, now: t0 + 500)
+    check("seeing the same clipboard again does not make it newer", !clip.isFresh(now: t0 + 500, within: 300))
 }
 
 // ── sending a bot ──
@@ -203,9 +213,16 @@ do {
     check("a rejected key or a server error on removal is told apart", BotRequest.interpretStop(status: 401) == .keyRejected && BotRequest.interpretStop(status: 502) == .failed("Vexa answered 502"))
     let r = BotRequest.running(gateway: "https://t.example.com/api/capture/relay/", key: "K")
     check("the running-bots request is a GET of bots/status with the key", r?.url?.absoluteString == "https://t.example.com/api/capture/relay/bots/status" && r?.httpMethod == "GET" && r?.value(forHTTPHeaderField: "X-API-Key") == "K")
-    let listed = Data(#"{"running_bots":[{"platform":"zoom","native_meeting_id":"111"},{"platform":"google_meet","native_meeting_id":"abc-defg"}]}"#.utf8)
+    let listed = Data(#"{"running_bots":[{"platform":"zoom","native_meeting_id":"111","status":"active"},{"platform":"google_meet","native_meeting_id":"abc-defg"}]}"#.utf8)
     let presence = BotRequest.interpretRunning(status: 200, body: listed)
-    check("it reads the platform and meeting of each running bot", presence == .running(["zoom/111", "google_meet/abc-defg"]))
+    check("it reads the platform and meeting of each running bot", presence == .running(["zoom/111": "active", "google_meet/abc-defg": ""]))
+    let waiting = BotRequest.interpretRunning(status: 200, body: Data(#"{"running_bots":[{"platform":"zoom","native_meeting_id":"111","status":"joining"},{"platform":"zoom","native_meeting_id":"222","status":"awaiting_admission"},{"platform":"zoom","native_meeting_id":"333","status":"stopping"}]}"#.utf8))
+    check("a bot still outside the call after the patience is stalled", BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "111", waited: 61) && BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "222", waited: 61))
+    check("…but not before it", !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "111", waited: 59))
+    check("a bot that is in the call, leaving, without a status, gone or unknown is never stalled",
+          !BotRequest.hasStalled(presence, platform: "zoom", nativeId: "111", waited: 600) && !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "333", waited: 600)
+          && !BotRequest.hasStalled(presence, platform: "google_meet", nativeId: "abc-defg", waited: 600) && !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "999", waited: 600)
+          && !BotRequest.hasStalled(.unknown, platform: "zoom", nativeId: "111", waited: 600))
     check("a bot that is listed is not gone", !BotRequest.isGone(presence, platform: "zoom", nativeId: "111"))
     check("a bot that is not listed is gone", BotRequest.isGone(presence, platform: "zoom", nativeId: "222"))
     check("an empty list means every bot is gone", BotRequest.isGone(BotRequest.interpretRunning(status: 200, body: Data(#"{"running_bots":[]}"#.utf8)), platform: "zoom", nativeId: "111"))

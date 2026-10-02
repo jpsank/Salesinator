@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 /// Finds the join link of the call that just started: in the browsers' open tabs (the link was clicked a moment ago, and
-/// Zoom's and Teams' launch pages stay open) and, failing that, on the clipboard (people copy the link to join).
+/// Zoom's and Teams' launch pages stay open) and, failing that, on the clipboard (people copy the link to join — only one copied in the last few minutes).
 ///
 /// Browsers are asked through AppleScript — Chrome-family browsers and Safari support it, Firefox does not. The first
 /// time, macOS asks whether Vexa Capture may control each browser; declining only means that browser can't be searched.
@@ -72,6 +72,11 @@ enum BrowserLinks {
         return (open, closed)
     }
 
+    private static let clipboardFreshness: TimeInterval = 5 * 60
+    private static var clipboardAge = ClipboardAge()
+    /// Main thread. Called often, so a copy is dated by when it happened rather than by when the call was noticed.
+    static func noteClipboard() { clipboardAge.observe(changeCount: NSPasteboard.general.changeCount, now: Date()) }
+
     /// Blocking (osascript): call off the main thread.
     static func search(for platform: CallPlatform?) -> Search {
         var all: [String] = [], active: [String] = [], blocked: [String] = []
@@ -82,9 +87,12 @@ enum BrowserLinks {
             all += tabs.output.split(whereSeparator: \.isNewline).map(String.init)
             if let a = run(script(b, active: true)), !a.denied { active.append(a.output.trimmingCharacters(in: .whitespacesAndNewlines)) }
         }
-        // The clipboard is the last resort: a link someone copied to paste into Zoom's "Join" box.
+        // The clipboard is the last resort: a link someone copied a moment ago to paste into Zoom's "Join" box.
         var clip: [String] = []
-        DispatchQueue.main.sync { if let s = NSPasteboard.general.string(forType: .string) { clip = [s] } }
+        DispatchQueue.main.sync {
+            noteClipboard()
+            if clipboardAge.isFresh(now: Date(), within: clipboardFreshness), let s = NSPasteboard.general.string(forType: .string) { clip = [s] }
+        }
         return Search(candidates: MeetingLinks.candidates(in: all + clip, preferred: active, platform: platform), blocked: blocked)
     }
 }
