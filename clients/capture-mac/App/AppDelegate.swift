@@ -184,11 +184,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func botNeverJoined(_ b: BotCall, key: String, stillRunning: Bool) {
         guard detector.isInCall(b.platform), session == nil else { return }
         guard audioCaptureAvailable() else {
-            if stalledNoted != b.nativeId {
-                stalledNoted = b.nativeId
-                Notifier.post(title: "Vexa's bot couldn't get into your \(b.platform.displayName) call", body: "Allow Microphone and Screen Recording for Vexa Capture (Setup) and it can capture the call's audio here instead.")
-            }
+            guard stalledNoted != b.nativeId else { return }
+            stalledNoted = b.nativeId
             if !stillRunning { bot = nil; record(b.platform, .botCouldntJoin) }
+            offerAudioSetup(b.platform, headline: "Vexa's bot couldn't get into your \(b.platform.displayName) call",
+                            why: "It never got in — the call may not accept it, or its link may be wrong.", paste: false) { [weak self] in
+                guard stillRunning else { return }
+                self?.bot = nil
+                let gw = Settings.gatewayURL
+                Task { _ = await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) }
+            }
             return
         }
         bot = nil
@@ -260,12 +265,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         record(p, .noLink)
+        offerAudioSetup(p, headline: "Couldn't send the bot to your \(p.displayName) call", why: why, paste: true)
+    }
+
+    /// This Mac can't hear the call yet (Microphone or Screen Recording not allowed), so the audio fallback can't start. Say so and
+    /// let the person allow it right now — the macOS prompts belong at the moment they matter — instead of leaving them a dead end.
+    /// `paste` also offers sending the bot to a pasted link; `beforeCapture` runs first if they choose to allow.
+    private func offerAudioSetup(_ p: CallPlatform, headline: String, why: String, paste: Bool, beforeCapture: (() -> Void)? = nil) {
         let a = NSAlert()
-        a.messageText = "Couldn't send the bot to your \(p.displayName) call"
-        a.informativeText = "\(why)\n\nPaste the call's link and Vexa's bot will join it."
-        a.addButton(withTitle: "Paste link…"); a.addButton(withTitle: "Not this time")
+        a.messageText = headline
+        a.informativeText = "\(why)\n\nAllow Vexa Capture to hear the call on this Mac and it captures the audio itself."
+            + (paste ? " Or paste the call's link and Vexa's bot will join it." : "")
+        a.addButton(withTitle: "Allow audio capture")
+        if paste { a.addButton(withTitle: "Paste link…") }
+        a.addButton(withTitle: "Not this time")
         NSApp.activate(ignoringOtherApps: true)
-        if a.runModal() == .alertFirstButtonReturn { pasteLink(p) } else { offered = p; rebuildMenu() }
+        let answer = a.runModal()
+        if answer == .alertFirstButtonReturn { beforeCapture?(); beginAudio(p) }
+        else if paste && answer == .alertSecondButtonReturn { pasteLink(p) }
+        else { offered = p; rebuildMenu() }
     }
 
     private func pasteLink(_ p: CallPlatform) {

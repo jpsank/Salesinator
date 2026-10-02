@@ -5,8 +5,8 @@ customer started — and gets it into Vexa, in one of two ways:
 
 - **Send a bot** (the default). It finds the call's join link — in the browser tab the rep clicked it from, or on the
   clipboard — and requests Vexa's own bot for it through the normal pipeline (`POST /bots`), exactly as "add bot from URL"
-  does. The app is only the trigger. If the call has no link to find, it falls back to capturing audio, or asks the rep to paste
-  the link.
+  does. The app is only the trigger. If the call has no link to find, it falls back to capturing audio. When this Mac isn't yet allowed to hear the call (Microphone, Screen Recording), it says so and offers an
+  **Allow audio capture** button — the macOS prompts appear then, not before — and, when there was no link, a **Paste link…** button as well.
 - **Capture audio on this Mac**, no bot in the call. It listens to the call app's own audio plus the rep's microphone and
   streams both to the stack's [capture ingest](../../core/meetings/services/desktop/README.md). Either way the call becomes a
   normal Vexa meeting (live copilot, Slack feature-request cards, builds).
@@ -53,7 +53,7 @@ reappears only if something still needs attention.
 site you already expose is the only address needed. A deployment that publishes the gateway and capture service itself sets
 `CAPTURE_API_URL` and `CAPTURE_INGEST_URL` in `.env` instead.
 
-**Open at login** is a checkbox in the setup window and *Preferences* (macOS accepts it for an app in an Applications folder). Run `./make-local-signing-cert.sh` once: builds are then signed with a local certificate, one identity across rebuilds, so the Keychain,
+**Open at login** is a checkbox in the setup window and *Preferences* (macOS accepts it for an app in an Applications folder). Run `./make-local-signing-cert.sh` once: it makes a local certificate in a keychain of its own (not your login keychain, so no password dialog) and builds are then signed with it, one identity across rebuilds, so the Keychain,
 Automation, Microphone, Screen Recording and Notifications approvals are asked once. Unsigned (ad-hoc) builds are a new app to macOS every
 time and ask for all of them again; a distributed build needs a Developer ID signature and notarization.
 

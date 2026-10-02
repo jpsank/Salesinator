@@ -25,9 +25,14 @@ fi
 if [ -n "${SIGN_IDENTITY:-}" ]; then
   codesign --force --timestamp --options runtime --entitlements App.entitlements --sign "$SIGN_IDENTITY" --identifier ai.vexa.capture "$APP"
 else
-  LOCAL_ID="$(security find-identity -p codesigning 2>/dev/null | awk -v n="\"${LOCAL_SIGN_NAME:-Vexa Capture Local Signing}\"" 'index($0, n) { print $2; exit }')"
+  LOCAL_KC="${LOCAL_SIGN_KEYCHAIN:-$HOME/Library/Keychains/vexa-capture-signing.keychain-db}"
+  LOCAL_ID=""
+  if [ -f "$LOCAL_KC" ]; then
+    security unlock-keychain -p "" "$LOCAL_KC" 2>/dev/null || true
+    LOCAL_ID="$(security find-identity -p codesigning "$LOCAL_KC" 2>/dev/null | awk -v n="\"${LOCAL_SIGN_NAME:-Vexa Capture Local Signing}\"" 'index($0, n) { print $2; exit }')"
+  fi
   if [ -n "$LOCAL_ID" ]; then
-    codesign --force --sign "$LOCAL_ID" --identifier ai.vexa.capture "$APP"
+    codesign --force --keychain "$LOCAL_KC" --sign "$LOCAL_ID" --identifier ai.vexa.capture "$APP"
     echo "signed with the local certificate (one identity across rebuilds)"
   else
     codesign --force --sign - --identifier ai.vexa.capture "$APP"
