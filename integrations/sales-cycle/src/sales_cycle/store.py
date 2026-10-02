@@ -70,6 +70,9 @@ class PendingApproval:
     votes_down: int | None = None
     waiting_notified: int = 0
     last_error: str | None = None       # the latest reason pushing the branch / opening the PR failed; cleared when it succeeds
+    ci_state: str | None = None         # CI's verdict on the pull request: passed, failed, none, timeout, unreadable, untracked; None while waiting
+    ci_checked_at: float | None = None
+    pr_head_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +171,12 @@ class Store:
                                 ("waiting_notified", "INTEGER NOT NULL DEFAULT 0"), ("last_error", "TEXT")):
                 if column not in existing_cols:
                     conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
+            # Migration: what CI said about the agent's pull request (ci_state NULL = still waiting for its verdict). Pull requests that were
+            # already open when this was added are marked untracked — an old one must not suddenly get a verdict posted into a months-old thread.
+            if "ci_state" not in existing_cols:
+                for column, ddl in (("ci_state", "TEXT"), ("ci_checked_at", "REAL"), ("pr_head_sha", "TEXT")):
+                    conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
+                conn.execute("UPDATE pending_approvals SET ci_state = 'untracked' WHERE status = 'done'")
             # Each time the copilot raises a request that is a repeat of a card already posted, instead of a second card: what was said
             # and when, so the repeat counts as demand for the original and nothing is lost.
             conn.execute("""
@@ -359,6 +368,24 @@ class Store:
     def clear_error(self, approval_id: int) -> None:
         with self._conn() as conn:
             conn.execute("UPDATE pending_approvals SET last_error = NULL WHERE id = ?", (approval_id,))
+
+    def list_awaiting_ci(self) -> list[PendingApproval]:
+        """Opened pull requests whose CI verdict has not been said yet."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'done' AND pr_url IS NOT NULL AND ci_state IS NULL").fetchall()
+        return [PendingApproval(**dict(r)) for r in rows]
+
+    def record_ci_poll(self, approval_id: int, *, head_sha: str | None = None) -> None:
+        with self._conn() as conn:
+            if head_sha is None:
+                conn.execute("UPDATE pending_approvals SET ci_checked_at = ? WHERE id = ?", (time.time(), approval_id))
+            else:
+                conn.execute("UPDATE pending_approvals SET ci_checked_at = ?, pr_head_sha = ? WHERE id = ?", (time.time(), head_sha, approval_id))
+
+    def finish_ci(self, approval_id: int, state: str) -> bool:
+        """Records the final CI verdict. True exactly once per pull request — the caller that gets it says it."""
+        with self._conn() as conn:
+            return conn.execute("UPDATE pending_approvals SET ci_state = ? WHERE id = ? AND ci_state IS NULL", (state, approval_id)).rowcount == 1
 
     def claim_waiting_notice(self, approval_id: int) -> bool:
         """True exactly once per request: the caller that gets it posts the "waiting for more 👍 than 👎" reply."""

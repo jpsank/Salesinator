@@ -58,6 +58,7 @@ from sales_cycle import hubspot_oauth, internal_auth, slack_oauth
 from sales_cycle.approval_policy import APPROVE_REACTIONS, base_reaction, decide, is_vote_reaction, tally
 from sales_cycle.approvers import ApproverPolicy, InvalidPolicy, LeaderResolver, load_policy, save_policy
 from sales_cycle.calendar_resolver import resolve_meeting_started
+from sales_cycle.github_checks import GitHubError, fetch_check_runs, fetch_head_sha, parse_pr_url, verdict
 from sales_cycle.hubspot_client import HubSpotClient
 from sales_cycle.live_card_watcher import watch_meeting
 from sales_cycle.oauth_routes import OAuthProviderConfig, register_oauth_routes
@@ -586,6 +587,37 @@ def _problem_note(what: str, message: str) -> str:
     return f":warning: The agent finished, but {what} failed: {reason}. It retries on its own every few seconds."
 
 
+_CI_POLL_EVERY_S = 120.0     # GitHub allows ~60 unauthenticated calls an hour: a pull request's CI takes minutes, so ask every couple
+
+
+def _check_ci(store: Store, approval) -> None:
+    """Reads CI's verdict on an opened pull request and says it once in the card's thread: passed, failed (naming the checks), or that no CI
+    ran. Fails open — an unreachable GitHub or a rate limit just waits for the next sweep; a repository that is not public is said once."""
+    now = time.time()
+    if now - (approval.ci_checked_at or approval.done_at or now) < _CI_POLL_EVERY_S:
+        return
+    ref = parse_pr_url(approval.pr_url or "")
+    if ref is None:
+        store.finish_ci(approval.id, "untracked")
+        return
+    store.record_ci_poll(approval.id)
+    try:
+        sha = approval.pr_head_sha or fetch_head_sha(ref)
+        if not approval.pr_head_sha:
+            store.record_ci_poll(approval.id, head_sha=sha)
+        runs = fetch_check_runs(ref, sha)
+    except GitHubError as exc:
+        if exc.status == 404 and store.finish_ci(approval.id, "unreadable"):
+            _reply(_slack(), approval.slack_channel, approval.slack_ts,
+                   ":information_source: Couldn't read this pull request's CI status — the repository isn't public, and sales-cycle has no GitHub token to read it with.")
+        else:
+            logger.warning("could not read CI for %s (%s) — will try again", approval.pr_url, exc)
+        return
+    result = verdict(runs, age_s=now - (approval.done_at or now), checks_url=ref.checks_url)
+    if result is not None and store.finish_ci(approval.id, result[0]):
+        _reply(_slack(), approval.slack_channel, approval.slack_ts, result[1])
+
+
 def _report_pipeline_problem(store: Store, approval, what: str, exc: Exception) -> None:
     """The sweep retries a failed push / pull request forever and quietly; the first time it fails for a given reason, say so in the card's thread."""
     message = str(exc)
@@ -758,6 +790,9 @@ def process_approved() -> dict:
         opened_now.append(approval.id)
         if pr_url:
             _reply(_slack(), approval.slack_channel, approval.slack_ts, f":white_check_mark: The agent's pull request is open for review: {pr_url}")
+
+    for approval in store.list_awaiting_ci():
+        _check_ci(store, approval)
 
     return {
         "dispatched": dispatched_now, "pushed": pushed_now, "opened": opened_now,

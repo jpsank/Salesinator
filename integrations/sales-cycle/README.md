@@ -320,6 +320,18 @@ goes stale when your own GitHub token changes — Settings → Integrations → 
 the copy. The same reason is not repeated; a different one is. When the pull request opens, its link is posted in the thread. Error text
 keeps the server's own reason (`call_detailed` in `_http.py`) with anything token-shaped removed.
 
+### What CI says about the agent's pull request
+
+The agent's code is only as good as its model, so it is checked by the repository's own CI (typecheck, tests, gates) on the pull request. After
+the pull request opens, the sweep reads its check runs from GitHub every couple of minutes and says the verdict **once** in the card's thread:
+*CI passed (n checks)*, *CI failed: `typecheck`, `gates`* (the failed checks named, with a link), or — when no check run appears within eight
+minutes — *No CI has run for this pull request* (the usual cause on a fork: GitHub Actions has to be enabled once in the repository's Actions
+tab, "I understand my workflows, go ahead and enable them"). It gives up after an hour of checks still running.
+
+It needs no token for a **public** repository (GitHub allows ~60 unauthenticated calls an hour, hence the slow polling); a repository that is not
+public is reported once as unreadable. Reading fails open: an unreachable GitHub or a rate limit just waits for the next sweep. Pull requests
+that were already open before this existed are never given a verdict.
+
 ### Repeated requests
 
 The copilot words the same ask differently each time it hears it ("CSV Export of Results", then "Export results to CSV"). Rather than a
