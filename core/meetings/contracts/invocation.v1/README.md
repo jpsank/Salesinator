@@ -17,3 +17,7 @@ at boot — is deferred; for now the raw fields are faithful to today's wire.
 `automaticLeave` defaults the three timeouts. No tenancy fields (deferred, ADR-0003).
 
 Goldens (`Invocation.<case>.json`) validated by `gate:schema`.
+
+`meetingInProgress` (optional boolean): the requester knows the call is live right now. A platform page that says
+the meeting does not exist then means a wrong link, so the bot ends the join within seconds as the permanent
+`validation_error` instead of waiting for a host to start the meeting. Absent, the bot waits as before (scheduled joins).

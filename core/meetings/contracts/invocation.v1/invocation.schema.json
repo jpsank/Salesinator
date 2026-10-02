@@ -49,6 +49,7 @@
         "defaultAvatarUrl": { "type": "string", "format": "uri" },
         "videoReceiveEnabled": { "type": "boolean" },
         "cameraEnabled": { "type": "boolean" },
+        "meetingInProgress": { "type": "boolean", "description": "the requester knows the call is live right now, so a platform page that says the meeting does not exist means the link is wrong — the bot fails at once as validation_error instead of waiting for a host to start it" },
         "authenticated": { "type": "boolean", "description": "persistent browser context from S3" },
         "userdataS3Path": { "type": "string" },
         "s3Endpoint": { "type": "string" },

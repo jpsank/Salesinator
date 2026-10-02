@@ -27,7 +27,8 @@ import type { JoinDriver, JoinOutcome, JoinResult, JoinSignals } from './ports.j
  * `lobby_timeout` → `timeout` → `awaiting_admission_timeout` (transient, a legit retry); a `join_failure`
  * stays `error` → `join_failure` (transient); an `auth_session_missing` (signed-out profile in
  * authenticated mode) → `auth_missing` → `auth_session_missing` (PERMANENT — a re-spawn against a dead
- * profile can never succeed). NB: a distinct `blocked` reason needs a sealed-contract
+ * profile can never succeed); an `invalid_meeting` (Zoom shows no such meeting although the caller said the
+ * call is live) → `invalid_meeting` → `validation_error` (PERMANENT — the link is wrong, a re-spawn can't fix it). NB: a distinct `blocked` reason needs a sealed-contract
  * `CompletionReason` value (lane:contract) — until then a detected block surfaces via this same path.
  */
 export function admissionOutcomeToJoinOutcome(outcome: AdmissionOutcome): JoinOutcome {
@@ -35,6 +36,7 @@ export function admissionOutcomeToJoinOutcome(outcome: AdmissionOutcome): JoinOu
     case 'denial':               return 'rejected';
     case 'lobby_timeout':        return 'timeout';
     case 'auth_session_missing': return 'auth_missing';
+    case 'invalid_meeting':      return 'invalid_meeting';
     case 'join_failure':         return 'error';
     default:                     return 'error';
   }
@@ -121,6 +123,7 @@ export function createBrowserJoinDriver(
           botName: inv.botName,
           passcode: inv.passcode,                      // zoom passcode screen / jitsi room password
           authenticated: inv.authenticated,            // join as a signed-in user (persistent context)
+          meetingInProgress: inv.meetingInProgress,    // the caller says the call is live: a "no such meeting" page means a wrong link
           waitingRoomTimeoutMs: inv.automaticLeave?.waitingRoomTimeout,
           hooks: {
             onState: (s: JoinState) => {

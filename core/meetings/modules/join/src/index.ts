@@ -52,6 +52,8 @@ export interface JoinOptions {
   /** join as a signed-in user — caller hands in a persistent, logged-in context
    *  (e.g. from @vexa/remote-browser); the brick skips guest name-entry. */
   authenticated?: boolean;
+  /** the caller knows the call is live — a platform page saying the meeting doesn't exist then means a wrong link */
+  meetingInProgress?: boolean;
   waitingRoomTimeoutMs?: number;
   /** turn on the live debug view (VNC pixels on Linux, CDP control anywhere) */
   debug?: boolean;
@@ -93,6 +95,7 @@ export async function joinMeeting(page: Page, opts: JoinOptions): Promise<JoinRe
     botName: opts.botName ?? defaultBotName(),
     passcode: opts.passcode,
     authenticated: opts.authenticated,
+    meetingInProgress: opts.meetingInProgress,
     uiInteractionMode: opts.uiInteractionMode,
     automaticLeave: { waitingRoomTimeout: opts.waitingRoomTimeoutMs ?? 180_000 },
   };

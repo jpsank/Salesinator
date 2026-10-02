@@ -91,28 +91,28 @@ export function buildZoomWebClientUrl(meetingUrl: string): string {
 const HOST_NOT_STARTED_RETRY_INTERVAL_MS = 15000;
 const HOST_NOT_STARTED_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes
 
-export async function joinZoomMeeting(
+/** A caller that knows the call is live gets Zoom's "Error" page re-checked this often, this many times, before the link is judged wrong. */
+const LIVE_MEETING_ERROR_RECHECK_MS = 3000;
+const LIVE_MEETING_ERROR_ATTEMPTS = 3;
+
+/**
+ * Open the Zoom web client for a meeting and wait until its pre-join page is up.
+ *
+ * Zoom answers an unusable link, and a meeting whose host has not started it yet, with the SAME page
+ * (title "Error - Zoom"). A scheduled bot cannot tell them apart and polls until the host arrives. A bot
+ * whose caller knows the call is live (`meetingInProgress`) can: the host HAS started, so that page means
+ * the link is wrong — it re-checks a couple of times for a transient Zoom error, then ends the join with
+ * `invalid_meeting` (permanent, never retried) instead of waiting out the host-start budget.
+ */
+export async function openZoomWebClient(
   page: Page,
-  meetingUrl: string,
-  botName: string,
-  botConfig: BotConfig,
+  webClientUrl: string,
+  opts: { authenticated: boolean; meetingInProgress: boolean },
 ): Promise<void> {
-  if (!page) throw new Error('[Zoom Web] Page is required for web-based Zoom join');
-
-  // Authenticated mode: the caller hands in a persistent context already signed in to
-  // Zoom (see @vexa/remote-browser). The signed-in web client uses the account identity
-  // instead of a guest name, so we skip the guest name-entry flow below. THE EXPERIMENT:
-  // does being a real signed-in user clear the "sign in to join / automated bots aren't
-  // allowed / use Zoom RTMS" wall that blocks anonymous web joins?
-  const authenticated = !!botConfig.authenticated;
-
-  const rawUrl = meetingUrl;
-  const webClientUrl = buildZoomWebClientUrl(rawUrl);
-  log(`[Zoom Web] Navigating to web client: ${webClientUrl}`);
-
-  // Retry loop: if host hasn't started the meeting yet, page title = "Error - Zoom"
-  // and body contains "This meeting link is invalid". Poll until the pre-join page appears.
+  const { authenticated, meetingInProgress } = opts;
+  // Poll until the pre-join page appears.
   const startTime = Date.now();
+  let errorPages = 0;
   while (true) {
     await page.goto(webClientUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(2000);
@@ -148,7 +148,17 @@ export async function joinZoomMeeting(
       log('[Zoom Web] Authenticated mode: sign-in text present, proceeding (the persistent context should already carry a Zoom session)');
     }
 
-    if (!isError) break; // Pre-join page loaded
+    if (!isError) return; // Pre-join page loaded
+
+    errorPages++;
+    if (meetingInProgress) {
+      if (errorPages >= LIVE_MEETING_ERROR_ATTEMPTS) {
+        throw new AdmissionError('invalid_meeting', '[Zoom Web] meeting link invalid: Zoom shows no such meeting, although the caller says the call is live');
+      }
+      log(`[Zoom Web] Zoom shows an error page for a call that is live (title="${title}"). Checking again in ${LIVE_MEETING_ERROR_RECHECK_MS / 1000}s...`);
+      await page.waitForTimeout(LIVE_MEETING_ERROR_RECHECK_MS);
+      continue;
+    }
 
     const elapsed = Date.now() - startTime;
     if (elapsed >= HOST_NOT_STARTED_MAX_WAIT_MS) {
@@ -157,6 +167,28 @@ export async function joinZoomMeeting(
     log(`[Zoom Web] Host not started yet (title="${title}"). Retrying in ${HOST_NOT_STARTED_RETRY_INTERVAL_MS / 1000}s...`);
     await page.waitForTimeout(HOST_NOT_STARTED_RETRY_INTERVAL_MS);
   }
+}
+
+export async function joinZoomMeeting(
+  page: Page,
+  meetingUrl: string,
+  botName: string,
+  botConfig: BotConfig,
+): Promise<void> {
+  if (!page) throw new Error('[Zoom Web] Page is required for web-based Zoom join');
+
+  // Authenticated mode: the caller hands in a persistent context already signed in to
+  // Zoom (see @vexa/remote-browser). The signed-in web client uses the account identity
+  // instead of a guest name, so we skip the guest name-entry flow below. THE EXPERIMENT:
+  // does being a real signed-in user clear the "sign in to join / automated bots aren't
+  // allowed / use Zoom RTMS" wall that blocks anonymous web joins?
+  const authenticated = !!botConfig.authenticated;
+
+  const rawUrl = meetingUrl;
+  const webClientUrl = buildZoomWebClientUrl(rawUrl);
+  log(`[Zoom Web] Navigating to web client: ${webClientUrl}`);
+
+  await openZoomWebClient(page, webClientUrl, { authenticated, meetingInProgress: !!botConfig.meetingInProgress });
 
   // Notify the host: joining
   await callJoiningCallback(botConfig);

@@ -22,6 +22,7 @@
   "automaticLeave": { "waitingRoomTimeout": 300000, "noOneJoinedTimeout": 600000, "everyoneLeftTimeout": 120000 },
   "voiceAgentEnabled": true,
   "defaultAvatarUrl": "https://cdn.example.com/avatars/vexa.png",
+  "meetingInProgress": true,
   "authenticated": true,
   "userdataS3Path": "s3://userdata/alice",
   "s3Endpoint": "https://s3.example.com",

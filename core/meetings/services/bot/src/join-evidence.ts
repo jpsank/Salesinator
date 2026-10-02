@@ -182,6 +182,10 @@ export function classifyJoinFailure(
   try {
     if (outcome === 'stopped') return 'stopped_while_joining';
     if (outcome === 'auth_missing') return 'auth_session_missing';
+    // The caller said the call is live and the platform says no such meeting: a wrong link. No dedicated
+    // reason names that (it is neither a denial nor our join flow failing), so it is `unknown` — whose
+    // attribution is `unknown`, never `system_fault` — with the platform's words kept in `detail`.
+    if (outcome === 'invalid_meeting') return 'unknown';
 
     const detail = cleanDetail(signals.detail);
     if (matches(detail, NAVIGATION_MARKERS)) return 'navigation_failure';

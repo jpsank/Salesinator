@@ -17,6 +17,8 @@ export interface BotConfig {
   /** meeting passcode (zoom passcode screen / jitsi room password) */
   passcode?: string;
   authenticated?: boolean;
+  /** the caller knows the call is live, so a "no such meeting" page means a wrong link, not a host yet to start */
+  meetingInProgress?: boolean;
   uiInteractionMode?: "humanized" | "synthetic";
   automaticLeave?: {
     waitingRoomTimeout: number;

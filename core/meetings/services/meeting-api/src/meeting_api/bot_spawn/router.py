@@ -318,6 +318,14 @@ def build_router(
             raise HTTPException(status_code=422, detail="'capture' must be \"external\" when present")
         external_capture = capture == "external"
 
+        # `meeting_in_progress: true` — the caller knows the call is live right now (the Mac app has just seen the
+        # person in it), so a platform page saying the meeting doesn't exist means the link is wrong: the bot
+        # fails at once instead of waiting for a host to start it. Accepted off the OPEN request body like
+        # `continue_meeting` (see the bot_spawn README); a non-boolean is a 422, never a silent coercion.
+        meeting_in_progress = body.get("meeting_in_progress")
+        if meeting_in_progress is not None and not isinstance(meeting_in_progress, bool):
+            raise HTTPException(status_code=422, detail="'meeting_in_progress' must be true or false when present")
+
         platform = str(body.get("platform", "")).strip()
         native_meeting_id = str(body.get("native_meeting_id", "")).strip()
         meeting_url = body.get("meeting_url")
@@ -489,6 +497,7 @@ def build_router(
                 webhook_secret=x_user_webhook_secret,
                 webhook_events=webhook_events,
                 external_capture=external_capture,
+                meeting_in_progress=meeting_in_progress or None,
             )
         except TranscriptionNotConfigured as e:
             raise HTTPException(status_code=503, detail=str(e))

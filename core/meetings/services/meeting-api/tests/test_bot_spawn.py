@@ -286,6 +286,50 @@ def test_post_bots_forwards_automatic_leave_to_invocation(monkeypatch):
     }
 
 
+def test_invocation_carries_meeting_in_progress_only_when_asserted():
+    """A caller who knows the call is live says so; every other invocation (calendar, scheduled) carries no
+    such field, so its bot keeps waiting for a host to start the meeting."""
+    base = dict(_INV_BASE, token=mint_meeting_token(1, USER, "google_meet", "abc-defg-hij", secret=SECRET))
+    inv = build_invocation(**base, meeting_in_progress=True)
+    conforms_invocation(inv)
+    assert inv["meetingInProgress"] is True
+    assert "meetingInProgress" not in build_invocation(**base)
+
+
+def test_post_bots_forwards_meeting_in_progress_to_invocation(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", SECRET)
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.vexa.ai")
+    runtime = FakeRuntimeClient()
+    r = _client(runtime=runtime).post(
+        "/bots", headers=HEADERS,
+        json={"platform": "zoom", "native_meeting_id": "81234567890",
+              "meeting_url": "https://zoom.us/j/81234567890", "meeting_in_progress": True},
+    )
+    assert r.status_code == 201, r.text
+    assert json.loads(runtime.specs[0]["env"]["BOT_CONFIG"])["meetingInProgress"] is True
+
+    runtime = FakeRuntimeClient()
+    r = _client(runtime=runtime).post(
+        "/bots", headers=HEADERS,
+        json={"platform": "zoom", "native_meeting_id": "81234567891", "meeting_url": "https://zoom.us/j/81234567891"},
+    )
+    assert r.status_code == 201, r.text
+    assert "meetingInProgress" not in json.loads(runtime.specs[0]["env"]["BOT_CONFIG"])
+
+
+@pytest.mark.parametrize("bad", ["true", 1, "yes", [True]])
+def test_post_bots_refuses_a_non_boolean_meeting_in_progress(monkeypatch, bad):
+    monkeypatch.setenv("ADMIN_TOKEN", SECRET)
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.vexa.ai")
+    runtime = FakeRuntimeClient()
+    r = _client(runtime=runtime).post(
+        "/bots", headers=HEADERS,
+        json={"platform": "google_meet", "native_meeting_id": "abc-defg-hij", "meeting_in_progress": bad},
+    )
+    assert r.status_code == 422, r.text
+    assert runtime.specs == [], "a refused request launches nothing"
+
+
 def test_post_bots_legacy_everyone_left_alias_still_works(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", SECRET)
     monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.vexa.ai")

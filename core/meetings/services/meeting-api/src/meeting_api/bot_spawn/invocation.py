@@ -151,6 +151,7 @@ def build_invocation(
     transcription_service_url: Optional[str] = None,
     transcription_service_token: Optional[str] = None,
     transcription_model: Optional[str] = None,
+    meeting_in_progress: Optional[bool] = None,
     authenticated: Optional[bool] = None,
     userdata_s3_path: Optional[str] = None,
     s3_endpoint: Optional[str] = None,
@@ -192,6 +193,10 @@ def build_invocation(
         "meetingApiCallbackUrl": meeting_api_callback_url,
         "internalSecret": internal_secret,
         "automaticLeave": automatic_leave,
+        # The requester knows the call is live (the Mac app sees the person is in it), so a platform
+        # page saying the meeting doesn't exist means a wrong link — fail at once, don't wait for a host.
+        # None-stripped when not asserted: scheduled/calendar bots keep waiting for the host to start.
+        "meetingInProgress": meeting_in_progress,
         # Authenticated-bot mode (sealed invocation.v1 auth block): the bot restores the stored
         # browser session from the userdata store before launch and joins signed-in. Deployment-
         # scoped — set by the BOT_AUTHENTICATED knob in ``request_bot``; None-stripped otherwise

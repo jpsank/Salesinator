@@ -6,7 +6,8 @@
  * Run: npx tsx src/zoom/join.test.ts
  */
 
-import { buildZoomWebClientUrl } from './join';
+import { buildZoomWebClientUrl, openZoomWebClient } from './join';
+import { AdmissionError } from '../shared/admission';
 
 let passed = 0;
 let failed = 0;
@@ -128,5 +129,51 @@ expect(
   'https://example.com/just-a-bare-page',
 );
 
-console.log(`\n=== summary: ${passed} passed, ${failed} failed ===`);
-process.exit(failed > 0 ? 1 : 0);
+// ── openZoomWebClient: a wrong link for a live call fails fast; a host yet to start keeps being waited for ──
+// Zoom answers both with the same "Error - Zoom" page, so what tells them apart is whether the caller said the
+// call is live. A fake page stands in for the browser: it shows the titles it is given, one per visit.
+function fakePage(titles: string[]) {
+  const visits: string[] = [];
+  const waits: number[] = [];
+  let i = 0;
+  const page: any = {
+    goto: async (url: string) => { visits.push(url); },
+    waitForTimeout: async (ms: number) => { waits.push(ms); },
+    title: async () => titles[Math.min(i++, titles.length - 1)],
+    evaluate: async () => false,
+  };
+  return { page, visits, waits };
+}
+
+async function openingTheWebClient() {
+  console.log('\n=== openZoomWebClient — Zoom\'s error page ===');
+  {
+    const { page, visits } = fakePage(['Error - Zoom']);
+    let err: any;
+    await openZoomWebClient(page, 'https://app.zoom.us/wc/1/join', { authenticated: false, meetingInProgress: true }).catch((e) => { err = e; });
+    expect('a live call + error page → AdmissionError', err instanceof AdmissionError, true);
+    expect('…typed invalid_meeting (permanent)', err?.outcome, 'invalid_meeting');
+    expect('…after three looks, not ten minutes of waiting', visits.length, 3);
+  }
+  {
+    const { page, visits } = fakePage(['Error - Zoom', 'Launch Meeting - Zoom']);
+    await openZoomWebClient(page, 'https://app.zoom.us/wc/1/join', { authenticated: false, meetingInProgress: true });
+    expect('a one-off Zoom error on a live call is looked at again, then the pre-join page is used', visits.length, 2);
+  }
+  {
+    const { page, visits, waits } = fakePage(['Error - Zoom', 'Error - Zoom', 'Launch Meeting - Zoom']);
+    await openZoomWebClient(page, 'https://app.zoom.us/wc/1/join', { authenticated: false, meetingInProgress: false });
+    expect('a scheduled bot (no live-call claim) keeps waiting for the host to start', visits.length, 3);
+    expect('…at the host-start interval, not the live-call one', waits.filter((w) => w === 15000).length, 2);
+  }
+  {
+    const { page, visits } = fakePage(['Launch Meeting - Zoom']);
+    await openZoomWebClient(page, 'https://app.zoom.us/wc/1/join', { authenticated: false, meetingInProgress: true });
+    expect('a working link is opened once', visits.length, 1);
+  }
+}
+
+openingTheWebClient().then(() => {
+  console.log(`\n=== summary: ${passed} passed, ${failed} failed ===`);
+  process.exit(failed > 0 ? 1 : 0);
+});

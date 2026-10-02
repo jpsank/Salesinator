@@ -42,6 +42,15 @@ still active) is still rejected (409).
 > field — a typed `sessions` field is likewise a `vN+1`. `gate:contract-version` stays green (no
 > sealed schema touched).
 
+### `meeting_in_progress` — the caller says the call is live
+`POST /bots` with `"meeting_in_progress": true` (boolean; anything else is a 422) rides to the bot as the
+`meetingInProgress` field of `invocation.v1`. A Zoom bot normally treats the web client's "Error" page as
+"the host hasn't started the meeting yet" and polls for up to ten minutes (a scheduled bot's case); with the
+field set the meeting is known to be running, so the page means the link is wrong, and the bot ends the join
+within seconds as `validation_error` — a permanent reason, which the join-retry never re-spawns. Like
+`continue_meeting` it is accepted off the open `MeetingCreate` body, not declared on `api.v1`. Calendar and
+other scheduled joins never set it.
+
 ### `capture: "external"` — a call someone else captures
 `POST /bots` with `"capture": "external"` (accepted off the open request body like `continue_meeting`; documenting it as a
 public typed field needs a `vN+1`, flagged the same way) creates the meeting row through the SAME gates as a bot — STT

@@ -36,6 +36,7 @@ for (const g of goldens) {
   const full = parseInvocation(readFileSync(join(GOLDEN_DIR, 'Invocation.full.json'), 'utf8'));
   check('full: platform = google_meet', full.platform === 'google_meet', full.platform);
   check('full: recordingEnabled true', full.recordingEnabled === true);
+  check('full: meetingInProgress threaded', full.meetingInProgress === true);
   check('full: automaticLeave threaded', full.automaticLeave?.waitingRoomTimeout === 300000, String(full.automaticLeave?.waitingRoomTimeout));
   check('full: secret token present (not logged)', typeof full.token === 'string' && full.token.length > 0);
   check('full: transcriptionModel threaded (#522)', full.transcriptionModel === 'whisper-large-v3-turbo', String(full.transcriptionModel));

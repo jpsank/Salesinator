@@ -20,7 +20,7 @@ const check = (name: string, cond: boolean) => {
 // JoinOutcomes the orchestrator (OUTCOME_FAIL) + retry.py treat as PERMANENT (no retry):
 // 'rejected' → awaiting_admission_rejected. Transient (retried): 'timeout' → awaiting_admission_timeout,
 // 'error'/'blocked' → join_failure.
-const PERMANENT_OUTCOMES = new Set<JoinOutcome>(['rejected', 'auth_missing']);
+const PERMANENT_OUTCOMES = new Set<JoinOutcome>(['rejected', 'auth_missing', 'invalid_meeting']);
 
 console.log('\n=== join-driver: AdmissionError outcome → JoinOutcome (G1) ===');
 
@@ -45,6 +45,11 @@ const authMapped = admissionOutcomeToJoinOutcome(authErr.outcome);
 check('AuthSessionError.outcome maps to auth_missing', authMapped === 'auth_missing');
 check('a missing auth session is PERMANENT (not a retried join_failure)', PERMANENT_OUTCOMES.has(authMapped));
 check('auth failure does NOT map to the transient/retried classes', authMapped !== 'error' && authMapped !== 'timeout');
+
+// A wrong link for a live call: Zoom shows no such meeting although the caller said the call is running.
+// Re-spawning joins the same dead link, so it is PERMANENT (→ validation_error), not a retried join_failure.
+check('invalid_meeting → invalid_meeting', admissionOutcomeToJoinOutcome('invalid_meeting') === 'invalid_meeting');
+check('a wrong link is PERMANENT (not a retried join_failure)', PERMANENT_OUTCOMES.has(admissionOutcomeToJoinOutcome(new AdmissionError('invalid_meeting', 'x').outcome)));
 
 // The Teams sign-in-redirect terminal (#915) takes the OTHER branch on purpose: it is NOT an
 // AdmissionError, so the driver re-raises it and the orchestrator's join catch stamps

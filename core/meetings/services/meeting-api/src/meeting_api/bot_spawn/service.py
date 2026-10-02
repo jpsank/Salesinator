@@ -432,6 +432,7 @@ async def request_bot(
     webhook_secret: Optional[str] = None,
     webhook_events: Optional[dict] = None,
     external_capture: bool = False,
+    meeting_in_progress: Optional[bool] = None,
 ) -> dict:
     """Run the spawn flow and return a MeetingResponse-shaped dict.
 
@@ -781,6 +782,7 @@ async def request_bot(
         transcription_service_url=transcription_service_url,
         transcription_service_token=transcription_service_token,
         transcription_model=transcription_model,
+        meeting_in_progress=meeting_in_progress,
         recording_enabled=recording_enabled,
         capture_modes=(["audio", "video"] if recording_enabled else None),
         # O-TEL-1: the tape is INDEPENDENT of recording_enabled — a meeting the user never asked to

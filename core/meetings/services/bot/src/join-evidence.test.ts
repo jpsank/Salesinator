@@ -130,6 +130,12 @@ const CASES: Case[] = [
     expect: 'auth_session_missing',
   },
   {
+    name: 'a wrong link for a live call is not a navigation or lobby fault → unknown, with the platform words kept',
+    outcome: 'invalid_meeting',
+    signals: { reachedLobby: false, detail: '[Zoom Web] meeting link invalid: Zoom shows no such meeting' },
+    expect: 'unknown',
+  },
+  {
     name: 'a user stop in the lobby → stopped_while_joining',
     outcome: 'stopped',
     signals: { reachedLobby: true, timeInLobbyMs: 12_000, lobbyBudgetMs: BUDGET_MS },
@@ -241,6 +247,8 @@ console.log('\n=== 3. the evidence block that gets persisted ===');
 const meetTimeout = buildJoinEvidence('timeout', 'awaiting_admission', CASES[0].signals)!;
 check('carries the typed reason', meetTimeout.reason === 'awaiting_admission_timeout');
 check('carries the attribution', meetTimeout.attribution === 'host_action');
+check('a wrong link for a live call is never counted as a system fault',
+  buildJoinEvidence('invalid_meeting', 'joining', { reachedLobby: false, detail: 'meeting link invalid' })?.attribution === 'unknown');
 check('carries the stage', meetTimeout.stage === 'awaiting_admission');
 check('is tagged first-hand (source=bot)', meetTimeout.source === 'bot');
 check('carries all three stage timings', meetTimeout.timings?.time_to_lobby_ms === 7_000

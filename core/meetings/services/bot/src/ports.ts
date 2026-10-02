@@ -17,7 +17,7 @@ import type { BotStatus, LifecycleEvent, Act, TranscriptSegment } from './contra
 
 /** The outcome of the join+admission attempt (an Anti-Corruption verdict, P5 — the
  *  platform's many failure modes translated into the bot's vocabulary). */
-export type JoinOutcome = 'admitted' | 'rejected' | 'timeout' | 'blocked' | 'auth_missing' | 'error';
+export type JoinOutcome = 'admitted' | 'rejected' | 'timeout' | 'blocked' | 'auth_missing' | 'invalid_meeting' | 'error';
 
 /** A join verdict that CARRIES its human reason text. A non-admitted platform failure is born with
  *  a message (the @vexa/join AdmissionError text: "auth_required: …", "host did not start …") — but

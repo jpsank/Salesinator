@@ -196,6 +196,21 @@ async function main(): Promise<void> {
     check('reasonless#926: bare enum still gets a non-null reason', typeof t2.reason === 'string' && t2.reason.length > 0);
   }
 
+  // ── a wrong link for a live call → validation_error: permanent, so the join-retry never re-spawns it ──
+  {
+    const lc = recordingSink();
+    const wrongLink: JoinDriver = {
+      async join() { return { outcome: 'invalid_meeting', reason: '[Zoom Web] meeting link invalid: Zoom shows no such meeting' }; },
+      onRemoval() { return () => { /* */ }; }, async leave() { /* */ }, async withdraw() { /* */ },
+    };
+    const res = await createOrchestrator(inv({ platform: 'zoom' }), { lifecycle: lc, join: wrongLink, pipeline: noopPipeline(), acts: noopActs(), aloneness: noopAloneness() }).run();
+    const t = last(lc.events);
+    check('wrong link: failed with completion_reason=validation_error', t.status === 'failed' && t.completion_reason === 'validation_error');
+    check('wrong link: the platform\'s words are the reason', typeof t.reason === 'string' && t.reason.includes('meeting link invalid'));
+    check('wrong link: exit 1', res.exitCode === 1);
+    check('wrong link: events conform', allConform(lc.events));
+  }
+
   // ── pipeline.start throws → failed(active/...) ──
   {
     const lc = recordingSink();

@@ -91,6 +91,8 @@ export interface Invocation {
   defaultAvatarUrl?: string;
   videoReceiveEnabled?: boolean;
   cameraEnabled?: boolean;
+  // ── the requester knows the call is live: a "no such meeting" page means a wrong link ──
+  meetingInProgress?: boolean;
   // ── authenticated meeting bot (persistent browser context from S3) ──
   authenticated?: boolean;
   userdataS3Path?: string;

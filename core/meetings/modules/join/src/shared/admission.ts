@@ -7,12 +7,15 @@
  * auth_session_missing — authenticated mode found a signed-out browser profile (the guest lobby
  *                        rendered); the profile is dead, so a re-spawn can never succeed.
  *
+ * invalid_meeting     — the platform says the meeting does not exist, although the caller said the call
+ *                        is live: the link is wrong, so a re-spawn can never succeed.
+ *
  * The JoinDriver maps this `outcome` onto a completion reason, so a lobby timeout is reported
  * as `awaiting_admission_timeout` (retry-honest) rather than a generic `join_failure`. Lives in
  * `shared/` so each platform throws the SAME class the driver checks with `instanceof`, without
  * coupling one platform sibling to another.
  */
-export type AdmissionOutcome = "denial" | "lobby_timeout" | "join_failure" | "auth_session_missing";
+export type AdmissionOutcome = "denial" | "lobby_timeout" | "join_failure" | "auth_session_missing" | "invalid_meeting";
 
 export class AdmissionError extends Error {
   readonly outcome: AdmissionOutcome;
