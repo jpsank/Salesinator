@@ -97,6 +97,31 @@ export async function setSlackApprovers(a: Pick<SlackApprovers, "user_ids" | "in
   }));
 }
 
+export interface SlackEventsStatus {
+  /** Unix seconds of the last verified event Slack delivered, or null if none has ever arrived. */
+  last_event_at: number | null;
+  /** Unix seconds of the last request that said it was from Slack but failed its signature check. */
+  last_rejected_at: number | null;
+}
+
+/** When Slack last sent the service an event — only a hint (a quiet channel and a broken connection look the same); the check settles it. */
+export async function getSlackEventsStatus(): Promise<SlackEventsStatus> {
+  return jsonOrThrow(await fetch("/api/sales-cycle/slack/events-status", { cache: "no-store" }));
+}
+
+export interface SlackEventsCheck {
+  delivered: boolean;
+  /** Slack's request reached the service but its signature was refused (a wrong signing secret). */
+  refused: boolean;
+  target?: string | null;
+  detail: string;
+}
+
+/** Tests end to end that Slack is delivering events: the bot reacts 👀 to the latest card, waits for the event, and takes it off (up to ~10 s). */
+export async function checkSlackEvents(): Promise<SlackEventsCheck> {
+  return jsonOrThrow(await fetch("/api/sales-cycle/slack/events-check", { method: "POST" }));
+}
+
 /** A "Connect X" link's target. A real cross-origin navigation (the browser leaves the Terminal
  *  entirely, via the sales-cycle service and then the provider's own consent screen, before
  *  landing back here) — not a fetch, so this is the one place in the sales-cycle integration that

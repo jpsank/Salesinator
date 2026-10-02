@@ -83,6 +83,16 @@ describe("sales-cycle proxy gate", () => {
     expect((await POST(req("POST"), ctx("slack", "approvers"))).status).toBe(200);
   });
 
+  it("lets a signed-in user read the Slack events status, but only an admin run the delivery check", async () => {
+    cookieJar["vexa-token"] = "user-tok";
+    const upstream = stubFetch();
+    expect((await GET(req("GET"), ctx("slack", "events-status"))).status).toBe(200);
+    expect((await POST(req("POST"), ctx("slack", "events-check"))).status).toBe(403);
+    expect(upstream).toHaveLength(1);
+    cookieJar["vexa-token"] = "admin-tok";
+    expect((await POST(req("POST"), ctx("slack", "events-check"))).status).toBe(200);
+  });
+
   it("never proxies the backend's internal or dispatch routes, even for an admin", async () => {
     cookieJar["vexa-token"] = "admin-tok";
     const upstream = stubFetch();

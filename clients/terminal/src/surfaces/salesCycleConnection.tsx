@@ -7,8 +7,9 @@
 import { useEffect, useState } from "react";
 import { cardBtn, cardFieldGrow, cardLabelCol, cardLabelled, cardMeta, OAuthConnectionCard, PasteTokenFallback } from "./integrationCard";
 import {
-  disconnectOAuth, getOAuthStatus, getSlackApprovers, getSlackChannel, getSlackChannelStatus, oauthConnectUrl, setOAuthToken,
-  setSlackApprovers, setSlackChannel, type SlackApprovers, type SlackChannelConfig, type SlackChannelStatus,
+  checkSlackEvents, disconnectOAuth, getOAuthStatus, getSlackApprovers, getSlackChannel, getSlackChannelStatus, getSlackEventsStatus,
+  oauthConnectUrl, setOAuthToken, setSlackApprovers, setSlackChannel,
+  type SlackApprovers, type SlackChannelConfig, type SlackChannelStatus, type SlackEventsCheck, type SlackEventsStatus,
 } from "./salesCycleApi";
 import { presentError } from "./apiClient";
 
@@ -190,6 +191,66 @@ export function SlackApproversField() {
   );
 }
 
+/** "3 min ago", from unix seconds. */
+export function agoFrom(unixSeconds: number, nowMs: number): string {
+  const s = Math.max(0, Math.round(nowMs / 1000 - unixSeconds));
+  if (s < 10) return "just now";
+  if (s < 60) return `${s} s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+/** Is Slack actually sending events? Nothing else in the product says — reactions just do nothing when it is not (Socket Mode switched on
+ *  in the Slack app, a wrong Request URL, a subscription Slack paused). The last event is only a hint — a quiet channel and a broken
+ *  connection look the same — so "Check" proves it end to end: the bot reacts to the latest card and waits for Slack to report it. */
+export function SlackEventsHealth({ now = () => Date.now() }: { now?: () => number }) {
+  const [status, setStatus] = useState<SlackEventsStatus | null>(null);
+  const [result, setResult] = useState<SlackEventsCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let on = true;
+    getSlackEventsStatus().then((s) => on && setStatus(s)).catch(() => undefined);
+    return () => { on = false; };
+  }, []);
+
+  const check = async () => {
+    setBusy(true); setErr(null); setResult(null);
+    try {
+      setResult(await checkSlackEvents());
+      setStatus(await getSlackEventsStatus());
+    } catch (e: unknown) { setErr(presentError(e).headline); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--t2)" }}>Slack events</div>
+      <div style={cardMeta}>
+        {status === null ? "…"
+          : status.last_event_at === null ? "No event has reached Vexa yet."
+          : `Last event from Slack: ${agoFrom(status.last_event_at, now())}.`}
+        {status?.last_rejected_at != null && ` A request from Slack was refused ${agoFrom(status.last_rejected_at, now())}.`}
+        {" "}Reactions (votes, ✅) only work while Slack is sending these.
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button disabled={busy} onClick={() => void check()} style={{ ...cardBtn, opacity: busy ? 0.5 : 1 }}>
+          {busy ? "Checking (up to 10 s)…" : "Check that events arrive"}
+        </button>
+      </div>
+      {result && (
+        <div role={result.delivered ? "status" : "alert"}
+          style={{ fontSize: 11.5, color: result.delivered ? "var(--green)" : "var(--danger)", overflowWrap: "anywhere" }}>
+          {result.delivered ? "✓ " : "⚠ "}{result.detail}
+        </div>
+      )}
+      {err && <div role="alert" style={{ fontSize: 11.5, color: "var(--danger)" }}>⚠ {err}</div>}
+    </div>
+  );
+}
+
 /** Field + live check together. `version` forces SlackChannelCheck to remount (its own effect has
  *  no deps, so a plain re-render wouldn't re-poll) after a save, so the ✓/⚠ verdict reflects the
  *  channel you just set instead of the one that was configured when the page loaded. */
@@ -242,6 +303,9 @@ export function SalesCycleSection() {
             <SlackChannelSettings />
             <div style={{ borderTop: "1px dashed var(--line)", marginTop: 10, paddingTop: 10 }}>
               <SlackApproversField />
+            </div>
+            <div style={{ borderTop: "1px dashed var(--line)", marginTop: 10, paddingTop: 10 }}>
+              <SlackEventsHealth />
             </div>
           </div>
         )} />

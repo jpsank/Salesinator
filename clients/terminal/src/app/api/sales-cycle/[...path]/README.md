@@ -7,6 +7,7 @@ fronts (HubSpot, Slack, …) are shared/deployment-wide, not tied to whichever V
 logged in.
 
 Access: only the paths the terminal's own client calls are forwarded (`oauth/<provider>/status|disconnect|token`,
-`slack/channel`, `slack/channel-status`, `slack/approvers`) — anything else, including the backend's `/internal/*` and
+`slack/channel`, `slack/channel-status`, `slack/approvers`, `slack/events-status`,
+`slack/events-check`) — anything else, including the backend's `/internal/*` and
 `/dispatch`, is `404`. Reading (`GET`) needs a signed-in user (`401` otherwise); changing a connection
 (any other method) needs an admin (`403` otherwise).
