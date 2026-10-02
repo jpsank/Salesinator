@@ -67,20 +67,41 @@ enum Settings {
 
     private static let service = "ai.vexa.capture", keychainAccount = "apiKey"
 
+    /// The Keychain is asked once per run, not per use: an ad-hoc-signed build has no stable identity, so macOS asks for the login
+    /// password on every Keychain read until the person chooses Always Allow — and the menu and setup window check the key constantly.
+    /// What was read (or that nothing could be) is kept for the run; saving a key replaces it.
+    private static let keyLock = NSLock()
+    private static var keyLoaded = false
+    private static var keyValue: String?
+
     static var apiKey: String? {
         get {
-            let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: keychainAccount, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-            var out: CFTypeRef?
-            guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-            return String(data: data, encoding: .utf8)
+            keyLock.lock(); defer { keyLock.unlock() }
+            if !keyLoaded { keyValue = readKeychain(); keyLoaded = true }
+            return keyValue
         }
         set {
-            let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: keychainAccount]
-            SecItemDelete(base as CFDictionary)
-            guard let v = newValue?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return }
-            var add = base; add[kSecValueData as String] = Data(v.utf8)
-            SecItemAdd(add as CFDictionary, nil)
+            keyLock.lock(); defer { keyLock.unlock() }
+            let v = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            writeKeychain(v)
+            keyValue = (v?.isEmpty ?? true) ? nil : v
+            keyLoaded = true
         }
+    }
+
+    private static func readKeychain() -> String? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                kSecAttrAccount as String: keychainAccount, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func writeKeychain(_ value: String?) {
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: keychainAccount]
+        SecItemDelete(base as CFDictionary)
+        guard let v = value, !v.isEmpty else { return }
+        var add = base; add[kSecValueData as String] = Data(v.utf8)
+        SecItemAdd(add as CFDictionary, nil)
     }
 }
