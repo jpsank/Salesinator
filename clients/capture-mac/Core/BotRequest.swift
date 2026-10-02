@@ -95,12 +95,19 @@ public enum BotRequest {
     /// How long a bot may take to get into the call before the app stops waiting for it.
     public static let joinPatience: TimeInterval = 60
 
-    /// True when the bot is still outside the call after ``joinPatience`` — requested, joining or waiting to be admitted —
-    /// whatever the reason (a link that doesn't work, a waiting room, a host who refuses it). Only a clear status counts:
-    /// a bot Vexa gave no status for, or one already in or leaving, is never called stalled.
+    /// True when the bot has not reached the call's waiting room after ``joinPatience`` — still requested or joining — which is what
+    /// a link that doesn't work looks like. A bot IN the waiting room is not stalled: it got to the meeting and is waiting for the
+    /// host to admit it (the bot gives up on its own after its lobby budget, and then the app captures the audio instead). Only a
+    /// clear status counts: a bot Vexa gave no status for, or one already in or leaving, is never called stalled.
     public static func hasStalled(_ presence: Presence, platform: String, nativeId: String, waited: TimeInterval) -> Bool {
         guard waited > joinPatience, case .running(let all) = presence, let status = all["\(platform)/\(nativeId)"] else { return false }
-        return ["requested", "joining", "awaiting_admission"].contains(status)
+        return ["requested", "joining"].contains(status)
+    }
+
+    /// True when the bot is at the meeting, in the waiting room, until the host lets it in.
+    public static func isWaitingForAdmission(_ presence: Presence, platform: String, nativeId: String) -> Bool {
+        if case .running(let all) = presence { return all["\(platform)/\(nativeId)"] == "awaiting_admission" }
+        return false
     }
 
     /// "Who is this key?" — the setup check's proof that Vexa accepts it.

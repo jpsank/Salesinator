@@ -221,7 +221,9 @@ do {
     let presence = BotRequest.interpretRunning(status: 200, body: listed)
     check("it reads the platform and meeting of each running bot", presence == .running(["zoom/111": "active", "google_meet/abc-defg": ""]))
     let waiting = BotRequest.interpretRunning(status: 200, body: Data(#"{"running_bots":[{"platform":"zoom","native_meeting_id":"111","status":"joining"},{"platform":"zoom","native_meeting_id":"222","status":"awaiting_admission"},{"platform":"zoom","native_meeting_id":"333","status":"stopping"}]}"#.utf8))
-    check("a bot still outside the call after the patience is stalled", BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "111", waited: 61) && BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "222", waited: 61))
+    check("a bot that has not reached the waiting room after the patience is stalled", BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "111", waited: 61))
+    check("a bot waiting to be admitted is not stalled, however long it waits", !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "222", waited: 61) && !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "222", waited: 900))
+    check("…and is recognised as waiting", BotRequest.isWaitingForAdmission(waiting, platform: "zoom", nativeId: "222") && !BotRequest.isWaitingForAdmission(waiting, platform: "zoom", nativeId: "111") && !BotRequest.isWaitingForAdmission(waiting, platform: "zoom", nativeId: "999") && !BotRequest.isWaitingForAdmission(.unknown, platform: "zoom", nativeId: "222"))
     check("…but not before it", !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "111", waited: 59))
     check("a bot that is in the call, leaving, without a status, gone or unknown is never stalled",
           !BotRequest.hasStalled(presence, platform: "zoom", nativeId: "111", waited: 600) && !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "333", waited: 600)

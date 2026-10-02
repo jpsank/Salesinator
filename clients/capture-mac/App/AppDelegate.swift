@@ -6,7 +6,7 @@ import ServiceManagement
 /// The menu-bar app: notices a Zoom or Teams call, and either sends Vexa's bot to it (finding the call's link in the
 /// browser) or, when there is no link, captures the call's audio here — and says so either way.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private struct BotCall { let platform: CallPlatform; let serverPlatform: String; let nativeId: String; let since = Date(); var wasIn = false }
+    private struct BotCall { let platform: CallPlatform; let serverPlatform: String; let nativeId: String; let since = Date(); var wasIn = false; var inLobby = false }
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let detector = CallDetector()
@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var offered: CallPlatform?            // a call not handled automatically — waiting for the person
     private var announced = false
     private var ticks = 0
+    private var admitReminded: String?          // the bot we already reminded the person to admit, so it is said once
     private var checkingBot = false              // a look at whether the bot is still on the call is in flight
     private var update: UpdateOffer?              // a newer build the update feed offered
 
@@ -149,8 +150,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// While a bot is on the call, ask Vexa every few seconds how it is doing. When the meeting ends — or someone removes the bot —
-    /// it is gone within moments, well before the audio going quiet would say so. When it has not got into the call after a minute,
-    /// the app stops waiting for it and captures the call's audio here instead. Only a clear answer counts; a failed or unreadable
+    /// it is gone within moments, well before the audio going quiet would say so. When it has not even reached the meeting's waiting room
+    /// after a minute (a link that doesn't work), the app stops waiting for it and captures the call's audio here instead; a bot that is in the
+    /// waiting room is left to wait, and the person is reminded once to admit it. Only a clear answer counts; a failed or unreadable
     /// one leaves things as they are.
     private func watchBot() {
         guard let b = bot, !checkingBot, Date().timeIntervalSince(b.since) > 4,
@@ -163,6 +165,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.checkingBot = false
                 guard let now = self.bot, now.nativeId == b.nativeId else { return }
                 if !now.wasIn, BotRequest.isIn(presence, platform: b.serverPlatform, nativeId: b.nativeId) { self.bot?.wasIn = true; self.rebuildMenu() }
+                let lobby = BotRequest.isWaitingForAdmission(presence, platform: b.serverPlatform, nativeId: b.nativeId)
+                if lobby != now.inLobby { self.bot?.inLobby = lobby; self.rebuildMenu() }
+                if lobby, self.admitReminded != b.nativeId, Date().timeIntervalSince(b.since) > 30 {
+                    self.admitReminded = b.nativeId
+                    Notifier.post(title: "Vexa's bot is waiting to be admitted", body: "Admit it from your \(b.platform.displayName) waiting room so it can join the call.")
+                }
                 if BotRequest.isGone(presence, platform: b.serverPlatform, nativeId: b.nativeId) {
                     if !now.wasIn, self.detector.isInCall(b.platform), self.session == nil {      // it ended without ever getting in — a link Zoom refused
                         self.botNeverJoined(b, key: key, stillRunning: false)
@@ -535,7 +543,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func statusLine() -> String {
         if !Settings.consentAccepted { return "Finish setting up to get started" }
         if Settings.apiKey == nil { return "Not connected to Vexa" }
-        if let b = bot { return b.wasIn ? "Vexa's bot is on your \(b.platform.displayName) call" : "Vexa's bot is joining your \(b.platform.displayName) call…" }
+        if let b = bot {
+            if b.wasIn { return "Vexa's bot is on your \(b.platform.displayName) call" }
+            return b.inLobby ? "Vexa's bot is waiting to be admitted to your \(b.platform.displayName) call" : "Vexa's bot is joining your \(b.platform.displayName) call…"
+        }
         if let s = session {
             switch sessionState {
             case .connecting: return "Connecting to Vexa…"
