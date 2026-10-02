@@ -53,9 +53,9 @@ reappears only if something still needs attention.
 site you already expose is the only address needed. A deployment that publishes the gateway and capture service itself sets
 `CAPTURE_API_URL` and `CAPTURE_INGEST_URL` in `.env` instead.
 
-**Open at login** is a checkbox in the setup window and *Preferences* (macOS accepts it for an app in an Applications folder). Ad-hoc signing means macOS asks for the
-Automation, Microphone and Screen Recording permissions again after each rebuild; a distributed build needs a Developer ID signature and
-notarization.
+**Open at login** is a checkbox in the setup window and *Preferences* (macOS accepts it for an app in an Applications folder). Run `./make-local-signing-cert.sh` once: builds are then signed with a local certificate, one identity across rebuilds, so the Keychain,
+Automation, Microphone, Screen Recording and Notifications approvals are asked once. Unsigned (ad-hoc) builds are a new app to macOS every
+time and ask for all of them again; a distributed build needs a Developer ID signature and notarization.
 
 ## Checks without a call
 
@@ -76,9 +76,10 @@ VEXA_CAPTURE_SHOT=out.png $APP      # render the setup window to a PNG and exit
 
 ## Releasing a build people can install
 
-`./install.sh` is for you: it signs ad hoc, so macOS treats every rebuild as a new app — it asks for the Microphone, Screen Recording and
-Automation permissions again, and for your login password to read the saved key from the Keychain. A build signed with a Developer ID is
-one stable app, so none of that repeats, and it opens on anyone's Mac without a warning. `release.sh` makes it:
+`./install.sh` is for you: it signs with the local certificate when `./make-local-signing-cert.sh` has been run (approvals are asked once; the
+first build after setting it up is a new identity, so it asks once more), else ad hoc — and then macOS treats every rebuild as a new app and asks
+for the Microphone, Screen Recording and Automation permissions, and your login password for the Keychain, again. A build signed with a Developer ID is
+one stable app everywhere, so none of that repeats, and it opens on anyone's Mac without a warning. `release.sh` makes it:
 
 ```bash
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=vexa-notary \

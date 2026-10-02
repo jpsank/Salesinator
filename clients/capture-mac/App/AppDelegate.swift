@@ -6,7 +6,7 @@ import ServiceManagement
 /// The menu-bar app: notices a Zoom or Teams call, and either sends Vexa's bot to it (finding the call's link in the
 /// browser) or, when there is no link, captures the call's audio here — and says so either way.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private struct BotCall { let platform: CallPlatform; let serverPlatform: String; let nativeId: String; let since = Date() }
+    private struct BotCall { let platform: CallPlatform; let serverPlatform: String; let nativeId: String; let since = Date(); var wasIn = false }
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let detector = CallDetector()
@@ -153,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the app stops waiting for it and captures the call's audio here instead. Only a clear answer counts; a failed or unreadable
     /// one leaves things as they are.
     private func watchBot() {
-        guard let b = bot, !checkingBot, Date().timeIntervalSince(b.since) > 10,
+        guard let b = bot, !checkingBot, Date().timeIntervalSince(b.since) > 4,
               let key = Settings.apiKey else { return }
         checkingBot = true
         let gw = Settings.gatewayURL
@@ -162,31 +162,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await MainActor.run {
                 self.checkingBot = false
                 guard let now = self.bot, now.nativeId == b.nativeId else { return }
+                if !now.wasIn, BotRequest.isIn(presence, platform: b.serverPlatform, nativeId: b.nativeId) { self.bot?.wasIn = true; self.rebuildMenu() }
                 if BotRequest.isGone(presence, platform: b.serverPlatform, nativeId: b.nativeId) {
+                    if !now.wasIn, self.detector.isInCall(b.platform), self.session == nil {      // it ended without ever getting in — a link Zoom refused
+                        self.botNeverJoined(b, key: key, stillRunning: false)
+                        return
+                    }
                     self.bot = nil
                     self.record(b.platform, .botLeft)
                     Notifier.post(title: "Vexa's bot left your \(b.platform.displayName) call", body: "It will be sent to your next call.")
                 } else if BotRequest.hasStalled(presence, platform: b.serverPlatform, nativeId: b.nativeId, waited: Date().timeIntervalSince(b.since)) {
-                    self.botNeverJoined(b, key: key)
+                    self.botNeverJoined(b, key: key, stillRunning: true)
                 }
             }
         }
     }
 
-    /// The bot is still outside the call: take it off and hear the call from this Mac — unless this Mac can't capture audio yet,
-    /// in which case the bot is left trying and the person is told what would let the app help.
-    private func botNeverJoined(_ b: BotCall, key: String) {
+    /// The bot never got into the call — it has been outside it too long (`stillRunning`), or it ended without ever being in (a link
+    /// Zoom refused): hear the call from this Mac instead. When this Mac can't capture audio yet, a bot still trying is left to try
+    /// and the person is told what would let the app help; one that has ended is just reported.
+    private func botNeverJoined(_ b: BotCall, key: String, stillRunning: Bool) {
         guard detector.isInCall(b.platform), session == nil else { return }
         guard audioCaptureAvailable() else {
             if stalledNoted != b.nativeId {
                 stalledNoted = b.nativeId
-                Notifier.post(title: "Vexa's bot hasn't joined your \(b.platform.displayName) call", body: "Allow Microphone and Screen Recording for Vexa Capture (Setup) and it can capture the call's audio here instead.")
+                Notifier.post(title: "Vexa's bot couldn't get into your \(b.platform.displayName) call", body: "Allow Microphone and Screen Recording for Vexa Capture (Setup) and it can capture the call's audio here instead.")
             }
+            if !stillRunning { bot = nil; record(b.platform, .botCouldntJoin) }
             return
         }
         bot = nil
-        let gw = Settings.gatewayURL
-        Task { _ = await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) }
+        if stillRunning {
+            let gw = Settings.gatewayURL
+            Task { _ = await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) }
+        }
         Notifier.post(title: "Vexa's bot couldn't get into your \(b.platform.displayName) call", body: "Capturing the call's audio on this Mac instead.")
         beginAudio(b.platform)
     }
@@ -413,7 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var state: AppState {
         if needsSetup { return .attention }
         if let s = session { if case .problem = sessionState { return .attention }; return s.isPaused ? .paused : .capturing }
-        if bot != nil { return .bot }
+        if let b = bot { return b.wasIn ? .bot : .working }       // the bot is only "on the call" once Vexa says it got in
         if searching || offered != nil { return .working }
         return .idle
     }
@@ -488,7 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func statusLine() -> String {
         if !Settings.consentAccepted { return "Finish setting up to get started" }
         if Settings.apiKey == nil { return "Not connected to Vexa" }
-        if let b = bot { return "Vexa's bot is on your \(b.platform.displayName) call" }
+        if let b = bot { return b.wasIn ? "Vexa's bot is on your \(b.platform.displayName) call" : "Vexa's bot is joining your \(b.platform.displayName) call…" }
         if let s = session {
             switch sessionState {
             case .connecting: return "Connecting to Vexa…"

@@ -2,13 +2,15 @@ import Foundation
 
 /// Sending Vexa's own bot to a call — the same `POST /bots` a rep's "add bot from URL" makes — and what its answer means.
 public enum BotRequest {
+    /// The app only sends a bot to a call it has just seen the person in, so the request says the meeting is live: a platform
+    /// page that says no such meeting then means a wrong link, and the bot fails within seconds instead of waiting for a host.
     public static func create(gateway: String, key: String, meetingURL: String) -> URLRequest? {
         guard let base = normalized(gateway), let url = URL(string: base + "/bots") else { return nil }
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
         r.setValue(key, forHTTPHeaderField: "X-API-Key")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["meeting_url": meetingURL])
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["meeting_url": meetingURL, "meeting_in_progress": true] as [String: Any])
         r.timeoutInterval = 20
         return r
     }
@@ -68,6 +70,13 @@ public enum BotRequest {
     /// True only when Vexa answered and this bot is not among the running ones.
     public static func isGone(_ presence: Presence, platform: String, nativeId: String) -> Bool {
         if case .running(let all) = presence { return all["\(platform)/\(nativeId)"] == nil }
+        return false
+    }
+
+    /// True when Vexa lists this bot as in the call (admitted and live) — the one fact that tells a bot that left a call it was
+    /// in from one that never got in.
+    public static func isIn(_ presence: Presence, platform: String, nativeId: String) -> Bool {
+        if case .running(let all) = presence { return all["\(platform)/\(nativeId)"] == "active" }
         return false
     }
 

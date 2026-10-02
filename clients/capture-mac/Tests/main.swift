@@ -131,7 +131,8 @@ do {
 do {
     let r = BotRequest.create(gateway: "https://api.example.com/", key: "K", meetingURL: "https://zoom.us/j/81234567890?pwd=a")
     check("POST /bots with the key and the link", r?.url?.absoluteString == "https://api.example.com/bots" && r?.httpMethod == "POST" && r?.value(forHTTPHeaderField: "X-API-Key") == "K")
-    check("…as the open meeting_url body the server parses", (try? JSONSerialization.jsonObject(with: r!.httpBody!)) as? [String: String] == ["meeting_url": "https://zoom.us/j/81234567890?pwd=a"])
+    let sent = (try? JSONSerialization.jsonObject(with: r!.httpBody!)) as? [String: Any]
+    check("…as the open meeting_url body the server parses, saying the call is live", sent?["meeting_url"] as? String == "https://zoom.us/j/81234567890?pwd=a" && sent?["meeting_in_progress"] as? Bool == true && sent?.count == 2)
     check("a bad gateway address is refused", BotRequest.create(gateway: "ftp://x", key: "K", meetingURL: "u") == nil && BotRequest.create(gateway: "", key: "K", meetingURL: "u") == nil)
     check("the gateway is normalized", BotRequest.normalized(" http://localhost:18056// ") == "http://localhost:18056")
     let s = BotRequest.stop(gateway: "http://g:1", key: "K", platform: "zoom", nativeId: "81234567890")
@@ -223,6 +224,9 @@ do {
           !BotRequest.hasStalled(presence, platform: "zoom", nativeId: "111", waited: 600) && !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "333", waited: 600)
           && !BotRequest.hasStalled(presence, platform: "google_meet", nativeId: "abc-defg", waited: 600) && !BotRequest.hasStalled(waiting, platform: "zoom", nativeId: "999", waited: 600)
           && !BotRequest.hasStalled(.unknown, platform: "zoom", nativeId: "111", waited: 600))
+    check("only an active bot counts as in the call", BotRequest.isIn(presence, platform: "zoom", nativeId: "111") && !BotRequest.isIn(waiting, platform: "zoom", nativeId: "111")
+          && !BotRequest.isIn(presence, platform: "google_meet", nativeId: "abc-defg") && !BotRequest.isIn(.unknown, platform: "zoom", nativeId: "111") && !BotRequest.isIn(presence, platform: "zoom", nativeId: "999"))
+    check("a bot that couldn't get in is told apart from one that left", CallLog.line(CallRecord(platform: "Zoom", when: Date(), outcome: .botCouldntJoin)).hasSuffix("Vexa's bot couldn't get into the call") && CallLog.line(CallRecord(platform: "Zoom", when: Date(), outcome: .botLeft)).hasSuffix("Vexa's bot left the call"))
     check("a bot that is listed is not gone", !BotRequest.isGone(presence, platform: "zoom", nativeId: "111"))
     check("a bot that is not listed is gone", BotRequest.isGone(presence, platform: "zoom", nativeId: "222"))
     check("an empty list means every bot is gone", BotRequest.isGone(BotRequest.interpretRunning(status: 200, body: Data(#"{"running_bots":[]}"#.utf8)), platform: "zoom", nativeId: "111"))

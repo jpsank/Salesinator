@@ -1,7 +1,9 @@
 #!/bin/sh
 # Build "Vexa Capture.app" with only the Command Line Tools (no Xcode, no SwiftPM): swiftc compiles Core/ and App/,
-# the bundle is assembled by hand, and it is ad-hoc signed so macOS keeps its permissions between runs of the SAME
-# build. A rebuild is a new signature, so macOS asks for the Microphone and Screen Recording permissions again.
+# the bundle is assembled by hand. Signing: a Developer ID (SIGN_IDENTITY) for releases; else the local certificate that
+# ./make-local-signing-cert.sh puts in your keychain — one identity across rebuilds, so macOS asks for the Keychain,
+# Microphone, Screen Recording, Automation and Notifications approvals once; else ad-hoc, where every rebuild is a new
+# app to macOS and all of them are asked again.
 set -eu
 cd "$(dirname "$0")"
 SDK="$(xcrun --show-sdk-path)"
@@ -23,6 +25,13 @@ fi
 if [ -n "${SIGN_IDENTITY:-}" ]; then
   codesign --force --timestamp --options runtime --entitlements App.entitlements --sign "$SIGN_IDENTITY" --identifier ai.vexa.capture "$APP"
 else
-  codesign --force --sign - --identifier ai.vexa.capture "$APP"
+  LOCAL_ID="$(security find-identity -p codesigning 2>/dev/null | awk -v n="\"${LOCAL_SIGN_NAME:-Vexa Capture Local Signing}\"" 'index($0, n) { print $2; exit }')"
+  if [ -n "$LOCAL_ID" ]; then
+    codesign --force --sign "$LOCAL_ID" --identifier ai.vexa.capture "$APP"
+    echo "signed with the local certificate (one identity across rebuilds)"
+  else
+    codesign --force --sign - --identifier ai.vexa.capture "$APP"
+    echo "signed ad-hoc — run ./make-local-signing-cert.sh once so rebuilds stop re-asking for permissions"
+  fi
 fi
 echo "built: $APP"
