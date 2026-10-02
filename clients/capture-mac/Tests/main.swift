@@ -170,5 +170,21 @@ do {
           && BotRequest.interpretMe(status: 502, body: body("{}")) == .unavailable("Vexa answered 502"))
 }
 
-print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests, pairing, setup checks." : "\n❌ \(failed) check(s) failed")
+// ── recent calls ──
+do {
+    var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+    let now = Date(timeIntervalSince1970: 1_790_000_000)                      // 2026-09-21 14:13:20 UTC
+    func rec(_ secondsAgo: Double, _ o: CallRecord.Outcome, _ note: String? = nil) -> CallRecord { CallRecord(platform: "Zoom", when: now.addingTimeInterval(-secondsAgo), outcome: o, note: note) }
+    check("a call from today reads 'today HH:mm'", CallLog.line(rec(600, .botSent), now: now, calendar: cal) == "Zoom · today 14:03 · Vexa's bot was sent")
+    check("yesterday's says so", CallLog.line(rec(86_400, .audioCaptured), now: now, calendar: cal).hasPrefix("Zoom · yesterday ") && CallLog.line(rec(86_400, .audioCaptured), now: now, calendar: cal).hasSuffix("audio captured on this Mac"))
+    check("an older one carries its date", CallLog.line(rec(86_400 * 5, .skipped), now: now, calendar: cal).hasPrefix("Zoom · Sep 16 "))
+    check("each outcome has words", [CallRecord.Outcome.botSent, .botAlreadyThere, .audioCaptured, .skipped, .noLink, .failed].allSatisfy { !CallLog.line(CallRecord(platform: "Teams", when: now, outcome: $0), now: now, calendar: cal).isEmpty })
+    check("a failure says why", CallLog.line(rec(0, .failed, "Vexa answered 503"), now: now, calendar: cal).hasSuffix("couldn't join — Vexa answered 503"))
+    var log: [CallRecord] = []
+    for i in 0..<8 { log = CallLog.adding(log, rec(Double(80 - i * 10), .botSent)) }   // each added call is newer than the last
+    check("only the latest five are kept, newest first", log.count == 5 && log[0].when > log[4].when)
+    check("it survives being saved and loaded", (try? JSONDecoder().decode([CallRecord].self, from: JSONEncoder().encode(log))) == log)
+}
+
+print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests, pairing, setup checks, call log." : "\n❌ \(failed) check(s) failed")
 exit(failed == 0 ? 0 : 1)

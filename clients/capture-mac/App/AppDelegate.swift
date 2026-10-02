@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let detector = CallDetector()
     private let settingsWindow = SettingsWindow()
+    private let setupWindow = SetupWindow()
     private var timer: Timer?
     private var session: CaptureSession?          // audio captured on this Mac
     private var sessionState: CaptureSession.State = .stopped
@@ -21,18 +22,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        statusItem.button?.title = "Vexa"
         settingsWindow.onSaved = { [weak self] in self?.rebuildMenu() }
         settingsWindow.onConnect = { [weak self] in self?.connect() }
+        setupWindow.onChange = { [weak self] in self?.rebuildMenu() }
+        setupWindow.onConnect = { [weak self] address in self?.connectToAddress(address) }
         rebuildMenu()
+        if let shot = ProcessInfo.processInfo.environment["VEXA_CAPTURE_SHOT"] {      // dev: render the setup window to a PNG
+            setupWindow.window?.appearance = NSAppearance(named: .aqua)         // the offscreen render has no dark backdrop
+            setupWindow.present()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard let v = self.setupWindow.window?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { print("no window to render"); exit(1) }
+                v.cacheDisplay(in: v.bounds, to: rep)
+                do { try rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: shot)); print("wrote", shot) }
+                catch { print("write failed:", error); exit(1) }
+                exit(0)
+            }
+            return
+        }
         if ProcessInfo.processInfo.environment["VEXA_CAPTURE_SMOKE"] != nil {      // build check: no dialogs, no capture
             print("menu:", statusItem.menu?.items.map { $0.isSeparatorItem ? "—" : $0.title } ?? [])
             exit(0)
         }
-        Notifier.requestPermission()
-        if !Settings.consentAccepted { askConsent() }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
-        if Settings.apiKey == nil { askAddressAndConnect() }
+        if needsSetup { setupWindow.present() } else { Notifier.requestPermission() }       // the setup window asks for notifications itself
     }
 
     // ── pairing with Vexa ──
@@ -65,7 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Settings.apiKey = p.key; Settings.gatewayURL = p.api; Settings.serverURL = p.ingest
                     Settings.terminalURL = r.base.absoluteString; Settings.account = p.account
                     Notifier.post(title: "Vexa Capture is connected", body: p.account.isEmpty ? "Ready for your next call." : "Signed in as \(p.account). Ready for your next call.")
-                    self.checkSetup(afterPairing: true)
+                    self.setupWindow.refresh(includeBrowsers: false)
+                    self.openSetupIfAttention()
                 case .failed(let why): self.problem(why)
                 }
                 self.rebuildMenu()
@@ -75,53 +88,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opens the person's Vexa in the browser; its page opens this app back with a one-time code.
     @objc private func connect() {
-        guard let page = ConnectLink.connectPage(base: Settings.terminalURL) else { askAddressAndConnect(); return }
+        guard let page = ConnectLink.connectPage(base: Settings.terminalURL) else { openSetup(); return }
         NSWorkspace.shared.open(page)
     }
 
-    @objc private func askAddressAndConnect() {
-        let a = NSAlert()
-        a.messageText = "Connect to Vexa"
-        a.informativeText = "Enter the address you open Vexa at. Your browser will open to confirm — no token to copy."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        field.stringValue = Settings.terminalURL
-        a.accessoryView = field
-        a.addButton(withTitle: "Connect"); a.addButton(withTitle: "Enter details by hand…"); a.addButton(withTitle: "Later")
-        NSApp.activate(ignoringOtherApps: true)
-        switch a.runModal() {
-        case .alertFirstButtonReturn:
-            guard let base = ConnectLink.acceptableBase(field.stringValue) else { problem("That isn't an https:// address (or http://localhost)."); return }
-            Settings.terminalURL = base.absoluteString
-            Settings.trust(base)                                   // typing the address is the person's own choice of site
-            connect()
-        case .alertSecondButtonReturn: settingsWindow.present()
-        default: break
-        }
+    /// Connect to the address typed in the setup window — typing it is the person's own choice of site.
+    private func connectToAddress(_ address: String) {
+        guard let base = ConnectLink.acceptableBase(address) else { return }
+        Settings.terminalURL = base.absoluteString
+        Settings.trust(base)
+        connect()
     }
 
-    // ── setup check ──
-    /// The checklist. After a pairing it is shown only if something needs attention; from the menu it is always shown.
-    @objc private func checkSetupFromMenu() { checkSetup(afterPairing: false) }
+    // ── setup ──
+    private var needsSetup: Bool { !Settings.consentAccepted || Settings.apiKey == nil }
+    @objc private func openSetup() { setupWindow.present() }
 
-    private func checkSetup(afterPairing: Bool) {
+    /// After a pairing: the setup window comes up only if something is still missing.
+    private func openSetupIfAttention() {
         Task {
-            let items = await SetupCheck.run()
-            await MainActor.run {
-                let attention = SetupReport.needsAttention(items)
-                if afterPairing && !attention { return }
-                let a = NSAlert()
-                a.messageText = attention ? "A few things need attention" : "Vexa Capture is ready"
-                a.informativeText = SetupReport.format(items)
-                a.addButton(withTitle: "Done")
-                if attention { a.addButton(withTitle: "Open Privacy settings") }
-                NSApp.activate(ignoringOtherApps: true)
-                if a.runModal() == .alertSecondButtonReturn, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") { NSWorkspace.shared.open(url) }
-            }
+            let attention = SetupReport.needsAttention(await SetupCheck.run())
+            await MainActor.run { if attention { self.setupWindow.present() } }
         }
     }
 
     @objc private func disconnect() {
         Settings.apiKey = nil; Settings.account = ""
+        setupWindow.refresh(includeBrowsers: false)
         rebuildMenu()
     }
 
@@ -148,11 +141,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func callStarted(_ p: CallPlatform) {
-        guard Settings.consentAccepted, !busy else { return }
+        guard !busy else { return }
+        guard !needsSetup else {
+            Notifier.post(title: "\(p.displayName) call detected", body: "Finish setting up Vexa Capture from its menu and it can help on your next call.")
+            return
+        }
         if Settings.autoCapture { handle(p) }
         else {
             offered = p
-            Notifier.post(title: "\(p.displayName) call detected", body: "Open the Vexa menu to send the bot or capture it.")
+            Notifier.post(title: "\(p.displayName) call detected", body: "Open the Vexa Capture menu to send the bot, or skip it.")
             rebuildMenu()
         }
     }
@@ -171,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // ── handling a call ──
     private func handle(_ p: CallPlatform) {
-        guard let key = Settings.apiKey, !key.isEmpty else { askAddressAndConnect(); return }
+        guard let key = Settings.apiKey, !key.isEmpty else { openSetup(); return }
         offered = nil
         if Settings.mode == .audio { beginAudio(p); return }
         searching = true; rebuildMenu()
@@ -202,6 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             beginAudio(p)
             return
         }
+        record(p, .noLink)
         let a = NSAlert()
         a.messageText = "Couldn't send the bot to your \(p.displayName) call"
         a.informativeText = "\(why)\n\nPaste the call's link and Vexa's bot will join it."
@@ -246,8 +244,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch outcome {
                 case .sent(let platform, let id):
                     self.bot = BotCall(platform: p, serverPlatform: platform.isEmpty ? link.platform.rawValue : platform, nativeId: id)
-                case .keyRejected: self.settingsWindow.present()
-                default: break
+                    self.record(p, .botSent)
+                case .alreadyThere: self.record(p, .botAlreadyThere)
+                case .keyRejected: self.setupWindow.present(); self.record(p, .failed, note: "Vexa didn't accept the saved key")
+                default: self.record(p, .failed, note: BotRequest.explain(outcome, platform: p.displayName))
                 }
                 Notifier.post(title: "Vexa", body: BotRequest.explain(outcome, platform: p.displayName))
                 if case .sent = outcome {} else if case .alreadyThere = outcome {} else { self.offered = p }
@@ -265,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func beginAudio(_ p: CallPlatform) {
-        guard let key = Settings.apiKey, !key.isEmpty else { settingsWindow.present(); return }
+        guard let key = Settings.apiKey, !key.isEmpty else { openSetup(); return }
         searching = true; offered = nil; rebuildMenu()
         ensureMicrophone { [weak self] micOK in
             guard let self else { return }
@@ -276,6 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             s.onState = { [weak self] st in DispatchQueue.main.async { self?.sessionChanged(s, st) } }
             self.session = s; self.searching = false
+            self.record(p, .audioCaptured)
             s.start()
         }
     }
@@ -317,68 +318,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    private func askConsent() {
-        let a = NSAlert()
-        a.messageText = "Before Vexa Capture acts on your calls"
-        a.informativeText = "When you are on a Zoom or Microsoft Teams call, Vexa Capture either sends Vexa's bot to it — a visible participant — or, if it can't find the call's link, captures the call's audio and your microphone on this Mac and sends them to your Vexa server to be transcribed.\n\nPeople on the call are not told automatically about an audio capture. Many places require everyone's consent to record or transcribe a conversation, so tell them."
-        a.addButton(withTitle: "I'll tell people on my calls"); a.addButton(withTitle: "Quit")
-        NSApp.activate(ignoringOtherApps: true)
-        if a.runModal() == .alertFirstButtonReturn { Settings.consentAccepted = true; rebuildMenu() } else { NSApp.terminate(nil) }
-    }
-
     private func problem(_ message: String) {
         let a = NSAlert(); a.messageText = "Vexa Capture"; a.informativeText = message
         NSApp.activate(ignoringOtherApps: true); a.runModal()
     }
 
     // ── menu ──
+    private var state: AppState {
+        if needsSetup { return .attention }
+        if let s = session { if case .problem = sessionState { return .attention }; return s.isPaused ? .paused : .capturing }
+        if bot != nil { return .bot }
+        if searching || offered != nil { return .working }
+        return .idle
+    }
+
+    private func record(_ p: CallPlatform, _ outcome: CallRecord.Outcome, note: String? = nil) {
+        Settings.callLog = CallLog.adding(Settings.callLog, CallRecord(platform: p.displayName, when: Date(), outcome: outcome, note: note))
+        rebuildMenu()
+    }
+
     private func rebuildMenu() {
-        statusItem.button?.title = session != nil ? (session?.isPaused == true ? "Ⅱ Vexa" : "● Vexa") : (bot != nil ? "◉ Vexa" : "Vexa")
+        let st = state
+        statusItem.button?.image = st.image()
+        statusItem.button?.toolTip = st.tooltip
+        if st.image() == nil { statusItem.button?.title = "Vexa" }          // no SF Symbols: fall back to text
         let m = NSMenu()
         let status = NSMenuItem(title: statusLine(), action: nil, keyEquivalent: ""); status.isEnabled = false
         m.addItem(status)
-        if Settings.apiKey != nil, !Settings.account.isEmpty {
-            let who = NSMenuItem(title: "Connected as \(Settings.account)", action: nil, keyEquivalent: ""); who.isEnabled = false
-            m.addItem(who)
-        }
         m.addItem(.separator())
-        if let s = session {
+        if needsSetup {
+            m.addItem(item("Finish setting up…", #selector(openSetup)))
+        } else if let s = session {
             if s.isPaused { m.addItem(item("Resume capturing", #selector(resume))) } else { m.addItem(item("Pause capturing", #selector(pause))) }
             m.addItem(item("Stop capturing this call", #selector(stopCapture)))
         } else if bot != nil {
             m.addItem(item("Remove the bot from this call", #selector(removeBot)))
         } else if let p = offered {
             m.addItem(item("Send the bot to this \(p.displayName) call", #selector(sendBotNow)))
-            m.addItem(item("Capture this \(p.displayName) call's audio on this Mac", #selector(captureAudioNow)))
+            m.addItem(item("Capture its audio on this Mac instead", #selector(captureAudioNow)))
+            m.addItem(item("Skip this call", #selector(skipCall)))
         }
-        m.addItem(.separator())
-        let botMode = item("Send a bot to the call", #selector(setBotMode)); botMode.state = Settings.mode == .bot ? .on : .off
-        let audioMode = item("Capture audio on this Mac", #selector(setAudioMode)); audioMode.state = Settings.mode == .audio ? .on : .off
-        m.addItem(botMode); m.addItem(audioMode)
-        m.addItem(.separator())
+        if m.items.last?.isSeparatorItem == false { m.addItem(.separator()) }
+
+        let recent = NSMenu()
+        let log = Settings.callLog
+        if log.isEmpty { let none = NSMenuItem(title: "Nothing yet", action: nil, keyEquivalent: ""); none.isEnabled = false; recent.addItem(none) }
+        for r in log { let i = NSMenuItem(title: CallLog.line(r), action: nil, keyEquivalent: ""); i.isEnabled = false; recent.addItem(i) }
+        m.addItem(submenu("Recent calls", recent))
+
+        let when = NSMenu()
+        let botMode = item("Send Vexa's bot to the call", #selector(setBotMode)); botMode.state = Settings.mode == .bot ? .on : .off
+        let audioMode = item("Capture audio on this Mac instead", #selector(setAudioMode)); audioMode.state = Settings.mode == .audio ? .on : .off
+        let auto = item("Start without asking", #selector(toggleAuto)); auto.state = Settings.autoCapture ? .on : .off
+        when.addItem(botMode); when.addItem(audioMode); when.addItem(.separator()); when.addItem(auto); when.addItem(.separator())
         for p in CallPlatform.allCases {
             let i = item("Watch for \(p.displayName) calls", #selector(togglePlatform(_:)))
             i.representedObject = p.rawValue; i.state = Settings.isEnabled(p) ? .on : .off
-            m.addItem(i)
+            when.addItem(i)
         }
-        let auto = item("Act on calls automatically", #selector(toggleAuto)); auto.state = Settings.autoCapture ? .on : .off
-        m.addItem(auto)
-        m.addItem(.separator())
-        m.addItem(item(Settings.apiKey == nil ? "Connect to Vexa…" : "Reconnect to Vexa…", #selector(askAddressAndConnect)))
-        if Settings.apiKey != nil { m.addItem(item("Disconnect", #selector(disconnect))) }
+        m.addItem(submenu("When a call starts", when))
+
+        let prefs = NSMenu()
+        if Settings.apiKey != nil, !Settings.account.isEmpty { let who = NSMenuItem(title: "Connected as \(Settings.account)", action: nil, keyEquivalent: ""); who.isEnabled = false; prefs.addItem(who) }
+        prefs.addItem(item(Settings.apiKey == nil ? "Connect to Vexa…" : "Reconnect to Vexa…", #selector(connect)))
+        if Settings.apiKey != nil { prefs.addItem(item("Disconnect", #selector(disconnect))) }
         let login = item("Open at login", #selector(toggleLogin)); login.state = opensAtLogin ? .on : .off
-        m.addItem(login)
-        m.addItem(item("Check setup…", #selector(checkSetupFromMenu)))
-        m.addItem(item("Settings…", #selector(openSettings)))
+        prefs.addItem(login)
+        prefs.addItem(.separator())
+        prefs.addItem(item("Advanced settings…", #selector(openSettings)))
+        m.addItem(submenu("Preferences", prefs))
+
+        m.addItem(.separator())
+        if !needsSetup { m.addItem(item("Set up Vexa Capture…", #selector(openSetup))) }
         m.addItem(item("Quit Vexa Capture", #selector(quit)))
         statusItem.menu = m
     }
 
     private func item(_ title: String, _ action: Selector) -> NSMenuItem { let i = NSMenuItem(title: title, action: action, keyEquivalent: ""); i.target = self; return i }
+    private func submenu(_ title: String, _ menu: NSMenu) -> NSMenuItem { let i = NSMenuItem(title: title, action: nil, keyEquivalent: ""); i.submenu = menu; return i }
 
     private func statusLine() -> String {
-        if !Settings.consentAccepted { return "Waiting for your acknowledgement" }
-        if let b = bot { return "A Vexa bot is on your \(b.platform.displayName) call" }
+        if !Settings.consentAccepted { return "Finish setting up to get started" }
+        if Settings.apiKey == nil { return "Not connected to Vexa" }
+        if let b = bot { return "Vexa's bot is on your \(b.platform.displayName) call" }
         if let s = session {
             switch sessionState {
             case .connecting: return "Connecting to Vexa…"
@@ -389,9 +411,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .stopped: return "Stopped"
             }
         }
-        if searching { return "Working on your call…" }
-        if let p = offered { return "\(p.displayName) call detected — not handled yet" }
-        return Settings.apiKey == nil ? "Not connected — choose Connect to Vexa" : "Watching for Zoom and Teams calls"
+        if searching { return "Setting up your call…" }
+        if let p = offered { return "\(p.displayName) call detected" }
+        return "Ready — watching for Zoom and Teams calls"
+    }
+
+    /// Leave this call alone: nothing is sent or captured, and nothing more is offered until the next call.
+    @objc private func skipCall() {
+        guard let p = offered else { return }
+        offered = nil
+        record(p, .skipped)
     }
 
     @objc private func pause() { session?.pause(); rebuildMenu() }

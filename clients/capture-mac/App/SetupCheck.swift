@@ -56,3 +56,38 @@ enum SetupCheck {
         return items
     }
 }
+
+
+/// The same facts as `SetupCheck.run()`, kept structured so the setup window can show each as its own row.
+struct SetupSnapshot {
+    enum Connection: Equatable { case ok(String), rejected, unreachable, notConnected }
+    var consent: Bool
+    var connection: Connection
+    var browsers: [BrowserLinks.BrowserAccess]
+    var notRunning: [String]
+    var notifications: Bool
+    var openAtLogin: Bool
+}
+
+extension SetupCheck {
+    /// ``includeBrowsers`` asks each open browser for Automation access — which is what shows macOS's prompt — so it is only
+    /// done on request (the first look, and the Allow button), not on every refresh.
+    static func snapshot(includeBrowsers: Bool, previous: SetupSnapshot? = nil) async -> SetupSnapshot {
+        var connection = SetupSnapshot.Connection.notConnected
+        if let key = Settings.apiKey, !key.isEmpty, let req = BotRequest.me(gateway: Settings.gatewayURL, key: key) {
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                switch BotRequest.interpretMe(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data) {
+                case .account(let who): connection = .ok(Settings.account.isEmpty ? who : Settings.account)
+                case .keyRejected: connection = .rejected
+                case .unavailable: connection = .unreachable
+                }
+            } catch { connection = .unreachable }
+        }
+        var browsers = previous?.browsers ?? [], notRunning = previous?.notRunning ?? []
+        if includeBrowsers { let r = await Task.detached { BrowserLinks.access() }.value; browsers = r.running; notRunning = r.notRunning }
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        return SetupSnapshot(consent: Settings.consentAccepted, connection: connection, browsers: browsers, notRunning: notRunning,
+                             notifications: status == .authorized || status == .provisional, openAtLogin: SMAppService.mainApp.status == .enabled)
+    }
+}

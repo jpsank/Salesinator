@@ -32,6 +32,10 @@ enum Settings {
         set { d.set(newValue, forKey: "trustedBases") }
     }
     static func trust(_ base: URL) { trustedBases = TrustedBases.adding(d.stringArray(forKey: "trustedBases") ?? [], base) }
+    static var callLog: [CallRecord] {
+        get { (d.data(forKey: "callLog").flatMap { try? JSONDecoder().decode([CallRecord].self, from: $0) }) ?? [] }
+        set { d.set(try? JSONEncoder().encode(newValue), forKey: "callLog") }
+    }
     /// The Vexa API (the gateway) — where the bot is requested. The ingest above is only for audio captured on this Mac.
     static var gatewayURL: String {
         get { d.string(forKey: "gatewayURL") ?? "http://localhost:18056" }
