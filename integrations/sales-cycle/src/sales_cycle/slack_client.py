@@ -22,6 +22,10 @@ class SlackClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
+    @property
+    def bot_token(self) -> str:
+        return self._token
+
     def post_message(self, *, channel: str, text: str) -> str:
         """Returns the message `ts` (Slack's timestamp-as-id) — the correlation key for the reaction."""
         if not self._token:
@@ -58,3 +62,46 @@ class SlackClient:
             code = body.get("error")
             raise SlackError(f"conversations.info rejected: {code}", error_code=code)
         return body.get("channel") or {}
+
+    # ── voting on a feature request: reactions, thread replies, who is who ──
+
+    def _api(self, slack_method: str, *, http_method: str = "POST", json: dict | None = None, params: dict | None = None) -> dict:
+        """One Slack Web API call; returns Slack's body when ``ok`` and raises ``SlackError`` (with Slack's own error code) when not."""
+        if not self._token:
+            raise SlackError("SLACK_BOT_TOKEN not configured")
+        resp = call(
+            http_method, f"{self._base_url}/{slack_method}", json=json, params=params,
+            headers={"Authorization": f"Bearer {self._token}"}, timeout=self._timeout,
+            error_cls=SlackError, error_prefix=slack_method,
+        )
+        body = resp.json()
+        if not body.get("ok"):
+            code = body.get("error")
+            raise SlackError(f"{slack_method} rejected: {code}", error_code=code)
+        return body
+
+    def auth_test(self) -> dict:
+        """Who this bot token is — notably ``user_id``, the id its own reactions carry (they are not votes)."""
+        return self._api("auth.test")
+
+    def reactions_add(self, *, channel: str, ts: str, name: str) -> None:
+        """Puts a reaction on a message as the bot. Already being there is not an error."""
+        try:
+            self._api("reactions.add", json={"channel": channel, "timestamp": ts, "name": name})
+        except SlackError as e:
+            if e.error_code != "already_reacted":
+                raise
+
+    def reactions_get(self, *, channel: str, ts: str) -> dict[str, list[str]]:
+        """Every reaction on a message and who used it, straight from Slack (``full``: the whole user list, not a sample)."""
+        body = self._api("reactions.get", http_method="GET", params={"channel": channel, "timestamp": ts, "full": "true"})
+        return {r["name"]: list(r.get("users") or []) for r in (body.get("message") or {}).get("reactions") or []}
+
+    def post_thread_reply(self, *, channel: str, thread_ts: str, text: str) -> str:
+        return self._api("chat.postMessage", json={"channel": channel, "thread_ts": thread_ts, "text": text})["ts"]
+
+    def users_info(self, *, user: str) -> dict:
+        return self._api("users.info", http_method="GET", params={"user": user}).get("user") or {}
+
+    def usergroup_members(self, *, usergroup: str) -> list[str]:
+        return list(self._api("usergroups.users.list", http_method="GET", params={"usergroup": usergroup}).get("users") or [])

@@ -29,6 +29,7 @@ import time
 
 import httpx
 
+from sales_cycle.approvers import load_policy
 from sales_cycle.slack_client import SlackClient, SlackError
 from sales_cycle.store import Store
 
@@ -82,13 +83,33 @@ async def _report_post_error(
         )
 
 
-def _format_message(workspace_id: str, title: str, body: str) -> str:
+def _format_message(workspace_id: str, title: str, body: str, *, voting: bool = False) -> str:
+    # With approvers configured the team votes and a leader approves; without, the original single ✅.
+    footer = (
+        "Vote with :+1: / :-1:. A leader's :white_check_mark: approves it once :+1: outnumber :-1: — "
+        "then an agent implements it on a branch and pushes it."
+        if voting else
+        "React :white_check_mark: to approve — an agent will implement it on a branch and push it."
+    )
     return (
         f":bulb: *Feature request* — `{workspace_id}`\n"
         f"*{title}*\n"
         f"{body}\n\n"
-        f"React :white_check_mark: to approve — an agent will implement it on a branch and push it."
+        f"{footer}"
     )
+
+
+def _seed_votes(slack, channel: str, ts: str) -> None:
+    """Puts 👍 and 👎 on the card so voting is one click. Best-effort: a card without them still works (people add their own)."""
+    for name in ("+1", "-1"):
+        try:
+            slack.reactions_add(channel=channel, ts=ts, name=name)
+        except SlackError as exc:
+            if exc.error_code == "missing_scope":
+                logger.warning("could not add the :%s: vote reaction — the Slack app lacks reactions:write; reconnect Slack in Settings", name)
+            else:
+                logger.warning("could not add the :%s: vote reaction to %s/%s (%s)", name, channel, ts, exc.error_code or exc)
+            return
 
 
 async def _resolve_workspace_id(
@@ -227,9 +248,10 @@ async def watch_meeting(
                 if store.is_seen(key):
                     continue
                 workspace_id = await workspace.get()
+                voting = load_policy(store).configured
                 try:
                     ts = await asyncio.to_thread(
-                        slack.post_message, channel=channel, text=_format_message(workspace_id, title, body),
+                        slack.post_message, channel=channel, text=_format_message(workspace_id, title, body, voting=voting),
                     )
                 except SlackError as exc:
                     fix = _ACTIONABLE_SLACK_ERRORS.get(exc.error_code or "")
@@ -258,6 +280,8 @@ async def watch_meeting(
                         slack_channel=channel, slack_ts=ts, workspace_id=workspace_id, source_key=key,
                         title=title, body=body,
                     )
+                    if voting:
+                        await asyncio.to_thread(_seed_votes, slack, channel, ts)
                 except Exception:  # noqa: BLE001 — one card's bookkeeping must not end the whole tail
                     posted_unrecorded.add(key)
                     logger.exception(

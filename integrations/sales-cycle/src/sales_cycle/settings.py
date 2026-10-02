@@ -67,7 +67,10 @@ class Settings(BaseSettings):
     slack_oauth_redirect_uri: str = ""
     # reactions:read is REQUIRED for the reaction_added event (the ✓-approval flow) to be delivered
     # at all — Slack silently drops an event subscription the bot token doesn't hold the scope for.
-    slack_oauth_scopes: str = "chat:write,channels:read,groups:read,reactions:read"
+    # The voting upgrade adds reactions:write (the bot puts 👍/👎 on each card), users:read (is this person a workspace admin/owner?)
+    # and usergroups:read (who is in the leaders' user group?). Only the first is needed to vote at all; a source of leaders that is
+    # not switched on never calls its API.
+    slack_oauth_scopes: str = "chat:write,channels:read,groups:read,reactions:read,reactions:write,users:read,usergroups:read"
 
     # "Connect Zoom" — each rep authorizes THEIR OWN Zoom account, and every meeting they start (scheduled
     # or not) gets Vexa's bot. The OAuth app's identity is registered once by whoever operates this

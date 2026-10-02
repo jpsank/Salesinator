@@ -191,7 +191,9 @@ of step 9 are OAuth-specific.
 2. **OAuth & Permissions** → **Bot Token Scopes** → add `chat:write`, `channels:read`,
    `groups:read`, and **`reactions:read`** (required for the ✓-approval flow's `reaction_added`
    event to be delivered at all — Slack silently drops an event subscription the bot token
-   doesn't hold the matching scope for).
+   doesn't hold the matching scope for). For approval by vote ("Approving by vote" below) also add
+   **`reactions:write`** (the bot puts 👍/👎 on each card), and — only if you use those sources of
+   leaders — **`users:read`** (workspace admins/owners) and **`usergroups:read`** (a user group).
 3. **OAuth & Permissions** → **Redirect URLs** → add `http://localhost:18300/oauth/slack/callback`
    (fine as `localhost` for local use — it's your own browser that makes this request; when serving
    from a domain, add the public one too — see "Serving it from a domain" below).
@@ -209,8 +211,9 @@ of step 9 are OAuth-specific.
    permanent hostname.
 5. **Event Subscriptions** → toggle on → **Request URL**: `<your tunnel or domain>/slack/events`
    (sales-cycle answers Slack's verification handshake automatically — you should see a green
-   checkmark within a couple seconds) → under **Subscribe to bot events** add `reaction_added` →
-   save. **This step has no API — it can only be done here, by hand, once (and again each time an
+   checkmark within a couple seconds) → under **Subscribe to bot events** add `reaction_added`
+   and `reaction_removed` (the second lets a taken-back 👎 count at once; without it the sweep
+   catches it within seconds) → save. **This step has no API — it can only be done here, by hand, once (and again each time an
    ephemeral tunnel URL changes).**
 6. **Basic Information → App Credentials**: copy Client ID, Client Secret, and Signing Secret
    (three separate values — the signing secret verifies incoming Slack requests, unrelated to the
@@ -282,6 +285,24 @@ SALES_CYCLE_TERMINAL_URL=https://terminal.example.com
 GitHub is configured separately (`VEXA_GITHUB_OAUTH_REDIRECT_URI` and `VEXA_TERMINAL_URL`, above).
 When running agent-api natively via `run-agent-api-native.sh`, it reads both from `.env`
 (falling back to localhost), so they follow the same file.
+
+### Approving by vote (the team votes, a leader gives the go-ahead)
+
+By default **anyone's** ✅ on a feature-request card approves it. In Settings → Integrations → Slack, **Who can approve** changes that:
+
+- **Leaders** are anyone matching *any* of: a list of Slack member ids (profile → ⋮ → *Copy member ID*, `U…`), **workspace admins and
+  owners**, and members of one or more Slack **user groups** (`S…`). Set nothing and the original rule (anyone's ✅) stays.
+- Each card is posted with 👍 and 👎 already on it. The team votes by clicking them.
+- A **leader's ✅ approves the request only once 👍 outnumber 👎.** Counting: the bot's own seeded reactions are not votes; someone who
+  reacted both 👍 and 👎 has voted neither way; a ✅ from a non-leader counts as a 👍; a leader's ✅ is the go-ahead, not a vote. The
+  reactions are recounted from Slack each time, never trusted from the event.
+- On approval the bot replies in the card's thread with who approved and the tally, and the agent starts exactly as before. If a leader
+  said go before the votes were there, the bot says so once and the request is approved **on its own** the moment 👍 outnumber 👎
+  (the sweep re-checks it every few seconds, so it does not depend on Slack delivering a `reaction_removed`).
+- A failed Slack lookup never grants approval (a missing scope, an outage): nobody becomes a leader by an error.
+
+Needs the extra scopes above and a **reconnect** of Slack in Settings after adding them. The approval records who approved and the
+tally (`approved_by`, `votes_up`, `votes_down`); older requests keep empty values.
 
 ### Zoom (the bot joins every call you start, scheduled or not)
 

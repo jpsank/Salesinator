@@ -53,7 +53,7 @@ def test_process_approved_dispatches_then_pushes_then_opens_a_pr(monkeypatch, tm
         return_value=httpx.Response(200, json={"branch": "main", "changes": [], "commits": []})
     )
     resp2 = client.post("/internal/process-approved")
-    assert resp2.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": []}
+    assert resp2.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": [], "approved_by_votes": []}
 
     # Now the turn has finished, landed on the branch, clean tree — this same sweep pushes it AND
     # (list_pushed_unopened is re-queried fresh, so it sees what the push loop just marked) opens
@@ -69,7 +69,7 @@ def test_process_approved_dispatches_then_pushes_then_opens_a_pr(monkeypatch, tm
         return_value=httpx.Response(200, json={"url": "https://github.com/x/y/pull/7", "number": 7})
     )
     resp3 = client.post("/internal/process-approved")
-    assert resp3.json() == {"dispatched": [], "pushed": [1], "opened": [1], "timed_out": []}
+    assert resp3.json() == {"dispatched": [], "pushed": [1], "opened": [1], "timed_out": [], "approved_by_votes": []}
     assert store.list_dispatched_unpushed() == []
     assert store.list_pushed_unopened() == []
 
@@ -86,7 +86,7 @@ def test_process_approved_dispatch_failure_is_not_fatal(monkeypatch, tmp_path: P
     respx.post(f"{AGENT_API}/invocations").mock(return_value=httpx.Response(500))
     resp = client.post("/internal/process-approved")
     assert resp.status_code == 200
-    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": []}
+    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": [], "approved_by_votes": []}
     # Left pending, not dispatched — a later sweep will retry.
     assert store.list_approved_unprocessed()[0].title == "Broken one"
 
@@ -94,7 +94,7 @@ def test_process_approved_dispatch_failure_is_not_fatal(monkeypatch, tmp_path: P
 def test_process_approved_noop_when_nothing_pending(monkeypatch, tmp_path: Path):
     _fresh_store(monkeypatch, tmp_path)
     resp = client.post("/internal/process-approved")
-    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": []}
+    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": [], "approved_by_votes": []}
 
 
 @respx.mock
@@ -143,7 +143,7 @@ def test_process_approved_push_check_failure_is_not_fatal_to_the_sweep(monkeypat
     respx.get(f"{AGENT_API}/api/workspace/git").mock(return_value=httpx.Response(500))
     resp = client.post("/internal/process-approved")
     assert resp.status_code == 200
-    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": []}
+    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": [], "approved_by_votes": []}
     assert store.list_dispatched_unpushed()[0].branch == "feature/x"  # left as-is, retried next sweep
 
 
@@ -161,7 +161,7 @@ def test_process_approved_pull_request_failure_leaves_it_pushed_for_retry(monkey
     respx.post(f"{AGENT_API}/api/workspace/pull-request").mock(return_value=httpx.Response(500))
     resp = client.post("/internal/process-approved")
     assert resp.status_code == 200
-    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": []}
+    assert resp.json() == {"dispatched": [], "pushed": [], "opened": [], "timed_out": [], "approved_by_votes": []}
     assert store.list_pushed_unopened()[0].id == approved.id  # not marked done — retried next sweep
 
 

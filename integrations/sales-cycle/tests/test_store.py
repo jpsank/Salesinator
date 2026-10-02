@@ -327,3 +327,55 @@ def test_runtime_setting_keys_are_independent():
     s = _store()
     s.set_runtime_setting("slack_channel_id", "C123")
     assert s.get_runtime_setting("some_other_key") is None
+
+
+# ── approval by vote + leader ──
+
+def _store_with_card(tmp_path):
+    s = Store(str(tmp_path / "v.db"))
+    s.record_pending_approval(slack_channel="C1", slack_ts="1.1", workspace_id="w", source_key="k", title="T", body="B")
+    return s
+
+
+def test_approve_records_who_approved_and_the_tally(tmp_path):
+    s = _store_with_card(tmp_path)
+    a = s.approve(slack_channel="C1", slack_ts="1.1", approved_by="ULEAD", votes_up=3, votes_down=1)
+    assert (a.status, a.approved_by, a.votes_up, a.votes_down) == ("approved", "ULEAD", 3, 1)
+    got = s.list_approved_unprocessed()[0]
+    assert (got.approved_by, got.votes_up, got.votes_down) == ("ULEAD", 3, 1)
+    assert s.approve(slack_channel="C1", slack_ts="1.1", approved_by="UOTHER") is None     # already approved: a no-op
+
+
+def test_the_original_approval_still_works_without_a_tally(tmp_path):
+    s = _store_with_card(tmp_path)
+    a = s.approve(slack_channel="C1", slack_ts="1.1")
+    assert a.status == "approved" and a.approved_by is None and a.votes_up is None
+
+
+def test_pending_for_message_finds_only_a_still_pending_card(tmp_path):
+    s = _store_with_card(tmp_path)
+    assert s.pending_for_message(slack_channel="C1", slack_ts="1.1").title == "T"
+    assert s.pending_for_message(slack_channel="C1", slack_ts="9.9") is None
+    s.approve(slack_channel="C1", slack_ts="1.1")
+    assert s.pending_for_message(slack_channel="C1", slack_ts="1.1") is None
+
+
+def test_the_waiting_notice_is_claimed_once(tmp_path):
+    s = _store_with_card(tmp_path)
+    pid = s.pending_for_message(slack_channel="C1", slack_ts="1.1").id
+    assert s.claim_waiting_notice(pid) is True
+    assert s.claim_waiting_notice(pid) is False
+
+
+def test_an_existing_database_gains_the_new_columns(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "old.db")
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE pending_approvals (id INTEGER PRIMARY KEY AUTOINCREMENT, slack_channel TEXT NOT NULL, slack_ts TEXT NOT NULL,
+        workspace_id TEXT NOT NULL, source_key TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+        branch TEXT, workload_id TEXT, created_at REAL NOT NULL, UNIQUE(slack_channel, slack_ts))""")
+    conn.execute("INSERT INTO pending_approvals (slack_channel, slack_ts, workspace_id, source_key, title, body, created_at) VALUES ('C','1.1','w','k','T','B',1)")
+    conn.commit(); conn.close()
+    s = Store(path)
+    a = s.pending_for_message(slack_channel="C", slack_ts="1.1")
+    assert a is not None and a.approved_by is None and a.waiting_notified == 0

@@ -65,6 +65,10 @@ class PendingApproval:
     pushed_at: float | None = None
     done_at: float | None = None
     pr_url: str | None = None
+    approved_by: str | None = None      # Slack user id(s) of the leader(s) whose ✅ approved it; None for the original single-✅ flow
+    votes_up: int | None = None
+    votes_down: int | None = None
+    waiting_notified: int = 0
 
 
 @dataclass(frozen=True)
@@ -155,6 +159,12 @@ class Store:
             # Migration: the stage timestamps + PR link `pipeline_stats` reads. Requests that finished before
             # these columns existed keep NULLs, which the report simply leaves out of its timings.
             for column, ddl in (("approved_at", "REAL"), ("pushed_at", "REAL"), ("done_at", "REAL"), ("pr_url", "TEXT")):
+                if column not in existing_cols:
+                    conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
+            # Migration: who approved, and the 👍/👎 tally at that moment, for the vote-then-leader approval. Older rows keep NULLs
+            # (approved by the original single ✅). `waiting_notified` makes the "waiting for more 👍 than 👎" reply a once-only.
+            for column, ddl in (("approved_by", "TEXT"), ("votes_up", "INTEGER"), ("votes_down", "INTEGER"),
+                                ("waiting_notified", "INTEGER NOT NULL DEFAULT 0")):
                 if column not in existing_cols:
                     conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
             conn.execute("""
@@ -251,8 +261,12 @@ class Store:
                 "INSERT OR IGNORE INTO seen_requests (key, seen_at) VALUES (?, ?)", (source_key, time.time())
             )
 
-    def approve(self, *, slack_channel: str, slack_ts: str) -> PendingApproval | None:
-        """Idempotent: a second ✅ (or a reaction on an already-approved message) is a no-op, not an error."""
+    def approve(
+        self, *, slack_channel: str, slack_ts: str,
+        approved_by: str | None = None, votes_up: int | None = None, votes_down: int | None = None,
+    ) -> PendingApproval | None:
+        """Idempotent: a second ✅ (or a reaction on an already-approved message) is a no-op, not an error.
+        ``approved_by`` and the tally are recorded when the vote-then-leader flow approves it."""
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT * FROM pending_approvals WHERE slack_channel = ? AND slack_ts = ? AND status = 'pending'",
@@ -261,8 +275,34 @@ class Store:
             if row is None:
                 return None
             now = time.time()
-            conn.execute("UPDATE pending_approvals SET status = 'approved', approved_at = ? WHERE id = ?", (now, row["id"]))
-        return PendingApproval(**{**dict(row), "status": "approved", "approved_at": now})
+            conn.execute(
+                "UPDATE pending_approvals SET status = 'approved', approved_at = ?, approved_by = ?, votes_up = ?, votes_down = ? WHERE id = ?",
+                (now, approved_by, votes_up, votes_down, row["id"]),
+            )
+        return PendingApproval(**{**dict(row), "status": "approved", "approved_at": now,
+                                  "approved_by": approved_by, "votes_up": votes_up, "votes_down": votes_down})
+
+    def pending_for_message(self, *, slack_channel: str, slack_ts: str) -> PendingApproval | None:
+        """The still-pending feature request this Slack message is the card for, if any."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM pending_approvals WHERE slack_channel = ? AND slack_ts = ? AND status = 'pending'",
+                (slack_channel, slack_ts),
+            ).fetchone()
+        return PendingApproval(**dict(row)) if row else None
+
+    def list_waiting_for_votes(self) -> list[PendingApproval]:
+        """Cards a leader already approved that are still waiting for 👍 to outnumber 👎 — re-checked by the sweep, so a vote
+        that arrived (or a 👎 that was taken back) without an event reaching us still lets the approval through."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'pending' AND waiting_notified = 1").fetchall()
+        return [PendingApproval(**dict(r)) for r in rows]
+
+    def claim_waiting_notice(self, approval_id: int) -> bool:
+        """True exactly once per request: the caller that gets it posts the "waiting for more 👍 than 👎" reply."""
+        with self._conn() as conn:
+            cur = conn.execute("UPDATE pending_approvals SET waiting_notified = 1 WHERE id = ? AND waiting_notified = 0 AND status = 'pending'", (approval_id,))
+            return cur.rowcount == 1
 
     def list_approved_unprocessed(self) -> list[PendingApproval]:
         with self._conn() as conn:

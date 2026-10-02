@@ -54,6 +54,8 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from sales_cycle import hubspot_oauth, internal_auth, slack_oauth
+from sales_cycle.approval_policy import APPROVE_REACTIONS, base_reaction, decide, is_vote_reaction, tally
+from sales_cycle.approvers import ApproverPolicy, InvalidPolicy, LeaderResolver, load_policy, save_policy
 from sales_cycle.calendar_resolver import resolve_meeting_started
 from sales_cycle.hubspot_client import HubSpotClient
 from sales_cycle.live_card_watcher import watch_meeting
@@ -317,6 +319,44 @@ async def set_slack_channel(body: SetSlackChannelBody) -> SlackChannelConfig:
     return _slack_channel_config()
 
 
+class SlackApprovers(BaseModel):
+    """Who may give the go-ahead on a feature request. ``configured`` false = nobody set: the original rule applies (anyone's ✅)."""
+    user_ids: list[str] = []
+    include_admins: bool = False
+    usergroup_ids: list[str] = []
+    configured: bool = False
+
+
+class SetSlackApproversBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    user_ids: list[str] = []
+    include_admins: bool = False
+    usergroup_ids: list[str] = []
+
+
+def _slack_approvers() -> SlackApprovers:
+    p = load_policy(get_store())
+    return SlackApprovers(**p.to_dict(), configured=p.configured)
+
+
+@app.get("/slack/approvers", response_model=SlackApprovers)
+async def get_slack_approvers() -> SlackApprovers:
+    """What the Settings page's Slack card shows under "Who can approve"."""
+    return _slack_approvers()
+
+
+@app.post("/slack/approvers", response_model=SlackApprovers)
+async def set_slack_approvers(body: SetSlackApproversBody) -> SlackApprovers:
+    """Sets who may approve a feature request: Slack member ids (U…), workspace admins/owners, and user group ids (S…) — any one
+    source makes a leader. Empty everything to go back to the original rule (anyone's ✅ approves)."""
+    try:
+        policy = ApproverPolicy.from_input(body.user_ids, body.include_admins, body.usergroup_ids)
+    except InvalidPolicy as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    save_policy(get_store(), policy)
+    return _slack_approvers()
+
+
 def _resolve_and_bind(*, api_key: str, platform: str, native_meeting_id: str, customer_tag: str) -> TagResponse:
     company = resolve_by_tag(_hubspot(), customer_tag)
     if company is None:
@@ -415,6 +455,64 @@ def _dispatch_one(store: Store, settings: Settings, approval: PendingApproval) -
     return True
 
 
+# ── approval by the team's votes and a leader's go-ahead (see approval_policy.py / approvers.py) ──
+
+_bot_user_ids: dict[str, str] = {}      # bot token → the user id its own (seeded) reactions carry
+
+
+def _bot_user_id(slack: SlackClient) -> str:
+    token = slack.bot_token
+    if token not in _bot_user_ids:
+        _bot_user_ids[token] = slack.auth_test()["user_id"]
+    return _bot_user_ids[token]
+
+
+def _mentions(user_ids) -> str:
+    return ", ".join(f"<@{u}>" for u in user_ids)
+
+
+def _reply(slack: SlackClient, channel: str, ts: str, text: str) -> None:
+    """A thread reply is courtesy, never a condition: a failure to post it must not undo or hold back the approval."""
+    try:
+        slack.post_thread_reply(channel=channel, thread_ts=ts, text=text)
+    except SlackError:
+        logger.warning("could not post a thread reply on %s/%s", channel, ts, exc_info=True)
+
+
+def _evaluate_votes(store: Store, settings: Settings, channel: str, ts: str) -> str:
+    """Recounts a card's reactions straight from Slack and acts: a leader's ✅ with more 👍 than 👎 approves it and starts the agent;
+    a leader's ✅ without the votes is said so once, and the request is approved the moment the votes are there (the sweep re-checks
+    it). Returns "approved", "waiting", "none" or "skipped" (nothing to evaluate / Slack unreachable)."""
+    pending = store.pending_for_message(slack_channel=channel, slack_ts=ts)
+    policy = load_policy(store)
+    if pending is None or not policy.configured:
+        return "skipped"
+    slack = _slack()
+    try:
+        bot_id = _bot_user_id(slack)
+        reactions = slack.reactions_get(channel=channel, ts=ts)
+    except SlackError:
+        logger.warning("could not read the reactions on %s/%s — not deciding now", channel, ts, exc_info=True)
+        return "skipped"
+    resolver = LeaderResolver(policy, slack)
+    t = tally(reactions, bot_user_id=bot_id, is_leader=resolver.is_leader)
+    outcome = decide(t)
+    if outcome == "approve":
+        approved = store.approve(slack_channel=channel, slack_ts=ts, approved_by=",".join(t.leader_approvers),
+                                 votes_up=t.up, votes_down=t.down)
+        if approved is None:
+            return "skipped"                           # another evaluation got there first
+        logger.info("feature-request approved by %s with %d up / %d down: workspace=%s title=%r",
+                    ",".join(t.leader_approvers), t.up, t.down, approved.workspace_id, approved.title)
+        _reply(slack, channel, ts, f"Approved by {_mentions(t.leader_approvers)} — {t.up} :+1: / {t.down} :-1:. An agent is implementing it now.")
+        _dispatch_one(store, settings, approved)
+        return "approved"
+    if outcome == "waiting" and store.claim_waiting_notice(pending.id):
+        _reply(slack, channel, ts, f"{_mentions(t.leader_approvers)} approved, but it needs more :+1: than :-1: first "
+                                   f"(now {t.up} :+1: / {t.down} :-1:). It starts on its own as soon as that is true.")
+    return "waiting" if outcome == "waiting" else "none"
+
+
 @app.post("/slack/events")
 async def slack_events(request: Request, background_tasks: BackgroundTasks) -> dict:
     body = await request.body()
@@ -437,9 +535,14 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks) -> d
 
     if payload.get("type") == "event_callback":
         event = payload.get("event") or {}
-        if event.get("type") == "reaction_added" and event.get("reaction") in ("white_check_mark", "heavy_check_mark"):
-            item = event.get("item") or {}
-            store = get_store()
+        item = event.get("item") or {}
+        store = get_store()
+        if event.get("type") in ("reaction_added", "reaction_removed") and is_vote_reaction(event.get("reaction", "")) \
+                and load_policy(store).configured:
+            # Votes and a leader's ✅: recount from Slack after acknowledging (Slack needs the ack within 3 s).
+            background_tasks.add_task(_evaluate_votes, store, settings, item.get("channel", ""), item.get("ts", ""))
+        elif event.get("type") == "reaction_added" and event.get("reaction") in ("white_check_mark", "heavy_check_mark"):
+            # No approvers configured: the original rule — anyone's ✅ approves.
             approved = store.approve(
                 slack_channel=item.get("channel", ""), slack_ts=item.get("ts", ""),
             )
@@ -468,6 +571,12 @@ def process_approved() -> dict:
     pushed_now = []
     opened_now = []
     timed_out_now = []
+
+    # A leader already said go on these; recount the votes so one that tipped without an event reaching us still goes through.
+    approved_by_votes = [
+        a.id for a in store.list_waiting_for_votes()
+        if _evaluate_votes(store, settings, a.slack_channel, a.slack_ts) == "approved"
+    ]
 
     for approval in store.list_approved_unprocessed():
         if _dispatch_one(store, settings, approval):
@@ -525,7 +634,7 @@ def process_approved() -> dict:
 
     return {
         "dispatched": dispatched_now, "pushed": pushed_now, "opened": opened_now,
-        "timed_out": timed_out_now,
+        "timed_out": timed_out_now, "approved_by_votes": approved_by_votes,
     }
 
 
