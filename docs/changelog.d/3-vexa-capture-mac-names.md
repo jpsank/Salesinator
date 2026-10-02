@@ -8,3 +8,5 @@
   uses, so rebuilds keep one identity and macOS stops re-asking for approvals.
   Setup has a row for hearing calls on this Mac (Microphone, Screen & System Audio Recording) with an Allow button, and says what to do when
   macOS shows the permission as on but the app can't use it.
+  When a call has no link to find, the app asks Vexa whether a bot is already on a call of that platform — Connect Zoom sends one the
+  moment the rep starts a meeting — and, if so, takes it as the call's bot instead of capturing the audio a second time.

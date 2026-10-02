@@ -67,6 +67,18 @@ public enum BotRequest {
         return .running(all)
     }
 
+    /// A Vexa bot already on (or joining) a call of this platform, put there by something other than this app — Connect Zoom sends one
+    /// when the rep starts a meeting. Without a link to go on, the platform is all there is to match on; a bot that is stopping or
+    /// finished does not count. Returns the meeting's native id and its status.
+    public static func runningBot(_ presence: Presence, platform: String) -> (nativeId: String, status: String)? {
+        guard case .running(let all) = presence else { return nil }
+        for (key, status) in all.sorted(by: { $0.key < $1.key }) {
+            let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
+            if parts.count == 2, parts[0] == platform, ["requested", "joining", "awaiting_admission", "active"].contains(status) { return (parts[1], status) }
+        }
+        return nil
+    }
+
     /// True only when Vexa answered and this bot is not among the running ones.
     public static func isGone(_ presence: Presence, platform: String, nativeId: String) -> Bool {
         if case .running(let all) = presence { return all["\(platform)/\(nativeId)"] == nil }

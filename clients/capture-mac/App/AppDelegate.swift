@@ -251,9 +251,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func linkSearchDone(_ p: CallPlatform, _ found: BrowserLinks.Search) {
         guard detector.isInCall(p) else { rebuildMenu(); return }                // the call ended while we were looking
         switch found.candidates.count {
-        case 0: noLink(p, blocked: found.blocked)
+        case 0: adoptRunningBot(p) { self.noLink(p, blocked: found.blocked) }
         case 1: sendBot(p, found.candidates[0])
         default: if let l = choose(among: found.candidates, for: p) { sendBot(p, l) } else { offered = p; rebuildMenu() }
+        }
+    }
+
+    /// No link to go on, but something else may already have sent a bot to this call — Connect Zoom does, the moment the rep starts a
+    /// meeting. Ask Vexa; if a bot is on a call of this platform, take it as this call's bot instead of capturing the audio a second time.
+    private func adoptRunningBot(_ p: CallPlatform, orElse: @escaping () -> Void) {
+        guard let key = Settings.apiKey else { orElse(); return }
+        let gw = Settings.gatewayURL, server = p.rawValue
+        Task {
+            let presence = await BotClient.running(gateway: gw, key: key)
+            await MainActor.run {
+                guard self.detector.isInCall(p), self.bot == nil, self.session == nil else { return }
+                if let b = BotRequest.runningBot(presence, platform: server) {
+                    var call = BotCall(platform: p, serverPlatform: server, nativeId: b.nativeId)
+                    call.wasIn = b.status == "active"
+                    self.bot = call
+                    self.record(p, .botAlreadyThere)
+                    Notifier.post(title: "Vexa's bot is already on your \(p.displayName) call", body: "Not capturing the audio here as well.")
+                } else { orElse() }
+            }
         }
     }
 
