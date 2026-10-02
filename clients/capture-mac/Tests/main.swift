@@ -86,5 +86,47 @@ do {
     check("backoff doubles to a ceiling and resets", [b.next(), b.next(), b.next(), b.next(), b.next(), b.next()] == [1, 2, 4, 8, 15, 15] && { b.reset(); return b.next() == 1 }())
 }
 
-print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL." : "\n❌ \(failed) check(s) failed")
+// ── recognising meeting links ──
+do {
+    let zoom = "https://us06web.zoom.us/j/81234567890?pwd=abcDEF123"
+    check("a Zoom join link keeps its passcode", MeetingLinks.classify(zoom) == MeetingLink(url: zoom, platform: .zoom))
+    check("Zoom's web-client join links count", MeetingLinks.classify("https://zoom.us/wc/join/81234567890")?.platform == .zoom && MeetingLinks.classify("https://zoom.us/wc/81234567890/join")?.platform == .zoom)
+    check("a host's start link (it carries a zak token) is never offered", MeetingLinks.classify("https://acme.zoom.us/s/81234567890?zak=SECRET") == nil && MeetingLinks.classify("https://zoom.us/wc/81234567890/start?zak=SECRET") == nil)
+    check("a zak on a join link is dropped, the passcode kept", MeetingLinks.classify("https://zoom.us/j/81234567890?pwd=abc&zak=SECRET")?.url == "https://zoom.us/j/81234567890?pwd=abc")
+    check("a Zoom page that is not a join link does not", MeetingLinks.classify("https://zoom.us/signin") == nil && MeetingLinks.classify("https://zoom.us/profile") == nil && MeetingLinks.classify("https://zoom.us/j/123") == nil)
+    check("a look-alike host is not Zoom", MeetingLinks.classify("https://zoom.us.evil.com/j/81234567890") == nil && MeetingLinks.classify("https://notzoom.us/j/81234567890") == nil)
+    check("http is refused", MeetingLinks.classify("http://zoom.us/j/81234567890") == nil)
+    check("a Teams meetup-join link counts", MeetingLinks.classify("https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%7d")?.platform == .teams)
+    check("so do Teams /meet links", MeetingLinks.classify("https://teams.microsoft.com/meet/123456789012?p=abc")?.platform == .teams && MeetingLinks.classify("https://teams.live.com/meet/9876543210")?.platform == .teams)
+    check("a Meet code counts, the Meet home page does not", MeetingLinks.classify("https://meet.google.com/abc-defg-hij")?.platform == .meet && MeetingLinks.classify("https://meet.google.com/") == nil && MeetingLinks.classify("https://meet.google.com/landing") == nil)
+    check("a fragment is dropped", MeetingLinks.classify("https://meet.google.com/abc-defg-hij#x")?.url == "https://meet.google.com/abc-defg-hij")
+    check("text that is not a URL is ignored", MeetingLinks.classify("hello") == nil && MeetingLinks.classify("") == nil)
+
+    let tabs = ["https://news.example.com/", "https://zoom.us/j/81234567890?pwd=a", "https://teams.microsoft.com/l/meetup-join/x/0", "https://zoom.us/j/81234567890?pwd=a", "https://zoom.us/j/99999999999?pwd=b"]
+    check("a Zoom call is offered Zoom links only, once each", MeetingLinks.candidates(in: tabs, platform: .zoom).map(\.url) == ["https://zoom.us/j/81234567890?pwd=a", "https://zoom.us/j/99999999999?pwd=b"])
+    check("a Teams call is offered Teams links", MeetingLinks.candidates(in: tabs, platform: .teams).map(\.platform) == [.teams])
+    check("the active tab's link comes first", MeetingLinks.candidates(in: tabs, preferred: ["https://zoom.us/j/99999999999?pwd=b"], platform: .zoom).first?.url == "https://zoom.us/j/99999999999?pwd=b")
+    check("no links → no candidates", MeetingLinks.candidates(in: ["https://example.com"], platform: .zoom).isEmpty)
+}
+
+// ── sending a bot ──
+do {
+    let r = BotRequest.create(gateway: "https://api.example.com/", key: "K", meetingURL: "https://zoom.us/j/81234567890?pwd=a")
+    check("POST /bots with the key and the link", r?.url?.absoluteString == "https://api.example.com/bots" && r?.httpMethod == "POST" && r?.value(forHTTPHeaderField: "X-API-Key") == "K")
+    check("…as the open meeting_url body the server parses", (try? JSONSerialization.jsonObject(with: r!.httpBody!)) as? [String: String] == ["meeting_url": "https://zoom.us/j/81234567890?pwd=a"])
+    check("a bad gateway address is refused", BotRequest.create(gateway: "ftp://x", key: "K", meetingURL: "u") == nil && BotRequest.create(gateway: "", key: "K", meetingURL: "u") == nil)
+    check("the gateway is normalized", BotRequest.normalized(" http://localhost:18056// ") == "http://localhost:18056")
+    let s = BotRequest.stop(gateway: "http://g:1", key: "K", platform: "zoom", nativeId: "81234567890")
+    check("stopping is DELETE /bots/{platform}/{id}", s?.url?.absoluteString == "http://g:1/bots/zoom/81234567890" && s?.httpMethod == "DELETE")
+    func body(_ j: String) -> Data { Data(j.utf8) }
+    check("201 → sent, with the platform and id the server chose", BotRequest.interpret(status: 201, body: body(#"{"platform":"zoom","native_meeting_id":"81234567890"}"#)) == .sent(platform: "zoom", nativeId: "81234567890"))
+    check("401 → key rejected; 409 → already there; 429 → limit", BotRequest.interpret(status: 401, body: body("{}")) == .keyRejected && BotRequest.interpret(status: 409, body: body("{}")) == .alreadyThere && BotRequest.interpret(status: 429, body: body("{}")) == .limitReached)
+    check("Vexa's 403 for the concurrency limit is a limit, any other 403 a rejected key",
+          BotRequest.interpret(status: 403, body: body(#"{"detail":{"reason":"concurrency_limit_reached"}}"#)) == .limitReached && BotRequest.interpret(status: 403, body: body(#"{"detail":"Insufficient scope"}"#)) == .keyRejected)
+    check("503 carries the server's reason", BotRequest.interpret(status: 503, body: body(#"{"detail":"no transcription backend configured"}"#)) == .unavailable("no transcription backend configured"))
+    check("422 is a refusal naming why", BotRequest.interpret(status: 422, body: body(#"{"detail":"unrecognized meeting link"}"#)) == .refused("unrecognized meeting link"))
+    check("every outcome has words for the person", [BotRequest.Outcome.alreadyThere, .keyRejected, .limitReached, .unavailable(""), .refused("x"), .sent(platform: "zoom", nativeId: "1")].allSatisfy { !BotRequest.explain($0, platform: "Zoom").isEmpty })
+}
+
+print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests." : "\n❌ \(failed) check(s) failed")
 exit(failed == 0 ? 0 : 1)

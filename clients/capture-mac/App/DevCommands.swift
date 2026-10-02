@@ -5,6 +5,9 @@ import Foundation
 
 /// Command-line checks, for installing and debugging without waiting for a call:
 ///   VexaCapture --probe                 what each call app is doing with audio, and which permissions are granted
+///   VexaCapture --find-link [zoom|teams]  look for the call's join link in the browsers' tabs and the clipboard (prints only
+///                                        meeting links; asks macOS for permission to control each browser the first time)
+///   VexaCapture --send-bot <link>      send Vexa's bot to a call link, using the saved settings (or --api/--key)
 ///   VexaCapture --mic-test             listen to the microphone for 2 s and report its level (lights the mic indicator)
 ///   VexaCapture --app-audio-test zoom   listen to an app's audio for 3 s and report the level (needs Screen Recording)
 ///   VexaCapture --play call.wav [--mic mic.wav] --url wss://… --key …
@@ -13,6 +16,8 @@ import Foundation
 enum DevCommands {
     static func run(_ args: [String]) -> Bool {
         if args.contains("--probe") { probe(); return true }
+        if let i = args.firstIndex(of: "--find-link") { findLink(i + 1 < args.count ? args[i + 1] : "zoom"); return true }
+        if let i = args.firstIndex(of: "--send-bot"), i + 1 < args.count { sendBot(args, link: args[i + 1]); return true }
         if args.contains("--mic-test") { micTest(); return true }
         if let i = args.firstIndex(of: "--app-audio-test") { appAudioTest(i + 1 < args.count ? args[i + 1] : "zoom"); return true }
         if let i = args.firstIndex(of: "--play"), i + 1 < args.count { play(args, wav: args[i + 1]); return true }
@@ -43,6 +48,27 @@ enum DevCommands {
         guard !s.isEmpty else { return "no samples" }
         let rms = (s.reduce(0) { $0 + $1 * $1 } / Float(s.count)).squareRoot()
         return String(format: "%d samples, level %.4f%@", s.count, rms, rms < 0.0005 ? " (silence)" : "")
+    }
+
+    static func findLink(_ name: String) {
+        let platform: CallPlatform = name.lowercased().hasPrefix("team") ? .teams : .zoom
+        let found = BrowserLinks.search(for: platform)
+        if !found.blocked.isEmpty { print("Could not read (allow it under Privacy & Security → Automation): \(found.blocked.joined(separator: ", "))") }
+        if found.candidates.isEmpty { print("No \(platform.displayName) link found.") }
+        for l in found.candidates { print("  \(l.platform.rawValue): \(l.url)") }
+    }
+
+    static func sendBot(_ args: [String], link: String) {
+        guard let l = MeetingLinks.classify(link) else { print("That is not a Zoom, Teams or Meet join link."); exit(2) }
+        let gateway = flag(args, "--api") ?? Settings.gatewayURL
+        guard let key = flag(args, "--key") ?? Settings.apiKey else { print("no API key (pass --key or set one in the app)"); exit(2) }
+        let done = DispatchSemaphore(value: 0)
+        Task {
+            let o = await BotClient.send(to: l, gateway: gateway, key: key)
+            print(BotRequest.explain(o, platform: l.platform.rawValue)); print("outcome: \(o)")
+            done.signal()
+        }
+        done.wait()
     }
 
     private final class Samples {

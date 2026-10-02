@@ -9,6 +9,18 @@ enum Settings {
         get { d.string(forKey: "serverURL") ?? "ws://localhost:19099/ingest" }
         set { d.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "serverURL") }
     }
+    /// The Vexa API (the gateway) — where the bot is requested. The ingest above is only for audio captured on this Mac.
+    static var gatewayURL: String {
+        get { d.string(forKey: "gatewayURL") ?? "http://localhost:18056" }
+        set { d.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "gatewayURL") }
+    }
+    /// What happens when a call starts. `bot`: find the call's link and send Vexa's bot (falling back to capturing audio
+    /// here when there is no link); `audio`: always capture audio on this Mac.
+    enum Mode: String { case bot, audio }
+    static var mode: Mode {
+        get { Mode(rawValue: d.string(forKey: "mode") ?? "") ?? .bot }
+        set { d.set(newValue.rawValue, forKey: "mode") }
+    }
     /// Capture a call the moment it is detected. Off: it is only offered, and starts when the person says so.
     static var autoCapture: Bool {
         get { d.object(forKey: "autoCapture") as? Bool ?? true }

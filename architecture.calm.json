@@ -734,7 +734,7 @@
    "unique-id": "capture-mac",
    "node-type": "webclient",
    "name": "capture-mac",
-   "description": "Vexa Capture — Mac menu-bar app: detects a Zoom/Teams call by the app's audio activity, captures the app's audio and the microphone, streams capture.v1 to the capture ingest (no bot in the call)",
+   "description": "Vexa Capture — Mac menu-bar app: detects a Zoom/Teams call by the app's audio activity, then sends Vexa's bot to the call (finding its link in the browser) or, without a link, captures the app's audio and the microphone and streams capture.v1 to the capture ingest",
    "metadata": [
     {
      "path": "clients/capture-mac"
@@ -2503,6 +2503,22 @@
     }
    },
    "protocol": "WebSocket"
+  },
+  {
+   "unique-id": "capture-mac-gateway",
+   "description": "requests Vexa's bot for a detected call (POST /bots with the user's API key)",
+   "relationship-type": {
+    "connects": {
+     "source": {
+      "node": "capture-mac"
+     },
+     "destination": {
+      "node": "gateway",
+      "interface": "gateway-rest"
+     }
+    }
+   },
+   "protocol": "HTTPS"
   },
   {
    "unique-id": "stack-deployed",
