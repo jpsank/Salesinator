@@ -7,6 +7,26 @@ zoom/teams/youtube), drives **real STT**, and serves transcripts + assembled rec
 gateway. TypeScript because it runs the same browser-adjacent bricks the cloud splits across
 meeting-api + collector + gateway, here as a single deployable "modular monolith."
 
+## Two ways to run it
+
+- **Local host** (`startDesktop()` / `pnpm dev`): one process for one user — nothing to authenticate, transcripts kept
+  in memory and served from the local gateway. The browser extension's original home.
+- **Capture ingest** (`src/stack-main.ts`, compose service `capture`): the same ingest, run as a stack service for
+  everyone. Each connection must carry the user's own Vexa API key (`?api_key=` or `X-API-Key`); the call is
+  registered as a real meeting through the stack's gateway (`POST /bots` with `capture: "external"` — no bot is
+  spawned, and the stack's STT gate, one-meeting-per-call dedupe, concurrency cap and the user's webhooks all apply);
+  confirmed segments go to the `transcription_segments` stream the collector drains, so the live copilot, Slack
+  cards and builds work exactly as for a bot; a **Stop** in Vexa (`leave` on the meeting's command channel) ends the
+  capture; and the end is reported to meeting-api's lifecycle callback. A client that drops and reconnects within 20 s
+  stays one meeting. The host keeps no transcript or recording of its own, takes no recording uploads, caps a frame at
+  1 MiB and calls at `CAPTURE_MAX_SESSIONS`, and binds its HTTP gateway to loopback. A refused connection is closed
+  with `4401` (key not accepted), `4409` (that call already has a bot or capture), `4429` (concurrency limit) or
+  `4503` (the stack cannot take it, or the host is full).
+
+  Environment: `TRANSCRIPTION_SERVICE_URL`/`_TOKEN`, `CAPTURE_GATEWAY_URL`, `CAPTURE_MEETING_API_URL`,
+  `INTERNAL_API_SECRET`, `REDIS_URL`, `CAPTURE_INGEST_PORT` (9099), `CAPTURE_MAX_SESSIONS` (20). Check a deployment
+  end to end with `scripts/stream-audio.ts` (plays a WAV in as a live call).
+
 ## Seams
 
 | Direction | Neighbour | Via | What crosses |
@@ -44,6 +64,7 @@ runs each via `tsx`):
 - ✅ delivered — gateway: sessions mint/end, `/transcripts`, `/bots`, `/health`, telemetry ring buffer, live `/ws`
 - ✅ delivered — `recording.v1` receiver → assembled master + dependency-free `/player`
 - ✅ delivered — `canAccess` mediation seam on every read path (default owner-only)
+- ✅ delivered — capture ingest (stack mode): authenticated clients, calls registered as stack meetings, segments to the collector's stream, Stop and end reported, reconnect grace
 - ✅ delivered — P18 fault surfacing (engine fault + no-signal watchdog → `/ws health` · `/telemetry` · log)
 - 🟡 partial — store is in-memory single-process (sqlite persistence is a later refinement)
 - 🟡 partial — access grants are the seam only (`ownerOnly`); real owner/visibility grants land additively (ADR-0003)

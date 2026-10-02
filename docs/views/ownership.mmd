@@ -32,6 +32,8 @@ flowchart LR
   remote_browser -->|write| userdata_blob
   gateway -.->|read| recording_blob
   bot -.->|read| bot_commands
+  desktop -->|write| segments_stream
+  desktop -.->|read| bot_commands
   meeting_api -->|write| bm_status
   meeting_api -->|write| u_meetings
   meeting_api -->|write| bot_commands

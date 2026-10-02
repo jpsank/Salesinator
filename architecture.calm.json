@@ -191,7 +191,7 @@
    "unique-id": "desktop",
    "node-type": "service",
    "name": "desktop",
-   "description": "all-in-one dev host: bot+collector+gateway in one process",
+   "description": "capture host: one process, no stack (local dev) — or, in stack mode, the capture ingest: clients stream audio in, each call becomes a meeting that feeds the same transcript pipeline a bot feeds",
    "metadata": [
     {
      "path": "core/meetings/services/desktop"
@@ -730,7 +730,17 @@
     }
    ]
   },
-    {"unique-id": "claude-plugin", "node-type": "webclient", "name": "claude-plugin", "description": "claude-plugin — client (Claude Code plugin: manifest, skills, hosted MCP config; no code)", "metadata": [{"path": "clients/claude-plugin"}]},
+  {
+   "unique-id": "claude-plugin",
+   "node-type": "webclient",
+   "name": "claude-plugin",
+   "description": "claude-plugin — client (Claude Code plugin: manifest, skills, hosted MCP config; no code)",
+   "metadata": [
+    {
+     "path": "clients/claude-plugin"
+    }
+   ]
+  },
   {
    "unique-id": "terminal",
    "node-type": "webclient",
@@ -1821,6 +1831,80 @@
      "access": "read"
     }
    ]
+  },
+  {
+   "unique-id": "desktop-writes-segments-stream",
+   "relationship-type": {
+    "connects": {
+     "source": {
+      "node": "desktop"
+     },
+     "destination": {
+      "node": "segments-stream"
+     }
+    }
+   },
+   "description": "stack mode: confirmed segments of a client-captured call → the collector's stream (as a bot's)",
+   "metadata": [
+    {
+     "access": "write"
+    }
+   ]
+  },
+  {
+   "unique-id": "desktop-commands-read",
+   "relationship-type": {
+    "connects": {
+     "source": {
+      "node": "desktop"
+     },
+     "destination": {
+      "node": "bot-commands"
+     }
+    }
+   },
+   "description": "stack mode: SUBSCRIBE leave — Stop in Vexa ends a client-captured call",
+   "metadata": [
+    {
+     "access": "read"
+    }
+   ]
+  },
+  {
+   "unique-id": "desktop-stt",
+   "relationship-type": {
+    "connects": {
+     "source": {
+      "node": "desktop"
+     },
+     "destination": {
+      "node": "transcription",
+      "interface": "stt-endpoint"
+     }
+    }
+   },
+   "description": "audio -> first-party STT via TRANSCRIPTION_SERVICE_URL",
+   "protocol": "HTTPS",
+   "metadata": [
+    {
+     "access": "call"
+    }
+   ],
+   "controls": {
+    "data-egress": {
+     "description": "STT is first-party and self-hostable; default destination is tenant-hosted, so audio need not leave the tenant",
+     "requirements": [
+      {
+       "requirement-url": "https://vexa.ai/calm/controls/no-egress.requirement.json",
+       "config": {
+        "dataClass": "audio",
+        "destination": "tenant-hosted",
+        "egressApproved": true
+       }
+      }
+     ]
+    }
+   }
   },
   {
    "unique-id": "ma-status",

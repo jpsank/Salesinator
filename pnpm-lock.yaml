@@ -437,6 +437,9 @@ importers:
       '@vexa/transcribe-whisper':
         specifier: workspace:*
         version: link:../../modules/whisper
+      redis:
+        specifier: ^4.7.1
+        version: 4.7.1
       ws:
         specifier: ^8.21.0
         version: 8.21.0

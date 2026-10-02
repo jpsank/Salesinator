@@ -113,6 +113,9 @@ edges:
   gateway -read-> recording-blob
   bot -call-> transcription  # audio -> first-party STT via TRANSCRIPTION_SERVICE_URL
   bot -read-> bot-commands  # SUBSCRIBE acts.v1 commands
+  desktop -write-> segments-stream  # stack mode: confirmed segments of a client-captured call → the collector's stream (as a bot's)
+  desktop -read-> bot-commands  # stack mode: SUBSCRIBE leave — Stop in Vexa ends a client-captured call
+  desktop -call-> transcription  # audio -> first-party STT via TRANSCRIPTION_SERVICE_URL
   meeting-api -write-> bm-status  # PUBLISH status
   meeting-api -write-> u-meetings  # PUBLISH per-user status
   meeting-api -write-> bot-commands  # PUBLISH leave/speak

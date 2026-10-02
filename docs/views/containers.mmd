@@ -44,6 +44,7 @@ flowchart LR
   dashboard["dashboard (deprecated)"]
   meeting_api -->|"write"| segments_table
   bot -->|"HTTPS"| transcription
+  desktop -->|"HTTPS"| transcription
   meeting_api -->|"JDBC"| postgres
   meeting_api -->|"HTTPS"| minio
   meeting_api -->|"HTTPS"| runtime

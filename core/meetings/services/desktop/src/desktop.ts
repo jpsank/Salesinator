@@ -29,6 +29,7 @@ import { ChunkedTranscriber, type ChunkSegment, type HintKind } from '@vexa/mixe
 import { decodeAudioFrame, decodeRecordingChunk } from '@vexa/capture-codec';
 import { createRecordingSink, type RecordingMaster } from './recording-sink.js';
 import { ownerOnly, type CanAccess } from './access.js';
+import { StackRefused, type StackBridge, type StackSession } from './stack-port.js';
 
 const SAMPLE_RATE = 16000;
 const REC_CONTENT_TYPE: Record<string, string> = { wav: 'audio/wav', webm: 'audio/webm' };
@@ -84,7 +85,17 @@ export function upsertSegment(segments: TranscriptSegment[], seg: TranscriptSegm
   const i = segments.findIndex((x) => x.segment_id === seg.segment_id);
   if (i >= 0) segments[i] = seg; else segments.push(seg);
 }
-export interface DesktopOptions { ingestPort?: number; gatewayPort?: number; txUrl?: string; txToken?: string; quiet?: boolean; recordingsDir?: string; noSignalMs?: number; canAccess?: CanAccess; }
+export interface DesktopOptions {
+  ingestPort?: number; gatewayPort?: number; txUrl?: string; txToken?: string; quiet?: boolean; recordingsDir?: string; noSignalMs?: number; canAccess?: CanAccess;
+  /** Run as the stack's capture ingest: every connection must authenticate and its call becomes a stack meeting.
+   *  A shared server keeps nothing for later (the stack owns the transcript), accepts no recording uploads, and
+   *  bounds what one client can send. */
+  stack?: StackBridge;
+  /** Stack mode: refuse new calls beyond this many at once (4503). */
+  maxSessions?: number;
+  /** Bind the local HTTP gateway to this host only (stack mode: loopback, so nothing on the network can read it). */
+  gatewayHost?: string;
+}
 export interface Desktop { ingestPort: number; gatewayPort: number; recordingsDir: string; close(): Promise<void>; }
 
 export async function startDesktop(opts: DesktopOptions = {}): Promise<Desktop> {
@@ -157,11 +168,14 @@ export async function startDesktop(opts: DesktopOptions = {}): Promise<Desktop> 
   // upsert by id) instead of accumulating the stale provisional copy (empty speaker)
   // ALONGSIDE the named one — the "ghost duplicate" GET /transcripts was returning.
   const persist = (m: Meeting | undefined, seg: TranscriptSegment): void => {
-    if (m) upsertSegment(m.segments, seg);
+    if (m && !opts.stack) upsertSegment(m.segments, seg);
   };
+  // Stack mode: the registered stack session for each live call, so a confirmed segment is also handed to the stack.
+  const stackSessions = new Map<string, StackSession>();
   const broadcast = (key: string, seg: TranscriptSegment) => {
     const m = meetings.get(key);
     if (seg.completed) persist(m, seg);
+    if (seg.completed) stackSessions.get(key)?.publish([seg]);
     if (seg.completed) log(`  [${seg.speaker}] ${seg.text}`);
     const msg = JSON.stringify({ type: 'transcript', meeting: key, confirmed: seg.completed ? [seg] : [], pending: seg.completed ? [] : [seg] });
     for (const [c, keys] of liveClients) if (c.readyState === WebSocket.OPEN && (keys.size === 0 || keys.has(key))) c.send(msg);
@@ -176,6 +190,7 @@ export async function startDesktop(opts: DesktopOptions = {}): Promise<Desktop> 
   const broadcastBatch = (key: string, speaker: string, confirmed: TranscriptSegment[], pending: TranscriptSegment[]) => {
     const m = meetings.get(key);
     for (const s of confirmed) persist(m, s);
+    if (confirmed.length) stackSessions.get(key)?.publish(confirmed);
     for (const s of confirmed) log(`  [${speaker}] ${s.text}`);
     const msg = JSON.stringify({ type: 'transcript', meeting: key, speaker, confirmed, pending });
     for (const [c, keys] of liveClients) if (c.readyState === WebSocket.OPEN && (keys.size === 0 || keys.has(key))) c.send(msg);
@@ -322,11 +337,11 @@ export async function startDesktop(opts: DesktopOptions = {}): Promise<Desktop> 
     } } catch { /* */ } });
     ws.on('close', () => liveClients.delete(ws));
   });
-  await new Promise<void>((r) => gateway.listen(opts.gatewayPort ?? 8056, () => r()));
+  await new Promise<void>((r) => opts.gatewayHost ? gateway.listen(opts.gatewayPort ?? 8056, opts.gatewayHost, () => r()) : gateway.listen(opts.gatewayPort ?? 8056, () => r()));
   const gatewayPort = (gateway.address() as { port: number }).port;
 
   // ── ingest (capture.v1 → gmeet-pipeline → broadcast) ──
-  const ingest = new WebSocketServer({ port: opts.ingestPort ?? 9099 });
+  const ingest = new WebSocketServer({ port: opts.ingestPort ?? 9099, ...(opts.stack ? { maxPayload: 1 << 20 } : {}) });
   await new Promise<void>((r) => ingest.on('listening', () => r()));
   const ingestPort = (ingest.address() as { port: number }).port;
   ingest.on('connection', async (ws, req) => {
@@ -335,8 +350,29 @@ export async function startDesktop(opts: DesktopOptions = {}): Promise<Desktop> 
     const native = url.searchParams.get('native_meeting_id') || '?';
     const language = url.searchParams.get('language');
     const key = keyOf(platform, native);
-    resolve(platform, native);
     const lang = language && language !== 'auto' ? language : undefined;
+    // Stack mode: nothing is captured for a caller the stack has not admitted. The key rides the connection URL
+    // (a WebSocket upgrade from a native app can set a header too) and is never logged.
+    let stack: StackSession | null = null;
+    if (opts.stack) {
+      if (opts.maxSessions && activeSessions.size >= opts.maxSessions) {
+        log(`[desktop] ✖ ${key} refused: capture host is full (${opts.maxSessions})`);
+        ws.close(4503, 'capture host is full');
+        return;
+      }
+      const hdr = req.headers['x-api-key'];
+      const apiKey = url.searchParams.get('api_key') || (Array.isArray(hdr) ? hdr[0] : hdr) || '';
+      try {
+        stack = await opts.stack.open({ platform, native, apiKey, language: lang });
+      } catch (e: any) {
+        const code = e instanceof StackRefused ? e.code : 4503;
+        log(`[desktop] ✖ ${key} refused (${code}): ${e?.message || e}`);
+        ws.close(code, String(e?.message || 'refused').slice(0, 120));
+        return;
+      }
+      stackSessions.set(key, stack);
+    }
+    resolve(platform, native);
     const transcribe = async (pcm: Float32Array, prompt?: string) => { if (!txClient) throw new Error('no STT (set TRANSCRIPTION_SERVICE_URL)'); return txClient.transcribe(pcm, lang, prompt); };
     const isMixed = MIXED_PLATFORMS.has(platform);
 
@@ -427,7 +463,7 @@ export async function startDesktop(opts: DesktopOptions = {}): Promise<Desktop> 
       const r = decodeRecordingChunk(b.buffer, b.byteOffset, b.byteLength);
       if (!r) return false;
       recF++;
-      recSink.chunk(key, r.seq, r.isFinal, r.format, r.bytes);
+      if (!opts.stack) recSink.chunk(key, r.seq, r.isFinal, r.format, r.bytes);   // a shared host takes no uploads
       return true;
     };
     ws.on('message', (data: any, isBinary: boolean) => {
@@ -451,18 +487,26 @@ export async function startDesktop(opts: DesktopOptions = {}): Promise<Desktop> 
       if (f) { lastFrameMs = Date.now(); pipe?.feedAudio(f.speakerIndex, f.speakerIndex === MIC_CHANNEL ? 'You' : f.speakerName, f.samples, f.ts); }
     });
     let finished = false;
+    let endReason: 'closed' | 'stopped' = 'closed';
     const finish = async () => {
       if (finished) return; finished = true;
       if (activeSessions.get(key) === finalize) activeSessions.delete(key);
       if (hb) clearInterval(hb); clearInterval(watchdog); tape?.end(); recSink.close(key);
+      // Dispose first: the pipelines flush their last confirmed segments, which must reach the stack BEFORE it is told the call ended.
       try { await tc?.dispose(); await micTc?.dispose(); await pipe?.dispose(); } catch { /* */ }
+      if (stack) {
+        if (stackSessions.get(key) === stack) stackSessions.delete(key);
+        try { await stack.end(endReason); } catch (e: any) { log(`[desktop] stack end FAILED for ${key}: ${e?.message || e}`); }
+      }
       const m = meetings.get(key); if (m) m.status = 'completed'; log(`[desktop] ■ ${key}`);
+      if (opts.stack) meetings.delete(key);            // the stack owns the transcript; keep nothing here
     };
     // The finalizer the gateway's /extension/sessions/end calls: finish the
     // pipeline (flush + mark completed) AND drop the socket so the client's WS
     // tears down too. finish() is idempotent, so the subsequent 'close' is a no-op.
     const finalize = async () => { try { ws.close(); } catch { /* */ } await finish(); };
     activeSessions.set(key, finalize);
+    stack?.onStop(() => { endReason = 'stopped'; void finalize(); });
     ws.on('close', finish);
     ws.on('error', finish);
   });

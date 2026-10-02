@@ -559,6 +559,42 @@ services:
     networks: [vexa]
     restart: unless-stopped
 
+  # The capture ingest: clients that capture a call themselves (the Mac capture app, the browser extension) stream
+  # audio here with the user's API key; each call becomes a meeting in this stack, transcribed by its STT and fed to
+  # the same pipeline a bot feeds (core/meetings/services/desktop, stack mode). No bot, no waiting room.
+  capture:
+    build:
+      context: ../..
+      dockerfile: core/meetings/services/desktop/Dockerfile
+    image: vexaai/v012-capture:${IMAGE_TAG:-dev}
+    ports:
+      - "127.0.0.1:${CAPTURE_PORT:-19099}:9099"
+    environment:
+      - CAPTURE_GATEWAY_URL=http://gateway:8000
+      - CAPTURE_MEETING_API_URL=http://meeting-api:8080
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
+      - REDIS_URL=redis://redis:6379/0
+      - TRANSCRIPTION_SERVICE_URL=${TRANSCRIPTION_SERVICE_URL:-}
+      - TRANSCRIPTION_SERVICE_TOKEN=${TRANSCRIPTION_SERVICE_TOKEN:-}
+      - CAPTURE_MAX_SESSIONS=${CAPTURE_MAX_SESSIONS:-20}
+    healthcheck:
+      # Its own HTTP gateway is bound to loopback (nothing on the network reads it); /health is 503 until STT is set.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8056/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      redis:
+        condition: service_healthy
+      meeting-api:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    networks: [vexa]
+    init: true
+    restart: unless-stopped
+
   gateway:
     build:
       # THE REPO ROOT, like meeting-api and agent-api. The edge reads each domain's
