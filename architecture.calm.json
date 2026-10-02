@@ -2521,6 +2521,21 @@
    "protocol": "HTTPS"
   },
   {
+   "unique-id": "capture-mac-pairing",
+   "description": "pairing: the user's browser opens the terminal's connect page, which opens the app with a one-time code the app exchanges for its bot-scoped key and the server addresses",
+   "relationship-type": {
+    "connects": {
+     "source": {
+      "node": "capture-mac"
+     },
+     "destination": {
+      "node": "terminal"
+     }
+    }
+   },
+   "protocol": "HTTPS"
+  },
+  {
    "unique-id": "stack-deployed",
    "description": "the long-running services ship as the deploy/compose stack (transcription has its own deploy unit)",
    "relationship-type": {

@@ -1119,6 +1119,10 @@ services:
       # for everyone. Identity is VERIFIED against admin-api /internal/validate over the internal-tier
       # secret (never trusted from a cookie), and the same secret fronts agent-api's admin overview.
       - VEXA_ADMIN_EMAILS=${VEXA_ADMIN_EMAILS:-}
+      # Vexa Capture (the Mac app) pairs through /api/capture/connect and is told these two PUBLIC addresses: the Vexa API
+      # (the gateway) and the capture ingest (wss://…/ingest). Empty is fine on localhost, which defaults to the local ports.
+      - VEXA_CAPTURE_API_URL=${CAPTURE_API_URL:-}
+      - VEXA_CAPTURE_INGEST_URL=${CAPTURE_INGEST_URL:-}
       # NO PLACEHOLDER FALLBACK. F95 removed the published `vexa-internal-secret` default from
       # every service that REFUSES it at boot; these two lines kept it, so an unconfigured stack
       # still PRESENTED the published literal as internal-tier authority. Unset is unset (A19).

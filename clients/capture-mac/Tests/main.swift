@@ -128,5 +128,28 @@ do {
     check("every outcome has words for the person", [BotRequest.Outcome.alreadyThere, .keyRejected, .limitReached, .unavailable(""), .refused("x"), .sent(platform: "zoom", nativeId: "1")].allSatisfy { !BotRequest.explain($0, platform: "Zoom").isEmpty })
 }
 
-print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests." : "\n❌ \(failed) check(s) failed")
+// ── pairing with a Vexa deployment ──
+do {
+    let good = URL(string: "vexacapture://connect?code=abc123&base=https%3A%2F%2Fterminal.example.com")!
+    check("a connect link carries the one-time code and the site", ConnectLink.parse(good) == ConnectLink.Request(code: "abc123", base: URL(string: "https://terminal.example.com")!))
+    check("a local http site is accepted", ConnectLink.parse(URL(string: "vexacapture://connect?code=a&base=http%3A%2F%2Flocalhost%3A13000")!)?.base.absoluteString == "http://localhost:13000")
+    check("plain http to a remote host is refused", ConnectLink.parse(URL(string: "vexacapture://connect?code=a&base=http%3A%2F%2Fevil.example.com")!) == nil)
+    check("a link with no code, no site, or another scheme/host is refused",
+          ConnectLink.parse(URL(string: "vexacapture://connect?base=https%3A%2F%2Fx.com")!) == nil && ConnectLink.parse(URL(string: "vexacapture://connect?code=a")!) == nil
+          && ConnectLink.parse(URL(string: "https://x.com/connect?code=a&base=https%3A%2F%2Fx.com")!) == nil && ConnectLink.parse(URL(string: "vexacapture://other?code=a&base=https%3A%2F%2Fx.com")!) == nil)
+    check("a path, query and credentials on the site are dropped", ConnectLink.acceptableBase("https://user:pw@terminal.example.com/some/path?x=1#f")?.absoluteString == "https://terminal.example.com")
+    check("the page to open is the site's /api/capture/connect", ConnectLink.connectPage(base: " https://terminal.example.com/ ")?.absoluteString == "https://terminal.example.com/api/capture/connect" && ConnectLink.connectPage(base: "ftp://x") == nil)
+    let req = ConnectLink.exchangeRequest(ConnectLink.parse(good)!)
+    check("the exchange POSTs the code to the site", req.url?.absoluteString == "https://terminal.example.com/api/capture/exchange" && req.httpMethod == "POST" && (try? JSONSerialization.jsonObject(with: req.httpBody!)) as? [String: String] == ["code": "abc123"])
+    func body(_ j: String) -> Data { Data(j.utf8) }
+    check("a good answer pairs the key, addresses and account",
+          ConnectLink.interpret(status: 200, body: body(#"{"key":"K","api":"https://api.example.com","ingest":"wss://cap.example.com/ingest","account":"a@b.c"}"#)) == .paired(.init(key: "K", api: "https://api.example.com", ingest: "wss://cap.example.com/ingest", account: "a@b.c")))
+    check("the server's own words are shown when it refuses", ConnectLink.interpret(status: 404, body: body(#"{"error":"That connection link has expired."}"#)) == .failed("That connection link has expired."))
+    check("a pairing naming a bad API or ingest address is refused",
+          ConnectLink.interpret(status: 200, body: body(#"{"key":"K","api":"ftp://x","ingest":"wss://c/ingest"}"#)) == .failed("Vexa's answer wasn't a valid pairing.")
+          && ConnectLink.interpret(status: 200, body: body(#"{"key":"K","api":"https://a","ingest":"https://c"}"#)) == .failed("Vexa's answer wasn't a valid pairing.")
+          && ConnectLink.interpret(status: 200, body: body(#"{"api":"https://a","ingest":"wss://c"}"#)) == .failed("Vexa's answer wasn't a valid pairing."))
+}
+
+print(failed == 0 ? "\n✅ capture-mac Core: wire frame, chunking, call detection, ingest URL, meeting links, bot requests, pairing." : "\n❌ \(failed) check(s) failed")
 exit(failed == 0 ? 0 : 1)

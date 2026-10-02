@@ -67,6 +67,7 @@ flowchart LR
   extension -->|"WebSocket"| gateway
   capture_mac -->|"WebSocket"| desktop
   capture_mac -->|"HTTPS"| gateway
+  capture_mac -->|"HTTPS"| terminal
   flows_worker -->|""| agent_api
   flows_worker -->|""| gateway
   flows_worker -->|""| admin_api

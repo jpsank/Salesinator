@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import ServiceManagement
 
 /// The menu-bar app: notices a Zoom or Teams call, and either sends Vexa's bot to it (finding the call's link in the
 /// browser) or, when there is no link, captures the call's audio here — and says so either way.
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         statusItem.button?.title = "Vexa"
         settingsWindow.onSaved = { [weak self] in self?.rebuildMenu() }
+        settingsWindow.onConnect = { [weak self] in self?.connect() }
         rebuildMenu()
         if ProcessInfo.processInfo.environment["VEXA_CAPTURE_SMOKE"] != nil {      // build check: no dialogs, no capture
             print("menu:", statusItem.menu?.items.map { $0.isSeparatorItem ? "—" : $0.title } ?? [])
@@ -30,7 +32,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.requestPermission()
         if !Settings.consentAccepted { askConsent() }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
-        if Settings.apiKey == nil { settingsWindow.present() }
+        if Settings.apiKey == nil { askAddressAndConnect() }
+    }
+
+    // ── pairing with Vexa ──
+    /// The pairing link the Vexa site opens: `vexacapture://connect?code=…&base=…`.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for u in urls { if let r = ConnectLink.parse(u) { confirmAndPair(r) } }
+    }
+
+    private func confirmAndPair(_ r: ConnectLink.Request) {
+        let a = NSAlert()
+        a.messageText = "Connect Vexa Capture to \(r.base.host ?? r.base.absoluteString)?"
+        a.informativeText = "Your calls — requests for Vexa's bot, or audio captured on this Mac — will be sent to this Vexa. Only continue if you just chose Connect in your own Vexa."
+        a.addButton(withTitle: "Connect"); a.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        Task {
+            let result: ConnectLink.Exchanged
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: ConnectLink.exchangeRequest(r))
+                result = ConnectLink.interpret(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data)
+            } catch { result = .failed("Can't reach \(r.base.host ?? "Vexa"): \(error.localizedDescription)") }
+            await MainActor.run {
+                switch result {
+                case .paired(let p):
+                    Settings.apiKey = p.key; Settings.gatewayURL = p.api; Settings.serverURL = p.ingest
+                    Settings.terminalURL = r.base.absoluteString; Settings.account = p.account
+                    Notifier.post(title: "Vexa Capture is connected", body: p.account.isEmpty ? "Ready for your next call." : "Signed in as \(p.account). Ready for your next call.")
+                case .failed(let why): self.problem(why)
+                }
+                self.rebuildMenu()
+            }
+        }
+    }
+
+    /// Opens the person's Vexa in the browser; its page opens this app back with a one-time code.
+    @objc private func connect() {
+        guard let page = ConnectLink.connectPage(base: Settings.terminalURL) else { askAddressAndConnect(); return }
+        NSWorkspace.shared.open(page)
+    }
+
+    private func askAddressAndConnect() {
+        let a = NSAlert()
+        a.messageText = "Connect to Vexa"
+        a.informativeText = "Enter the address you open Vexa at. Your browser will open to confirm — no token to copy."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        field.stringValue = Settings.terminalURL
+        a.accessoryView = field
+        a.addButton(withTitle: "Connect"); a.addButton(withTitle: "Enter details by hand…"); a.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        switch a.runModal() {
+        case .alertFirstButtonReturn:
+            guard let base = ConnectLink.acceptableBase(field.stringValue) else { problem("That isn't an https:// address (or http://localhost)."); return }
+            Settings.terminalURL = base.absoluteString
+            connect()
+        case .alertSecondButtonReturn: settingsWindow.present()
+        default: break
+        }
+    }
+
+    @objc private func disconnect() {
+        Settings.apiKey = nil; Settings.account = ""
+        rebuildMenu()
+    }
+
+    // ── start at login ──
+    private var opensAtLogin: Bool { SMAppService.mainApp.status == .enabled }
+    @objc private func toggleLogin() {
+        do { if opensAtLogin { try SMAppService.mainApp.unregister() } else { try SMAppService.mainApp.register() } }
+        catch { problem("Couldn't change Open at login: \(error.localizedDescription). Try moving Vexa Capture into Applications first.") }
+        rebuildMenu()
     }
 
     private var busy: Bool { session != nil || bot != nil || searching }
@@ -71,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // ── handling a call ──
     private func handle(_ p: CallPlatform) {
-        guard let key = Settings.apiKey, !key.isEmpty else { settingsWindow.present(); return }
+        guard let key = Settings.apiKey, !key.isEmpty else { askAddressAndConnect(); return }
         offered = nil
         if Settings.mode == .audio { beginAudio(p); return }
         searching = true; rebuildMenu()
@@ -237,6 +309,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let m = NSMenu()
         let status = NSMenuItem(title: statusLine(), action: nil, keyEquivalent: ""); status.isEnabled = false
         m.addItem(status)
+        if Settings.apiKey != nil, !Settings.account.isEmpty {
+            let who = NSMenuItem(title: "Connected as \(Settings.account)", action: nil, keyEquivalent: ""); who.isEnabled = false
+            m.addItem(who)
+        }
         m.addItem(.separator())
         if let s = session {
             if s.isPaused { m.addItem(item("Resume capturing", #selector(resume))) } else { m.addItem(item("Pause capturing", #selector(pause))) }
@@ -260,6 +336,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let auto = item("Act on calls automatically", #selector(toggleAuto)); auto.state = Settings.autoCapture ? .on : .off
         m.addItem(auto)
         m.addItem(.separator())
+        m.addItem(item(Settings.apiKey == nil ? "Connect to Vexa…" : "Reconnect to Vexa…", #selector(connect)))
+        if Settings.apiKey != nil { m.addItem(item("Disconnect", #selector(disconnect))) }
+        let login = item("Open at login", #selector(toggleLogin)); login.state = opensAtLogin ? .on : .off
+        m.addItem(login)
         m.addItem(item("Settings…", #selector(openSettings)))
         m.addItem(item("Quit Vexa Capture", #selector(quit)))
         statusItem.menu = m
@@ -282,7 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if searching { return "Working on your call…" }
         if let p = offered { return "\(p.displayName) call detected — not handled yet" }
-        return Settings.apiKey == nil ? "Add your API key in Settings" : "Watching for Zoom and Teams calls"
+        return Settings.apiKey == nil ? "Not connected — choose Connect to Vexa" : "Watching for Zoom and Teams calls"
     }
 
     @objc private func pause() { session?.pause(); rebuildMenu() }

@@ -11,6 +11,11 @@
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>ai.vexa.capture.connect</string>
+    <key>CFBundleURLSchemes</key><array><string>vexacapture</string></array>
+  </dict></array>
   <key>NSAppleEventsUsageDescription</key><string>Vexa Capture reads your browser's open tabs to find the link of the call you just joined, so Vexa's bot can join it. Only meeting links are used.</string>
   <key>NSMicrophoneUsageDescription</key><string>Vexa Capture records your voice during Zoom and Teams calls so your side of the conversation is transcribed.</string>
 </dict>

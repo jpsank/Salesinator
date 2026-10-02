@@ -9,6 +9,15 @@ enum Settings {
         get { d.string(forKey: "serverURL") ?? "ws://localhost:19099/ingest" }
         set { d.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "serverURL") }
     }
+    /// The Vexa web address the app pairs with (where the person is signed in) and who they connected as.
+    static var terminalURL: String {
+        get { d.string(forKey: "terminalURL") ?? "http://localhost:13000" }
+        set { d.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "terminalURL") }
+    }
+    static var account: String {
+        get { d.string(forKey: "account") ?? "" }
+        set { d.set(newValue, forKey: "account") }
+    }
     /// The Vexa API (the gateway) — where the bot is requested. The ingest above is only for audio captured on this Mac.
     static var gatewayURL: String {
         get { d.string(forKey: "gatewayURL") ?? "http://localhost:18056" }
@@ -34,18 +43,18 @@ enum Settings {
         set { d.set(newValue, forKey: "consentAccepted") }
     }
 
-    private static let service = "ai.vexa.capture", account = "apiKey"
+    private static let service = "ai.vexa.capture", keychainAccount = "apiKey"
 
     static var apiKey: String? {
         get {
             let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+                                    kSecAttrAccount as String: keychainAccount, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
             var out: CFTypeRef?
             guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
             return String(data: data, encoding: .utf8)
         }
         set {
-            let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+            let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: keychainAccount]
             SecItemDelete(base as CFDictionary)
             guard let v = newValue?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return }
             var add = base; add[kSecValueData as String] = Data(v.utf8)

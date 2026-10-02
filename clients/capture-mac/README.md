@@ -34,7 +34,7 @@ open ".build/Vexa Capture.app"
 
 Set the Vexa API address, the audio capture address and a bot-scoped API key (Vexa → Settings → Tokens) in the app's Settings; the
 key is kept in the Keychain. Add the app to *System Settings → General → Login Items* to start it at login. Ad-hoc signing means macOS asks
-for Microphone and Screen Recording again after each rebuild; a distributed build needs a Developer ID signature and
+for the Automation, Microphone and Screen Recording permissions again after each rebuild; a distributed build needs a Developer ID signature and
 notarization.
 
 ## Checks without a call

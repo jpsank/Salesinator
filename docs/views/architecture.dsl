@@ -150,6 +150,7 @@ edges:
   extension -req-> gateway  # browser extension client; live WS via gateway
   capture-mac -req-> desktop  # audio of a detected call → the capture ingest (authenticated with the user's API key)
   capture-mac -req-> gateway  # requests Vexa's bot for a detected call (POST /bots with the user's API key)
+  capture-mac -req-> terminal  # pairing: the user's browser opens the terminal's connect page, which opens the app with a one-time code the app exchanges for its bot-scoped key and the server addresses
   flows-worker -write-> flows-rows
   flows-api -write-> flows-rows  # the second writer, recorded because it is real: POST /events admits a fact in the API process (flows_integrations/flows_api.py → flows.admit → INSERT INTO reaction) and the registry writes flow_version there too. The chart carried only flows-worker, so the one shared carrier in this domain read as single-writer
   flows-api -read-> flows-rows
