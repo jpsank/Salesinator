@@ -70,6 +70,7 @@ from sales_cycle.slack_client import SlackClient, SlackError
 from sales_cycle.slack_verify import SlackSignatureError, verify_slack_signature
 from sales_cycle.store import PendingApproval, Store
 from sales_cycle.webhook_verify import WebhookSignatureError, verify_webhook_signature
+from sales_cycle.zoom_routes import register_zoom_routes
 
 logger = logging.getLogger("sales_cycle.api")
 
@@ -639,6 +640,9 @@ register_oauth_routes(
     build_authorize_url=slack_oauth.build_authorize_url, exchange_code=slack_oauth.exchange_code,
     error_cls=slack_oauth.SlackOAuthError, get_store=get_store, get_config=_slack_oauth_config,
 )
+
+
+register_zoom_routes(app, get_store=get_store)
 
 
 @app.get("/health")

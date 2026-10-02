@@ -50,6 +50,7 @@ PR links. Requests from before the stage timestamps existed are counted but left
 | `resolver.py` | Ties a meeting to a customer's workspace, using HubSpot's answer. |
 | `calendar_resolver.py` | The automatic version of the above — reads attendee emails straight off Vexa's own notification, no extra lookup needed. |
 | `live_card_watcher.py` | Tails one call's live copilot-card stream for its whole duration and posts each `feature_request` to Slack the instant it appears. |
+| `zoom_routes.py` / `zoom_oauth.py` / `zoom_join.py` / `zoom_verify.py` | "Connect Zoom": a rep's own Zoom account, the signed "meeting started" webhook, and sending the bot to a meeting they just started. |
 | `report.py` | `python -m sales_cycle.report` — pipeline counts, per-hop timings and PR links from the store. |
 | `store.py` | A small local database tracking which requests are pending, approved, or done. |
 | `orchestrator.py` | Once approved: kicks off the AI coding turn (in its own isolated worktree), checks in until it's done, pushes it, then opens a pull request. |
@@ -269,6 +270,45 @@ SALES_CYCLE_TERMINAL_URL=https://terminal.example.com
 GitHub is configured separately (`VEXA_GITHUB_OAUTH_REDIRECT_URI` and `VEXA_TERMINAL_URL`, above).
 When running agent-api natively via `run-agent-api-native.sh`, it reads both from `.env`
 (falling back to localhost), so they follow the same file.
+
+### Zoom (the bot joins every call you start, scheduled or not)
+
+Each rep clicks **Connect Zoom** (Settings → Integrations → Zoom) and approves on Zoom's own screen. From then on,
+when that rep **starts a meeting** — scheduled, instant, or in their personal room — Zoom tells this service, which
+fetches the meeting's join link and sends Vexa's bot, exactly as if the rep had added the bot by hand (their quotas,
+webhooks and recording defaults apply, and a meeting that already has a bot is not joined twice). Disconnecting
+stops it. Only meetings the connected rep **hosts** trigger it — Zoom does not announce a customer's meeting you
+merely attend. The bot is a visible participant and, as a guest, waits in the waiting room unless the host admits it
+or the waiting room is off.
+
+Connecting also mints the rep a bot-scoped Vexa API key named `zoom-auto-join` (it appears in their Tokens panel):
+that is what this service sends the bot with, and disconnecting revokes it. This service is reachable from the
+internet, so the per-rep endpoints (`/zoom/*`) refuse anyone without `SALES_CYCLE_INTERNAL_SECRET` — compose sets it
+to the same `INTERNAL_API_SECRET` the Terminal presents; only `/oauth/zoom/callback` (protected by a one-time state) and
+`/webhooks/zoom` (protected by Zoom's signature) are meant to be public.
+
+One-time setup, by whoever operates the deployment, at [marketplace.zoom.us](https://marketplace.zoom.us) (Zoom's
+console changes names often — the app is a **user-managed OAuth app**, called a "General App" in the current one):
+
+1. **Develop → Build App**, user-managed. Add the redirect URL
+   `https://<your sales-cycle public host>/oauth/zoom/callback` (and to the OAuth allow list if asked).
+2. **Scopes:** the ones Zoom labels *View a meeting* (`meeting:read:meeting`) and *View a user* (`user:read:user`).
+3. **Event Subscriptions:** on; the endpoint URL is `https://<your sales-cycle public host>/webhooks/zoom`; subscribe to
+   the meeting event **Start Meeting** (`meeting.started`). Optionally set the same URL as the deauthorization endpoint.
+4. Put the app's credentials in `.env` and redeploy, **then** click *Validate* on the endpoint URL (Zoom sends a
+   handshake this service can only answer once it has the secret token):
+   ```
+   SALES_CYCLE_ZOOM_OAUTH_CLIENT_ID=...          # the app's Client ID
+   SALES_CYCLE_ZOOM_OAUTH_CLIENT_SECRET=...      # the app's Client Secret
+   SALES_CYCLE_ZOOM_OAUTH_REDIRECT_URI=https://<host>/oauth/zoom/callback
+   SALES_CYCLE_ZOOM_WEBHOOK_SECRET_TOKEN=...     # Event Subscriptions → Secret Token
+   ```
+5. Until the app is published, only users in the **same Zoom account** can authorize it — enough for your own
+   company; another team self-hosting registers its own app. Zoom starts and stops delivering a connected user's
+   events about a minute after they connect or disconnect.
+
+The Zoom card shows the rep's connection, the last meeting the bot was sent to and what happened (joined, a bot was
+already there, a failure with its reason), and warns if the webhook secret is missing.
 
 ### The product repo
 

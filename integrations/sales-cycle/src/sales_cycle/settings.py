@@ -69,6 +69,26 @@ class Settings(BaseSettings):
     # at all — Slack silently drops an event subscription the bot token doesn't hold the scope for.
     slack_oauth_scopes: str = "chat:write,channels:read,groups:read,reactions:read"
 
+    # "Connect Zoom" — each rep authorizes THEIR OWN Zoom account, and every meeting they start (scheduled
+    # or not) gets Vexa's bot. The OAuth app's identity is registered once by whoever operates this
+    # deployment (marketplace.zoom.us → Develop → a user-managed OAuth app) and, like the other apps here,
+    # is not a per-user secret. redirect_uri must exactly match what's registered there. The webhook
+    # secret token is the one Zoom shows under the app's Event Subscriptions — it proves a "meeting
+    # started" notification really came from Zoom.
+    zoom_oauth_client_id: str = ""
+    zoom_oauth_client_secret: str = ""
+    zoom_oauth_redirect_uri: str = ""
+    zoom_webhook_secret_token: str = ""
+    zoom_oauth_base_url: str = "https://zoom.us"
+    zoom_api_base_url: str = "https://api.zoom.us/v2"
+
+    # The shared secret Vexa's own Terminal presents on the per-user Zoom endpoints (connect / status /
+    # disconnect). This service is reachable from the internet (Slack, Zoom and the OAuth providers call
+    # back into it), so an endpoint that acts for one particular Vexa user must not trust a caller's
+    # say-so about who that is — only the Terminal, which has verified the signed-in user, holds this.
+    # Empty = those endpoints refuse every request.
+    internal_secret: str = ""
+
     # Where this add-on keeps its own small local database (which requests are pending/approved/done).
     db_path: str = "/data/sales-cycle.db"
 

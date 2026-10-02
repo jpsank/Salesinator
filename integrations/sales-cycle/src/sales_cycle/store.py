@@ -67,6 +67,29 @@ class PendingApproval:
     pr_url: str | None = None
 
 
+@dataclass(frozen=True)
+class ZoomConnection:
+    """One rep's authorized Zoom account, plus the Vexa API key (bot scope) used to send the bot AS that rep."""
+    vexa_user_id: str
+    zoom_user_id: str
+    email: str | None
+    access_token: str
+    refresh_token: str
+    expires_at: float
+    vexa_token: str
+    vexa_token_id: str | None
+    connected_at: float
+
+
+@dataclass(frozen=True)
+class ZoomPending:
+    nonce: str
+    vexa_user_id: str
+    vexa_token: str
+    vexa_token_id: str | None
+    created_at: float
+
+
 class Store:
     def __init__(self, db_path: str):
         if db_path != ":memory:":
@@ -151,6 +174,29 @@ class Store:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS active_watchers (
                     meeting_id TEXT PRIMARY KEY, subject TEXT NOT NULL, started_at REAL NOT NULL
+                )
+            """)
+            # Per-rep Zoom connections (unlike oauth_connections, which is one row per deployment-wide
+            # provider), the in-flight authorizations that carry a rep's identity through Zoom's
+            # consent screen, and one row per Zoom meeting the bot was sent to (the dedupe key is Zoom's
+            # meeting UUID — it is unique per occurrence, unlike the reusable meeting number).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS zoom_connections (
+                    vexa_user_id TEXT PRIMARY KEY, zoom_user_id TEXT NOT NULL UNIQUE, email TEXT,
+                    access_token TEXT NOT NULL, refresh_token TEXT NOT NULL, expires_at REAL NOT NULL,
+                    vexa_token TEXT NOT NULL, vexa_token_id TEXT, connected_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS zoom_pending (
+                    nonce TEXT PRIMARY KEY, vexa_user_id TEXT NOT NULL, vexa_token TEXT NOT NULL,
+                    vexa_token_id TEXT, created_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS zoom_joins (
+                    meeting_uuid TEXT PRIMARY KEY, vexa_user_id TEXT NOT NULL, zoom_meeting_id TEXT, topic TEXT,
+                    started_at REAL NOT NULL, outcome TEXT NOT NULL DEFAULT 'pending', detail TEXT
                 )
             """)
             conn.execute("""
@@ -303,6 +349,87 @@ class Store:
         with self._conn() as conn:
             conn.execute("UPDATE pending_approvals SET status = 'done', done_at = ?, pr_url = ? WHERE id = ?",
                          (time.time(), pr_url, approval_id))
+
+    # ── Zoom (per-rep) ────────────────────────────────────────────────────────────────────────────
+
+    def add_zoom_pending(self, *, nonce: str, vexa_user_id: str, vexa_token: str, vexa_token_id: str | None) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO zoom_pending (nonce, vexa_user_id, vexa_token, vexa_token_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (nonce, vexa_user_id, vexa_token, vexa_token_id, time.time()),
+            )
+
+    def take_zoom_pending(self, nonce: str, *, max_age_sec: float) -> ZoomPending | None:
+        """Single-use: the row is deleted whether or not it is still fresh, so a replayed callback finds nothing."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM zoom_pending WHERE nonce = ?", (nonce,)).fetchone()
+            conn.execute("DELETE FROM zoom_pending WHERE nonce = ?", (nonce,))
+            conn.execute("DELETE FROM zoom_pending WHERE created_at < ?", (time.time() - max_age_sec,))
+        if row is None or time.time() - row["created_at"] > max_age_sec:
+            return None
+        return ZoomPending(**dict(row))
+
+    def save_zoom_connection(
+        self, *, vexa_user_id: str, zoom_user_id: str, email: str | None, access_token: str, refresh_token: str,
+        expires_at: float, vexa_token: str, vexa_token_id: str | None,
+    ) -> None:
+        """One Zoom account belongs to one Vexa user: connecting it from a second Vexa user moves it there."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM zoom_connections WHERE zoom_user_id = ? AND vexa_user_id != ?",
+                         (zoom_user_id, vexa_user_id))
+            conn.execute(
+                "INSERT OR REPLACE INTO zoom_connections (vexa_user_id, zoom_user_id, email, access_token, "
+                "refresh_token, expires_at, vexa_token, vexa_token_id, connected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (vexa_user_id, zoom_user_id, email, access_token, refresh_token, expires_at, vexa_token,
+                 vexa_token_id, time.time()),
+            )
+
+    def update_zoom_tokens(self, vexa_user_id: str, *, access_token: str, refresh_token: str, expires_at: float) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE zoom_connections SET access_token = ?, refresh_token = ?, expires_at = ? WHERE vexa_user_id = ?",
+                (access_token, refresh_token, expires_at, vexa_user_id),
+            )
+
+    def get_zoom_connection(self, vexa_user_id: str) -> ZoomConnection | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM zoom_connections WHERE vexa_user_id = ?", (vexa_user_id,)).fetchone()
+        return ZoomConnection(**dict(row)) if row else None
+
+    def get_zoom_connection_by_zoom_user(self, zoom_user_id: str) -> ZoomConnection | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM zoom_connections WHERE zoom_user_id = ?", (zoom_user_id,)).fetchone()
+        return ZoomConnection(**dict(row)) if row else None
+
+    def delete_zoom_connection(self, vexa_user_id: str) -> ZoomConnection | None:
+        """Returns what was removed, so the caller can revoke the Zoom token and the Vexa key it held."""
+        existing = self.get_zoom_connection(vexa_user_id)
+        with self._conn() as conn:
+            conn.execute("DELETE FROM zoom_connections WHERE vexa_user_id = ?", (vexa_user_id,))
+        return existing
+
+    def claim_zoom_join(self, *, meeting_uuid: str, vexa_user_id: str, zoom_meeting_id: str, topic: str | None) -> bool:
+        """True the first time this meeting occurrence is seen — Zoom redelivers a notification it did not get a
+        timely 200 for, and the bot must go to a meeting once."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO zoom_joins (meeting_uuid, vexa_user_id, zoom_meeting_id, topic, started_at) "
+                "VALUES (?, ?, ?, ?, ?)", (meeting_uuid, vexa_user_id, zoom_meeting_id, topic, time.time()),
+            )
+            return cur.rowcount == 1
+
+    def record_zoom_join_outcome(self, meeting_uuid: str, *, outcome: str, detail: str | None = None) -> None:
+        with self._conn() as conn:
+            conn.execute("UPDATE zoom_joins SET outcome = ?, detail = ? WHERE meeting_uuid = ?",
+                         (outcome, detail, meeting_uuid))
+
+    def last_zoom_join(self, vexa_user_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT topic, zoom_meeting_id, started_at, outcome, detail FROM zoom_joins WHERE vexa_user_id = ? "
+                "ORDER BY started_at DESC LIMIT 1", (vexa_user_id,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def get_oauth_connection(self, provider: str) -> OAuthConnection | None:
         with self._conn() as conn:
