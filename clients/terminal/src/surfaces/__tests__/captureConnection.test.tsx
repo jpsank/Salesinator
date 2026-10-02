@@ -59,19 +59,32 @@ describe("the card", () => {
     expect(screen.getByRole("status").textContent).toContain("install.sh");
   });
 
-  it("lists each Mac with when it was last used, and Disconnect revokes that one", async () => {
-    let devices = [{ id: 7, created_at: null, last_used_at: "2026-10-02T11:55:00Z" }, { id: 8, created_at: null, last_used_at: null }];
+  it("names each Mac, says when it connected and was last used, and asks before disconnecting one", async () => {
+    let devices = [
+      { id: 7, name: "Julian's MacBook Pro", created_at: "2026-09-29T12:00:00Z", last_used_at: "2026-10-02T11:55:00Z" },
+      { id: 8, name: null, created_at: null, last_used_at: null },
+    ];
+    const revoked: number[] = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.includes("/revoke")) { devices = devices.filter((d) => d.id !== JSON.parse(init!.body as string).id); return ok({ ok: true }); }
+      if (url.includes("/revoke")) { const id = JSON.parse(init!.body as string).id; revoked.push(id); devices = devices.filter((d) => d.id !== id); return ok({ ok: true }); }
       return ok({ devices });
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<CaptureCard now={() => NOW} />);
     await waitFor(() => expect(screen.getByText("2 Macs connected")).toBeTruthy());
-    expect(screen.getByText(/Mac 1 · last used 5 min ago/)).toBeTruthy();
-    expect(screen.getByText(/Mac 2 · last used not used yet/)).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "Disconnect" })[0]);
+    expect(screen.getByText(/Julian's MacBook Pro · connected 3 days ago · last used 5 min ago/)).toBeTruthy();
+    expect(screen.getByText(/Mac \(older connection\) · last used not used yet/)).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Disconnect" })[1]);        // asks first; nothing is revoked yet
+    expect(screen.getByText(/stop working until you connect it again/)).toBeTruthy();
+    expect(revoked).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/stop working until/)).toBeNull();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Disconnect" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Yes, disconnect" }));
     await waitFor(() => expect(screen.getByText("1 Mac connected")).toBeTruthy());
+    expect(revoked).toEqual([8]);
     expect(screen.getByRole("button", { name: "Connect another Mac" })).toBeTruthy();
   });
 

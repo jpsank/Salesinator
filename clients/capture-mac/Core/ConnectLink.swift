@@ -41,11 +41,21 @@ public enum ConnectLink {
         return URL(string: b.absoluteString + "/api/capture/connect")
     }
 
-    public static func exchangeRequest(_ r: Request) -> URLRequest {
+    /// This Mac's own account of itself — a stable id, so pairing again replaces this Mac's earlier key rather than adding another,
+    /// and its name, so Vexa's Settings can tell Macs apart.
+    public struct Device: Equatable {
+        public let id: String
+        public let name: String
+        public init(id: String, name: String) { self.id = id; self.name = name }
+    }
+
+    public static func exchangeRequest(_ r: Request, device: Device? = nil) -> URLRequest {
         var req = URLRequest(url: URL(string: r.base.absoluteString + "/api/capture/exchange")!)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["code": r.code])
+        var body: [String: Any] = ["code": r.code]
+        if let d = device { body["device"] = ["id": d.id, "name": d.name] }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         req.timeoutInterval = 20
         return req
     }

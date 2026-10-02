@@ -38,7 +38,7 @@ public final class CallDetector {
     private let startAfter: TimeInterval
     private let endAfter: TimeInterval
 
-    public init(startAfter: TimeInterval = 3, endAfter: TimeInterval = 20) {
+    public init(startAfter: TimeInterval = 3, endAfter: TimeInterval = 10) {
         self.startAfter = startAfter
         self.endAfter = endAfter
     }

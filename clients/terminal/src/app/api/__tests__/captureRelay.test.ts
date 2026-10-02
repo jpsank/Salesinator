@@ -93,10 +93,18 @@ describe("GET /auth/me", () => {
     expect(seen[0]).toMatchObject({ url: "http://gateway.test:8000/auth/me", method: "GET" });
     expect(seen[0].headers["X-API-Key"]).toBe("app-key");
   });
+  it("lets the app ask which of its bots are still running, under its own key", async () => {
+    const seen = gateway(200, { running_bots: [] });
+    const res = await GET(req("GET", { "x-api-key": "app-key" }), ctx("bots", "status"));
+    expect(res.status).toBe(200);
+    expect(seen[0]).toMatchObject({ url: "http://gateway.test:8000/bots/status", method: "GET" });
+    expect(seen[0].headers["X-API-Key"]).toBe("app-key");
+    expect((await GET(req("GET"), ctx("bots", "status"))).status).toBe(401);
+  });
   it("needs the key, and relays no other read", async () => {
     const seen = gateway();
     expect((await GET(req("GET"), ctx("auth", "me"))).status).toBe(401);
-    for (const p of [["meetings"], ["bots", "status"], ["admin", "users"], ["auth", "me", "x"]]) expect((await GET(req("GET", { "x-api-key": "k" }), ctx(...p))).status).toBe(404);
+    for (const p of [["meetings"], ["bots"], ["bots", "zoom", "1"], ["admin", "users"], ["auth", "me", "x"], ["bots", "status", "x"]]) expect((await GET(req("GET", { "x-api-key": "k" }), ctx(...p))).status).toBe(404);
     expect(seen).toEqual([]);
   });
 });

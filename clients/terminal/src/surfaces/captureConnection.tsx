@@ -8,7 +8,7 @@ import { cardBtn, cardMeta, cardPrimaryBtn, cardRow } from "./integrationCard";
 import { jsonOrThrow } from "./salesCycleApi";
 import { presentError } from "./apiClient";
 
-export interface CaptureDevice { id: number; created_at: string | null; last_used_at: string | null }
+export interface CaptureDevice { id: number; name?: string | null; created_at: string | null; last_used_at: string | null }
 
 export interface CaptureStatus { devices: CaptureDevice[]; download: string | null }
 
@@ -36,12 +36,22 @@ export function lastUsed(iso: string | null, now = Date.now()): string {
   return `${Math.round(min / 1440)} days ago`;
 }
 
+/** "Julian's MacBook Pro" — or, for a connection made before Macs sent their names, a plain description that still says when. */
+export const deviceLabel = (d: CaptureDevice): string => d.name || "Mac (older connection)";
+
+/** "connected 3 days ago" from when the key was made. */
+export function connectedSince(iso: string | null, now = Date.now()): string {
+  const ago = lastUsed(iso, now);
+  return ago === "not used yet" ? "" : `connected ${ago}`;
+}
+
 export function CaptureCard({ now = () => Date.now() }: { now?: () => number }) {
   const [devices, setDevices] = useState<CaptureDevice[] | null>(null);
   const [download, setDownload] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState(false);
+  const [confirming, setConfirming] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
     getCaptureStatus().then((s) => { setDevices(s.devices); setDownload(s.download); setErr(null); }).catch((e: unknown) => setErr(presentError(e).headline));
@@ -61,7 +71,7 @@ export function CaptureCard({ now = () => Date.now() }: { now?: () => number }) 
 
   const remove = async (id: number) => {
     setBusy(true); setErr(null);
-    try { await disconnectDevice(id); refresh(); }
+    try { await disconnectDevice(id); setConfirming(null); refresh(); }
     catch (e: unknown) { setErr(presentError(e).headline); }
     finally { setBusy(false); }
   };
@@ -82,10 +92,20 @@ export function CaptureCard({ now = () => Date.now() }: { now?: () => number }) 
           A menu-bar app that notices when you join a Zoom or Teams call that isn&rsquo;t on a calendar and sends Vexa&rsquo;s bot to it
           (or, with no link to find, captures the call&rsquo;s audio on your Mac).
         </div>
-        {(devices ?? []).map((d, i) => (
+        {(devices ?? []).map((d) => (
           <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--t2)" }}>
-            <span style={{ flex: 1 }}>Mac {i + 1} · last used {lastUsed(d.last_used_at, now())}</span>
-            <button disabled={busy} onClick={() => void remove(d.id)} style={{ ...cardBtn, color: "var(--danger)" }}>Disconnect</button>
+            <span style={{ flex: 1 }}>
+              {deviceLabel(d)} · {[connectedSince(d.created_at, now()), `last used ${lastUsed(d.last_used_at, now())}`].filter(Boolean).join(" · ")}
+            </span>
+            {confirming === d.id ? (
+              <>
+                <span style={{ color: "var(--t3)" }}>It will stop working until you connect it again.</span>
+                <button disabled={busy} onClick={() => void remove(d.id)} style={{ ...cardBtn, color: "var(--danger)" }}>Yes, disconnect</button>
+                <button disabled={busy} onClick={() => setConfirming(null)} style={cardBtn}>Cancel</button>
+              </>
+            ) : (
+              <button disabled={busy} onClick={() => setConfirming(d.id)} style={{ ...cardBtn, color: "var(--danger)" }}>Disconnect</button>
+            )}
           </div>
         ))}
         {download && n > 0 && (

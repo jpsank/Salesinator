@@ -6,7 +6,7 @@ import ServiceManagement
 /// The menu-bar app: notices a Zoom or Teams call, and either sends Vexa's bot to it (finding the call's link in the
 /// browser) or, when there is no link, captures the call's audio here — and says so either way.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private struct BotCall { let platform: CallPlatform; let serverPlatform: String; let nativeId: String }
+    private struct BotCall { let platform: CallPlatform; let serverPlatform: String; let nativeId: String; let since = Date() }
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let detector = CallDetector()
@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var searching = false                 // looking for the call's link / starting
     private var offered: CallPlatform?            // a call not handled automatically — waiting for the person
     private var announced = false
+    private var ticks = 0
+    private var checkingBot = false              // a look at whether the bot is still on the call is in flight
     private var update: UpdateOffer?              // a newer build the update feed offered
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -70,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             let result: ConnectLink.Exchanged
             do {
-                let (data, resp) = try await URLSession.shared.data(for: ConnectLink.exchangeRequest(r))
+                let (data, resp) = try await URLSession.shared.data(for: ConnectLink.exchangeRequest(r, device: Settings.device))
                 result = ConnectLink.interpret(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: data)
             } catch { result = .failed("Can't reach \(r.base.host ?? "Vexa"): \(error.localizedDescription)") }
             await MainActor.run {
@@ -132,12 +134,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // ── detecting ──
     private func tick() {
+        ticks += 1
+        if ticks % 4 == 0 { watchBot() }
         var activity = ProcessAudioProbe.activity()
         for p in CallPlatform.allCases where !Settings.isEnabled(p) { activity[p] = .idle }
         for event in detector.update(now: ProcessInfo.processInfo.systemUptime, activity: activity) {
             switch event {
             case .started(let p): callStarted(p)
             case .ended(let p): callEnded(p)
+            }
+        }
+    }
+
+    /// While a bot is on the call, ask Vexa every few seconds whether it still is: when the meeting ends — or someone removes the bot —
+    /// it is gone within moments, well before the audio going quiet would say so. Only a clear answer that the bot is not
+    /// running counts; a failed or unreadable one leaves things as they are.
+    private func watchBot() {
+        guard let b = bot, !checkingBot, Date().timeIntervalSince(b.since) > 10,
+              let key = Settings.apiKey else { return }
+        checkingBot = true
+        let gw = Settings.gatewayURL
+        Task {
+            let presence = await BotClient.running(gateway: gw, key: key)
+            await MainActor.run {
+                self.checkingBot = false
+                guard let now = self.bot, now.nativeId == b.nativeId, BotRequest.isGone(presence, platform: b.serverPlatform, nativeId: b.nativeId) else { return }
+                self.bot = nil
+                self.record(b.platform, .botLeft)
+                Notifier.post(title: "Vexa's bot left your \(b.platform.displayName) call", body: "It will be sent to your next call.")
             }
         }
     }
@@ -161,7 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if session?.platform == p { session?.stop(); session = nil; sessionState = .stopped }
         if let b = bot, b.platform == p, let key = Settings.apiKey {
             let gw = Settings.gatewayURL
-            Task { await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) }    // it leaves by itself too
+            Task { _ = await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) }    // it leaves by itself too
             bot = nil
         }
         announced = false
@@ -469,7 +493,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let b = bot, let key = Settings.apiKey else { return }
         let gw = Settings.gatewayURL
         bot = nil; rebuildMenu()
-        Task { await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) }
+        Task {
+            switch await BotClient.stop(platform: b.serverPlatform, nativeId: b.nativeId, gateway: gw, key: key) {
+            case .removed: break
+            case .keyRejected: await MainActor.run { self.setupWindow.present() }
+            case .failed(let why): await MainActor.run { self.problem("Couldn't remove the bot: \(why). It leaves by itself when the call ends.") }
+            }
+        }
     }
     @objc private func setBotMode() { Settings.mode = .bot; rebuildMenu() }
     @objc private func setAudioMode() { Settings.mode = .audio; rebuildMenu() }

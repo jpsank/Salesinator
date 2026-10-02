@@ -32,6 +32,11 @@ enum Settings {
         set { d.set(newValue, forKey: "trustedBases") }
     }
     static func trust(_ base: URL) { trustedBases = TrustedBases.adding(d.stringArray(forKey: "trustedBases") ?? [], base) }
+    /// Who this Mac tells Vexa it is when pairing: a stable id made once, and the name the person gave the computer.
+    static var device: ConnectLink.Device {
+        let id = d.string(forKey: "deviceId") ?? { let n = UUID().uuidString; d.set(n, forKey: "deviceId"); return n }()
+        return ConnectLink.Device(id: id, name: Host.current().localizedName ?? "Mac")
+    }
     static var lastUpdateCheck: Date? {
         get { d.object(forKey: "lastUpdateCheck") as? Date }
         set { d.set(newValue, forKey: "lastUpdateCheck") }

@@ -25,6 +25,50 @@ public enum BotRequest {
         return r
     }
 
+    public enum Removal: Equatable {
+        case removed                       // taken off — or already gone, which is what was wanted
+        case keyRejected
+        case failed(String)
+    }
+
+    /// A 404 means no such bot is running (it left with the meeting, or was removed): the goal is met, so it is not a failure.
+    public static func interpretStop(status: Int) -> Removal {
+        switch status {
+        case 200...299, 404: return .removed
+        case 401, 403: return .keyRejected
+        default: return .failed("Vexa answered \(status)")
+        }
+    }
+
+    /// The caller's running bots — what the app asks, while its bot is on a call, to learn quickly that the bot is gone.
+    public static func running(gateway: String, key: String) -> URLRequest? {
+        guard let base = normalized(gateway), let url = URL(string: base + "/bots/status") else { return nil }
+        var r = URLRequest(url: url)
+        r.setValue(key, forHTTPHeaderField: "X-API-Key")
+        r.timeoutInterval = 10
+        return r
+    }
+
+    public enum Presence: Equatable {
+        case running(Set<String>)          // "platform/native id" of every bot still running
+        case unknown                       // no usable answer — never a reason to think the bot is gone
+    }
+
+    public static func interpretRunning(status: Int, body: Data) -> Presence {
+        guard status == 200, let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let list = (json["running_bots"] ?? json["running"]) as? [[String: Any]] else { return .unknown }
+        return .running(Set(list.compactMap { b in
+            guard let p = b["platform"] as? String, let n = (b["native_meeting_id"] as? String) ?? (b["platform_specific_id"] as? String) else { return nil }
+            return "\(p)/\(n)"
+        }))
+    }
+
+    /// True only when Vexa answered and this bot is not among the running ones.
+    public static func isGone(_ presence: Presence, platform: String, nativeId: String) -> Bool {
+        if case .running(let all) = presence { return !all.contains("\(platform)/\(nativeId)") }
+        return false
+    }
+
     /// "Who is this key?" — the setup check's proof that Vexa accepts it.
     public static func me(gateway: String, key: String) -> URLRequest? {
         guard let base = normalized(gateway), let url = URL(string: base + "/auth/me") else { return nil }

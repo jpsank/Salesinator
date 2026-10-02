@@ -149,7 +149,7 @@ edges:
   slim -req-> gateway  # Python client; REST via gateway
   extension -req-> gateway  # browser extension client; live WS via gateway
   capture-mac -req-> terminal  # audio of a detected call → the terminal's /capture/ingest WebSocket relay → the capture ingest (authenticated there with the user's API key)
-  capture-mac -req-> terminal  # requests Vexa's bot for a detected call: POST /bots through the terminal's /api/capture/relay, with the user's own API key
+  capture-mac -req-> terminal  # requests Vexa's bot for a detected call (POST /bots), asks whether it is still running (GET /bots/status) and removes it, through the terminal's /api/capture/relay, with the user's own API key
   capture-mac -req-> terminal  # pairing: the user's browser opens the terminal's connect page, which opens the app with a one-time code the app exchanges for its bot-scoped key and the server addresses
   terminal -req-> desktop  # relays the Mac app's audio WebSocket to the capture ingest, and its bot requests to the gateway (only the app's own key)
   flows-worker -write-> flows-rows

@@ -3,7 +3,7 @@ import Foundation
 /// What happened to a recent call, for the menu's "Recent calls" — so the person can see the app did (or didn't do) something
 /// without opening the Vexa web app.
 public struct CallRecord: Codable, Equatable {
-    public enum Outcome: String, Codable { case botSent, botAlreadyThere, audioCaptured, skipped, noLink, failed }
+    public enum Outcome: String, Codable { case botSent, botAlreadyThere, botLeft, audioCaptured, skipped, noLink, failed }
     public var platform: String          // "Zoom" / "Microsoft Teams"
     public var when: Date
     public var outcome: Outcome
@@ -34,6 +34,7 @@ public enum CallLog {
         switch r.outcome {
         case .botSent: return "Vexa's bot was sent"
         case .botAlreadyThere: return "a bot was already there"
+        case .botLeft: return "Vexa's bot left the call"
         case .audioCaptured: return "audio captured on this Mac"
         case .skipped: return "skipped"
         case .noLink: return "no call link found"

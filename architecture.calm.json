@@ -2505,7 +2505,7 @@
   },
   {
    "unique-id": "capture-mac-relay",
-   "description": "requests Vexa's bot for a detected call: POST /bots through the terminal's /api/capture/relay, with the user's own API key",
+   "description": "requests Vexa's bot for a detected call (POST /bots), asks whether it is still running (GET /bots/status) and removes it, through the terminal's /api/capture/relay, with the user's own API key",
    "relationship-type": {
     "connects": {
      "source": {

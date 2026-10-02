@@ -22,6 +22,9 @@ function postReq(body: unknown, host = "localhost:13000", extra: Record<string, 
 }
 
 interface Rec { method: string; url: string }
+interface Row { id: number; user_id: number; scopes: string[]; name: string }
+const macs = (n: number): Row[] => [...Array(n).keys()].map((i) => ({ id: i + 1, user_id: 42, scopes: ["bot"], name: "vexa-capture (Mac)" }));
+let rows: Row[] = [];
 function stub() {
   const calls: Rec[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -32,7 +35,7 @@ function stub() {
       return token === "alice-tok" ? new Response(JSON.stringify({ user_id: 42, email: "alice@vexa.ai" }), { status: 200 }) : new Response("no", { status: 401 });
     }
     if (url.includes("/admin/users/42/tokens") && method === "GET") {
-      return new Response(JSON.stringify([1, 2, 3, 4, 5].map((id) => ({ id, user_id: 42, scopes: ["bot"], name: "vexa-capture (Mac)" })).concat([{ id: 9, user_id: 42, scopes: ["bot"], name: "ci" }])), { status: 200 });
+      return new Response(JSON.stringify(rows.concat([{ id: 9, user_id: 42, scopes: ["bot"], name: "ci" }])), { status: 200 });
     }
     if (url.includes("/admin/users/42/tokens") && method === "POST") return new Response(JSON.stringify({ id: 10, user_id: 42, scopes: ["bot"], name: "vexa-capture (Mac)", token: "vxa_bot_new" }), { status: 201 });
     if (url.includes("/admin/tokens/") && method === "DELETE") return new Response(null, { status: 204 });
@@ -48,6 +51,7 @@ const codeFrom = async (res: Response): Promise<string> => {
 
 beforeEach(() => {
   cookieJar = { "vexa-token": "alice-tok" };
+  rows = macs(5);
   process.env.VEXA_ADMIN_API_URL = "http://admin.test";
   process.env.VEXA_ADMIN_API_KEY = "admin-secret";
   process.env.VEXA_INTERNAL_API_SECRET = "internal-secret";
@@ -106,6 +110,13 @@ describe("the Settings card's routes", () => {
         expect(((await (await GET(getReq(), ctx("status"))).json()) as { download: string | null }).download).toBe(want);
       }
     } finally { if (prior === undefined) delete process.env.VEXA_CAPTURE_DOWNLOAD_URL; else process.env.VEXA_CAPTURE_DOWNLOAD_URL = prior; }
+  });
+
+  it("status names each Mac from its key, and says nothing for a key from before names", async () => {
+    rows = [{ id: 1, user_id: 42, scopes: ["bot"], name: "vexa-capture (Mac)" }, { id: 2, user_id: 42, scopes: ["bot"], name: "vexa-capture (Mac) · Julian's MacBook Pro · 1a2b3c4d" }];
+    stub();
+    const body = await (await GET(getReq(), ctx("status"))).json() as { devices: Array<{ id: number; name: string | null }> };
+    expect(body.devices.map((d) => [d.id, d.name])).toEqual([[1, null], [2, "Julian's MacBook Pro"]]);
   });
 
   it("status and pair need a signed-in user", async () => {
@@ -195,5 +206,38 @@ describe("exchange", () => {
     stub();
     expect((await GET(getReq(), ctx("bogus"))).status).toBe(404);
     expect((await POST(postReq({}), ctx("connect"))).status).toBe(404);
+  });
+});
+
+describe("exchange with a Mac's identity", () => {
+  const device = { id: "1a2b3c4d-0000-4000-8000-000000000000", name: "Julian's MacBook Pro" };
+  const exchangeWith = async (dev: unknown) => {
+    const calls = stub();
+    const code = await codeFrom(await GET(getReq(), ctx("connect")));
+    const res = await POST(postReq({ code, device: dev }), ctx("exchange"));
+    return { res, calls, revoked: calls.filter((c) => c.method === "DELETE").map((c) => c.url.split("/").pop()), mint: calls.find((c) => c.method === "POST" && c.url.includes("/admin/users/42/tokens")) };
+  };
+
+  it("names the new key after the Mac", async () => {
+    const { res, mint } = await exchangeWith(device);
+    expect(res.status).toBe(200);
+    expect(decodeURIComponent(mint!.url.replace(/\+/g, " "))).toContain("name=vexa-capture (Mac) · Julian's MacBook Pro · 1a2b3c4d");
+  });
+
+  it("pairing the same Mac again replaces its earlier key instead of adding another", async () => {
+    rows = [
+      { id: 1, user_id: 42, scopes: ["bot"], name: "vexa-capture (Mac) · Julian's MacBook Pro · 1a2b3c4d" },
+      { id: 2, user_id: 42, scopes: ["bot"], name: "vexa-capture (Mac) · Office iMac · ffeeddcc" },
+    ];
+    const { revoked } = await exchangeWith(device);
+    expect(revoked).toEqual(["1"]);                                          // the other Mac's key is untouched
+  });
+
+  it("ignores a malformed identity and cleans up the name", async () => {
+    expect((await exchangeWith({ id: "x", name: "bad" })).mint!.url).toMatch(/name=vexa-capture\+%28Mac%29$/);
+    const noisy = await exchangeWith({ id: device.id, name: "A\u0000B · C" + "x".repeat(80) });
+    const name = decodeURIComponent(noisy.mint!.url.replace(/\+/g, " ")).split("name=")[1];
+    expect(name.split(" · ")).toHaveLength(3);                                // the separator inside a name cannot forge a second field
+    expect(name).not.toContain("\u0000");
   });
 });

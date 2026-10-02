@@ -17,6 +17,8 @@ import { currentUser } from "../../tokens/currentUser";
 export const dynamic = "force-dynamic";
 
 const KEY_NAME = "vexa-capture (Mac)";
+const SEP = " · ";                  // a key made for a known Mac is named "<KEY_NAME> · <computer name> · <first 8 of its id>"
+const DEVICE_ID = /^[A-Za-z0-9-]{8,64}$/;
 const KEEP_KEYS = 4;                 // one per device is expected; older ones are revoked so pairing never piles them up
 const CODE_TTL_MS = 120_000;
 const NO_STORE = { "Cache-Control": "no-store, no-cache, must-revalidate" } as const;
@@ -62,9 +64,30 @@ function newLink(me: { userId: string | number; email: string }, origin: string)
   return `vexacapture://connect?code=${encodeURIComponent(code)}&base=${encodeURIComponent(origin)}`;
 }
 
+interface Device { id: string; name: string }
+
+/** The Mac's own account of itself, sent with the code: a stable id (so pairing the same Mac again replaces its key instead of
+ *  adding another) and its name (so the card can tell the Macs apart). Anything malformed is simply ignored. */
+function parseDevice(raw: unknown): Device | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { id, name } = raw as { id?: unknown; name?: unknown };
+  if (typeof id !== "string" || !DEVICE_ID.test(id)) return null;
+  const clean = (typeof name === "string" ? name : "").replace(/[\u0000-\u001f\u007f]/g, "").split(SEP).join(" ").trim().slice(0, 40);
+  return { id: id.slice(0, 8).toLowerCase(), name: clean || "Mac" };
+}
+
+const keyName = (d: Device | null): string => (d ? `${KEY_NAME}${SEP}${d.name}${SEP}${d.id}` : KEY_NAME);
+
+/** What a stored key's name says about its Mac; a key from before names were sent says nothing. */
+function deviceOf(keyNameStored: string): { id: string | null; name: string | null } {
+  if (!keyNameStored.startsWith(KEY_NAME + SEP)) return { id: null, name: null };
+  const parts = keyNameStored.slice(KEY_NAME.length + SEP.length).split(SEP);
+  return { name: parts[0] || null, id: parts[1] || null };
+}
+
 async function myKeys(userId: string | number) {
   const listed = await listUserTokens(userId);
-  return (listed.ok ? listed.data ?? [] : []).filter((t) => t.name === KEY_NAME);
+  return (listed.ok ? listed.data ?? [] : []).filter((t) => t.name === KEY_NAME || t.name?.startsWith(KEY_NAME + SEP));
 }
 
 async function connect(req: NextRequest): Promise<Response> {
@@ -84,7 +107,7 @@ async function connect(req: NextRequest): Promise<Response> {
 async function status(): Promise<Response> {
   const me = await currentUser();
   if (!me.ok) return json({ error: me.error }, me.status);
-  const devices = (await myKeys(me.userId)).map((t) => ({ id: t.id, created_at: t.created_at ?? null, last_used_at: t.last_used_at ?? null }));
+  const devices = (await myKeys(me.userId)).map((t) => ({ id: t.id, name: deviceOf(t.name ?? "").name, created_at: t.created_at ?? null, last_used_at: t.last_used_at ?? null }));
   return json({ devices, download: downloadUrl() });
 }
 
@@ -115,7 +138,12 @@ async function revoke(req: NextRequest): Promise<Response> {
 
 async function exchange(req: NextRequest): Promise<Response> {
   let code = "";
-  try { code = String(((await req.json()) as { code?: unknown }).code ?? ""); } catch { /* falls through to the 404 */ }
+  let device: Device | null = null;
+  try {
+    const body = (await req.json()) as { code?: unknown; device?: unknown };
+    code = String(body.code ?? "");
+    device = parseDevice(body.device);
+  } catch { /* falls through to the 404 */ }
   const now = Date.now();
   const p = pending.get(code);
   pending.delete(code);                                            // single use, whether or not it is still fresh
@@ -123,9 +151,11 @@ async function exchange(req: NextRequest): Promise<Response> {
   if (!p || p.expires <= now) return json({ error: "That connection link has expired — choose Connect to Vexa again." }, 404);
   const addr = addresses(publicOrigin(req));
 
-  const mine = (await myKeys(p.userId)).sort((a, b) => b.id - a.id);
-  for (const old of mine.slice(KEEP_KEYS - 1)) await revokeToken(old.id);
-  const minted = await mintUserToken(p.userId, { scopes: ["bot"], name: KEY_NAME });
+  const all = (await myKeys(p.userId)).sort((a, b) => b.id - a.id);
+  const replaced = device ? all.filter((t) => deviceOf(t.name ?? "").id === device!.id) : [];     // this Mac's own earlier keys
+  for (const old of replaced) await revokeToken(old.id);
+  for (const old of all.filter((t) => !replaced.includes(t)).slice(KEEP_KEYS - 1)) await revokeToken(old.id);
+  const minted = await mintUserToken(p.userId, { scopes: ["bot"], name: keyName(device) });
   if (!minted.ok || !minted.data?.token) return json({ error: "Couldn't create a key for Vexa Capture." }, 502);
   return json({ key: minted.data.token, api: addr.api, ingest: addr.ingest, account: p.email });
 }

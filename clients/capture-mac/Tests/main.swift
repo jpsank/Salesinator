@@ -53,6 +53,14 @@ do {
     var ended: [CallEvent] = []
     for _ in 0..<25 { ended += tick(idle) }
     check("20 s of no audio at all ends it, once", ended == [.ended(.zoom)], "\(ended)")
+    check("by default a call ends 10 s after the last audio — not before", {
+        let d3 = CallDetector(); var n: TimeInterval = 0
+        func step(_ a: AudioActivity) -> [CallEvent] { n += 1; return d3.update(now: n, activity: [.zoom: a]) }
+        for _ in 0..<5 { _ = step(mic) }
+        let early = (0..<9).flatMap { _ in step(idle) }
+        let late = (0..<3).flatMap { _ in step(idle) }
+        return early.isEmpty && late == [.ended(.zoom)]
+    }())
     check("a flicker inside the end window does not end it", {
         let d2 = CallDetector(startAfter: 1, endAfter: 20); var n: TimeInterval = 0
         func step(_ a: AudioActivity) -> [CallEvent] { n += 1; return d2.update(now: n, activity: [.zoom: a]) }
@@ -139,6 +147,9 @@ do {
           && ConnectLink.parse(URL(string: "https://x.com/connect?code=a&base=https%3A%2F%2Fx.com")!) == nil && ConnectLink.parse(URL(string: "vexacapture://other?code=a&base=https%3A%2F%2Fx.com")!) == nil)
     check("a path, query and credentials on the site are dropped", ConnectLink.acceptableBase("https://user:pw@terminal.example.com/some/path?x=1#f")?.absoluteString == "https://terminal.example.com")
     check("the page to open is the site's /api/capture/connect", ConnectLink.connectPage(base: " https://terminal.example.com/ ")?.absoluteString == "https://terminal.example.com/api/capture/connect" && ConnectLink.connectPage(base: "ftp://x") == nil)
+    let withDevice = ConnectLink.exchangeRequest(ConnectLink.parse(good)!, device: .init(id: "1a2b3c4d-0000", name: "Julian's MacBook Pro"))
+    let sent = (try? JSONSerialization.jsonObject(with: withDevice.httpBody!)) as? [String: Any]
+    check("the exchange also tells the site which Mac this is", sent?["code"] as? String == "abc123" && (sent?["device"] as? [String: String]) == ["id": "1a2b3c4d-0000", "name": "Julian's MacBook Pro"])
     let req = ConnectLink.exchangeRequest(ConnectLink.parse(good)!)
     check("the exchange POSTs the code to the site", req.url?.absoluteString == "https://terminal.example.com/api/capture/exchange" && req.httpMethod == "POST" && (try? JSONSerialization.jsonObject(with: req.httpBody!)) as? [String: String] == ["code": "abc123"])
     func body(_ j: String) -> Data { Data(j.utf8) }
@@ -184,6 +195,23 @@ do {
     for i in 0..<8 { log = CallLog.adding(log, rec(Double(80 - i * 10), .botSent)) }   // each added call is newer than the last
     check("only the latest five are kept, newest first", log.count == 5 && log[0].when > log[4].when)
     check("it survives being saved and loaded", (try? JSONDecoder().decode([CallRecord].self, from: JSONEncoder().encode(log))) == log)
+}
+
+// ── the bot going away ──
+do {
+    check("a 404 on removal means the bot is already gone — not a failure", BotRequest.interpretStop(status: 404) == .removed && BotRequest.interpretStop(status: 200) == .removed && BotRequest.interpretStop(status: 204) == .removed)
+    check("a rejected key or a server error on removal is told apart", BotRequest.interpretStop(status: 401) == .keyRejected && BotRequest.interpretStop(status: 502) == .failed("Vexa answered 502"))
+    let r = BotRequest.running(gateway: "https://t.example.com/api/capture/relay/", key: "K")
+    check("the running-bots request is a GET of bots/status with the key", r?.url?.absoluteString == "https://t.example.com/api/capture/relay/bots/status" && r?.httpMethod == "GET" && r?.value(forHTTPHeaderField: "X-API-Key") == "K")
+    let listed = Data(#"{"running_bots":[{"platform":"zoom","native_meeting_id":"111"},{"platform":"google_meet","native_meeting_id":"abc-defg"}]}"#.utf8)
+    let presence = BotRequest.interpretRunning(status: 200, body: listed)
+    check("it reads the platform and meeting of each running bot", presence == .running(["zoom/111", "google_meet/abc-defg"]))
+    check("a bot that is listed is not gone", !BotRequest.isGone(presence, platform: "zoom", nativeId: "111"))
+    check("a bot that is not listed is gone", BotRequest.isGone(presence, platform: "zoom", nativeId: "222"))
+    check("an empty list means every bot is gone", BotRequest.isGone(BotRequest.interpretRunning(status: 200, body: Data(#"{"running_bots":[]}"#.utf8)), platform: "zoom", nativeId: "111"))
+    check("no answer, an error or an unreadable body never says the bot is gone",
+          [BotRequest.interpretRunning(status: 502, body: listed), BotRequest.interpretRunning(status: 200, body: Data("nope".utf8)), BotRequest.interpretRunning(status: 200, body: Data("{}".utf8))]
+            .allSatisfy { $0 == .unknown && !BotRequest.isGone($0, platform: "zoom", nativeId: "111") })
 }
 
 // ── updates ──
