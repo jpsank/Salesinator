@@ -69,6 +69,7 @@ class PendingApproval:
     votes_up: int | None = None
     votes_down: int | None = None
     waiting_notified: int = 0
+    last_error: str | None = None       # the latest reason pushing the branch / opening the PR failed; cleared when it succeeds
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,7 @@ class Store:
             # Migration: who approved, and the 👍/👎 tally at that moment, for the vote-then-leader approval. Older rows keep NULLs
             # (approved by the original single ✅). `waiting_notified` makes the "waiting for more 👍 than 👎" reply a once-only.
             for column, ddl in (("approved_by", "TEXT"), ("votes_up", "INTEGER"), ("votes_down", "INTEGER"),
-                                ("waiting_notified", "INTEGER NOT NULL DEFAULT 0")):
+                                ("waiting_notified", "INTEGER NOT NULL DEFAULT 0"), ("last_error", "TEXT")):
                 if column not in existing_cols:
                     conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
             # Each time the copilot raises a request that is a repeat of a card already posted, instead of a second card: what was said
@@ -346,6 +347,18 @@ class Store:
         """How many times a request has been raised, the original included."""
         with self._conn() as conn:
             return 1 + conn.execute("SELECT COUNT(*) FROM card_mentions WHERE approval_id = ?", (approval_id,)).fetchone()[0]
+
+    def record_error(self, approval_id: int, message: str) -> bool:
+        """Remembers why the latest push / pull-request attempt failed. True when this is a NEW reason for the request (the first failure,
+        or a different one), so the caller says it once instead of every sweep."""
+        with self._conn() as conn:
+            cur = conn.execute("UPDATE pending_approvals SET last_error = ? WHERE id = ? AND (last_error IS NULL OR last_error != ?)",
+                               (message, approval_id, message))
+            return cur.rowcount == 1
+
+    def clear_error(self, approval_id: int) -> None:
+        with self._conn() as conn:
+            conn.execute("UPDATE pending_approvals SET last_error = NULL WHERE id = ?", (approval_id,))
 
     def claim_waiting_notice(self, approval_id: int) -> bool:
         """True exactly once per request: the caller that gets it posts the "waiting for more 👍 than 👎" reply."""

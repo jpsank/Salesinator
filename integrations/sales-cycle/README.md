@@ -310,6 +310,16 @@ By default **anyone's** ✅ on a feature-request card approves it. In Settings �
 Needs the extra scopes above and a **reconnect** of Slack in Settings after adding them. The approval records who approved and the
 tally (`approved_by`, `votes_up`, `votes_down`); older requests keep empty values.
 
+### When the agent finishes but the branch cannot be pushed
+
+After the agent's turn, the sweep pushes its branch to GitHub and opens a pull request, retrying every few seconds. A failure used to be
+silent — a stack trace in a log. The first time a push (or the pull request) fails for a given reason, the bot now says so in the card's
+Slack thread, with the real reason; for the common cause, **GitHub rejecting the token the product repo pushes with**, it says how to
+fix it: the push runs as the product repo's own identity, whose token is a *copy* of yours made when you click **Use this repo**, so it
+goes stale when your own GitHub token changes — Settings → Integrations → GitHub → *Product repo* → **Change → Use this repo** refreshes
+the copy. The same reason is not repeated; a different one is. When the pull request opens, its link is posted in the thread. Error text
+keeps the server's own reason (`call_detailed` in `_http.py`) with anything token-shaped removed.
+
 ### Repeated requests
 
 The copilot words the same ask differently each time it hears it ("CSV Export of Results", then "Export results to CSV"). Rather than a

@@ -27,7 +27,7 @@ import logging
 import re
 import uuid
 
-from sales_cycle._http import call
+from sales_cycle._http import call, call_detailed
 
 logger = logging.getLogger("sales_cycle.orchestrator")
 
@@ -42,6 +42,16 @@ class PushError(RuntimeError):
 
 class PullRequestError(RuntimeError):
     pass
+
+
+_AUTH_FAILURES = ("authentication failed", "invalid username or token", "bad credentials", "could not read username",
+                  "password authentication is not supported", "permission to", "http 401", "http 403")
+
+
+def is_auth_failure(message: str) -> bool:
+    """Did GitHub refuse because of the credentials (an expired, revoked or under-privileged token), as opposed to anything else?"""
+    m = message.lower()
+    return any(s in m for s in _AUTH_FAILURES)
 
 
 def slug_for(title: str) -> str:
@@ -138,7 +148,7 @@ def push_if_ready(
         push_body["unit"] = unit_id
     if expected_signoff:
         push_body["expected_signoff"] = expected_signoff
-    resp = call(
+    resp = call_detailed(
         "POST", f"{agent_api_url.rstrip('/')}/api/workspace/push",
         headers={"X-User-Id": subject, "Content-Type": "application/json"}, json=push_body, timeout=timeout,
         error_cls=PushError, error_prefix="POST /api/workspace/push",
@@ -172,7 +182,7 @@ def open_pull_request(
     pr_body: dict = {"title": title, "body": body, "base": base}
     if unit_id:
         pr_body["unit"] = unit_id
-    resp = call(
+    resp = call_detailed(
         "POST", f"{agent_api_url.rstrip('/')}/api/workspace/pull-request",
         headers={"X-User-Id": subject, "Content-Type": "application/json"}, json=pr_body, timeout=timeout,
         error_cls=PullRequestError, error_prefix="POST /api/workspace/pull-request",

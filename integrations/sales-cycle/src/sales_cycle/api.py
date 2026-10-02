@@ -63,7 +63,7 @@ from sales_cycle.live_card_watcher import watch_meeting
 from sales_cycle.oauth_routes import OAuthProviderConfig, register_oauth_routes
 from sales_cycle.orchestrator import (
     DispatchError, PullRequestError, PushError,
-    git_state, open_pull_request, push_if_ready, submit_implementation,
+    git_state, is_auth_failure, open_pull_request, push_if_ready, submit_implementation,
 )
 from sales_cycle.resolver import (
     WorkspaceBindError, bind_meeting_workspace, enable_copilot_processing, resolve_by_tag, slug_for_company,
@@ -577,6 +577,22 @@ def _reply(slack: SlackClient, channel: str, ts: str, text: str) -> None:
         logger.warning("could not post a thread reply on %s/%s", channel, ts, exc_info=True)
 
 
+def _problem_note(what: str, message: str) -> str:
+    """A person-readable account of why the pipeline could not push the agent's branch / open its pull request, said once in the card's thread."""
+    if is_auth_failure(message):
+        return (f":warning: The agent finished, but {what} failed: GitHub rejected the token the product repo uses. Refresh it in Vexa — "
+                "Settings → Integrations → GitHub → *Product repo* → Change → Use this repo. It retries on its own every few seconds.")
+    reason = message.split("failed:", 1)[-1].strip()[:240]
+    return f":warning: The agent finished, but {what} failed: {reason}. It retries on its own every few seconds."
+
+
+def _report_pipeline_problem(store: Store, approval, what: str, exc: Exception) -> None:
+    """The sweep retries a failed push / pull request forever and quietly; the first time it fails for a given reason, say so in the card's thread."""
+    message = str(exc)
+    if store.record_error(approval.id, message):
+        _reply(_slack(), approval.slack_channel, approval.slack_ts, _problem_note(what, message))
+
+
 def _evaluate_votes(store: Store, settings: Settings, channel: str, ts: str) -> str:
     """Recounts a card's reactions straight from Slack and acts: a leader's ✅ with more 👍 than 👎 approves it and starts the agent;
     a leader's ✅ without the votes is said so once, and the request is approved the moment the votes are there (the sweep re-checks
@@ -714,11 +730,14 @@ def process_approved() -> dict:
                 subject=settings.product_repo_subject, expected_branch=approval.branch,
                 unit_id=approval.workload_id, expected_signoff=_expected_signoff(settings),
             )
-        except (DispatchError, PushError):
+        except (DispatchError, PushError) as exc:
             logger.exception("push check failed for approval id=%s branch=%s", approval.id, approval.branch)
+            if isinstance(exc, PushError):
+                _report_pipeline_problem(store, approval, "pushing its branch to GitHub", exc)
             continue
         if pushed is not None:
             store.mark_pushed(approval.id)
+            store.clear_error(approval.id)
             pushed_now.append(approval.id)
 
     for approval in store.list_pushed_unopened():
@@ -728,12 +747,17 @@ def process_approved() -> dict:
                 title=approval.title, body=approval.body, base=settings.product_repo_default_branch,
                 unit_id=approval.workload_id,
             )
-        except PullRequestError:
+        except PullRequestError as exc:
             logger.exception("pull-request open failed for approval id=%s branch=%s — retrying next sweep",
                               approval.id, approval.branch)
+            _report_pipeline_problem(store, approval, "opening the pull request", exc)
             continue
-        store.mark_done(approval.id, pr_url=(pr or {}).get("url"))
+        pr_url = (pr or {}).get("url")
+        store.mark_done(approval.id, pr_url=pr_url)
+        store.clear_error(approval.id)
         opened_now.append(approval.id)
+        if pr_url:
+            _reply(_slack(), approval.slack_channel, approval.slack_ts, f":white_check_mark: The agent's pull request is open for review: {pr_url}")
 
     return {
         "dispatched": dispatched_now, "pushed": pushed_now, "opened": opened_now,
