@@ -117,6 +117,22 @@ def test_provision_sets_identity_and_installs_signoff_hook(tmp_path):
     assert "Signed-off-by: Julian Sanker <julian@sankergroup.org>" in msg
 
 
+def test_provision_writes_the_identity_into_the_repo_even_when_the_host_has_a_global_one(tmp_path, monkeypatch):
+    """A host with its own global git identity made the "already has one?" check pass, so the repo itself never got
+    the principal's — and a worker container, which has no global config, committed with no identity the signoff hook
+    could read: no Signed-off-by, and the push was refused."""
+    global_cfg = tmp_path / "global.gitconfig"
+    global_cfg.write_text("[user]\n\tname = Host Person\n\temail = host@example.com\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_cfg))
+    root = tmp_path / "workspaces"
+    baseline = _seed_baseline_no_identity(root, "product-repo")
+
+    provision_worktree(root, "product-repo", "unit-1", principal={"name": "Julian Sanker", "email": "julian@sankergroup.org"})
+
+    assert _run("config", "--local", "--get", "user.name", cwd=baseline).stdout.strip() == "Julian Sanker"
+    assert _run("config", "--local", "--get", "user.email", cwd=baseline).stdout.strip() == "julian@sankergroup.org"
+
+
 def test_provision_never_overrides_an_existing_hooks_path(tmp_path):
     root = tmp_path / "workspaces"
     baseline = _seed_baseline(root, "product-repo")

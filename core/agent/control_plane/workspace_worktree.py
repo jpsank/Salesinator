@@ -89,10 +89,13 @@ def _ensure_identity_and_hook(baseline: Path, principal: Optional[dict]) -> None
     own hooks path, in which case it is left alone (never override a repo's own hook setup)."""
     name = (principal or {}).get("name")
     email = (principal or {}).get("email")
-    if name and not _git(baseline, "config", "--get", "user.name").stdout.strip():
-        _git(baseline, "config", "user.name", str(name))
-    if email and not _git(baseline, "config", "--get", "user.email").stdout.strip():
-        _git(baseline, "config", "user.email", str(email))
+    # ``--local``: the identity must live in THIS repo's config. A bare ``--get`` also finds the host's
+    # global identity, so the repo never got one — and a worker container, which has no global config, then
+    # committed without any identity the signoff hook could read (so no Signed-off-by, and the push refused).
+    if name and not _git(baseline, "config", "--local", "--get", "user.name").stdout.strip():
+        _git(baseline, "config", "--local", "user.name", str(name))
+    if email and not _git(baseline, "config", "--local", "--get", "user.email").stdout.strip():
+        _git(baseline, "config", "--local", "user.email", str(email))
 
     hooks_path = _git(baseline, "rev-parse", "--git-path", "hooks").stdout.strip()
     if not hooks_path:

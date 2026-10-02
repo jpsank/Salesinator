@@ -321,7 +321,7 @@ SALES_CYCLE_PRODUCT_REPO_SIGNOFF_EMAIL=you@yourcompany.com
 ```
 Both empty (default) — commits carry no signoff, no different from any other automated commit. Both
 set — every commit an implementation turn makes gets a proper `Signed-off-by: Your Name <you@…>`
-line (agent-api installs the standard `prepare-commit-msg` hook once per subject) and never a
+line (agent-api writes that identity into the product repo's own git config and installs the standard `prepare-commit-msg` hook, once per subject — the hook reads that repo-level identity, since a worker container has no global git config) and never a
 `Co-Authored-By: Claude` trailer, and the push itself refuses (409, nothing pushed) if either check
 fails. If the product repo has its OWN `pre-push` git hook configured (any repo with a normal
 contribution process might), that hook runs too, the same as it would for a human's local
