@@ -74,6 +74,9 @@ class Settings(BaseSettings):
 
     # CI check names the verdict on the agent's pull request leaves out: upstream's contribution-process checks, which fail on every agent pull request
     # (see github_checks.DEFAULT_IGNORED_CHECKS). Comma-separated; override with SALES_CYCLE_CI_IGNORED_CHECKS.
+    # Standalone npm projects the repository's CI tests outside the pnpm workspace (the `packages` job in .github/workflows/gates.yml). A change
+    # inside one is covered, so the verdict does not warn that CI skipped it.
+    ci_standalone_packages: str = "packages/transcript-rendering"
     ci_ignored_checks: str = "merge-card,merge-card-comment,pr-value,pr-welcome,contribution-rights,contribution-rights-driver,comment,evaluate"
 
     # "Connect Zoom" — each rep authorizes THEIR OWN Zoom account, and every meeting they start (scheduled

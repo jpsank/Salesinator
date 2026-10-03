@@ -624,7 +624,8 @@ def _check_ci(store: Store, approval) -> None:
     if result is not None and result[0] == "passed":
         # CI passed — say what it did NOT look at. Best-effort: if the file list or workspace cannot be read, the plain verdict stands.
         try:
-            uncovered = uncovered_by_ci(fetch_changed_files(ref), fetch_workspace_globs(ref, sha))
+            uncovered = uncovered_by_ci(fetch_changed_files(ref), fetch_workspace_globs(ref, sha),
+                                        [p.strip() for p in get_settings().ci_standalone_packages.split(",") if p.strip()])
         except GitHubError as exc:
             logger.warning("could not work out what CI left uncovered for %s (%s)", approval.pr_url, exc)
             uncovered = []

@@ -82,9 +82,25 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+  # packages/ holds standalone npm projects (own lockfile) that sit outside the pnpm workspace above, so the
+  # `node` leg never looks at them. Their own typecheck and tests run here. Keep integrations/sales-cycle's
+  # `ci_standalone_packages` setting in step with this list: it is how the Slack verdict knows what CI covers.
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: packages/transcript-rendering/package-lock.json }
+      - name: packages/transcript-rendering
+        working-directory: packages/transcript-rendering
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
   # THE required check — branch protection + merge queue watch this single context.
   gates:
-    needs: [static, python, node]
+    needs: [static, python, node, packages]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -93,8 +109,9 @@ jobs:
           R_STATIC: ${{ needs.static.result }}
           R_PYTHON: ${{ needs.python.result }}
           R_NODE: ${{ needs.node.result }}
+          R_PACKAGES: ${{ needs.packages.result }}
         run: |
-          echo "static=$R_STATIC python=$R_PYTHON node=$R_NODE"
-          [ "$R_STATIC" = "success" ] && [ "$R_PYTHON" = "success" ] && [ "$R_NODE" = "success" ] \
+          echo "static=$R_STATIC python=$R_PYTHON node=$R_NODE packages=$R_PACKAGES"
+          [ "$R_STATIC" = "success" ] && [ "$R_PYTHON" = "success" ] && [ "$R_NODE" = "success" ] && [ "$R_PACKAGES" = "success" ] \
             || { echo "::error ::a gates leg failed or was cancelled"; exit 1; }
           echo "✓ all gate legs green"

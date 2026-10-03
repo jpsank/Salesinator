@@ -333,7 +333,7 @@ keeps the server's own reason (`call_detailed` in `_http.py`) with anything toke
 The messages the bot posts in the card's thread about the agent's work are written for **someone who does not read code** — a salesperson should
 understand them: what happened, what it means, what to do, and a plain link to GitHub. The agent's pull request is called "a first draft"; CI is
 "the automatic checks"; a failure says the draft "isn't ready to use", names the checks that failed in a small italic line for the developer, and
-says a developer needs to look. A pass that did not cover what changed says so in terms of the part of the product (`packages/transcript-rendering`),
+says a developer needs to look. A pass that did not cover what changed says so in terms of the part of the product (e.g. `core/runtime`),
 not file paths. (Technical detail below.)
 
 The agent's code is only as good as its model, so it is checked by the repository's own CI (typecheck, tests, gates) on the pull request. After
@@ -347,6 +347,8 @@ Two things keep the verdict honest. **Process checks are left out:** upstream's 
 (`SALES_CYCLE_CI_IGNORED_CHECKS`, comma-separated). **A pass says what CI did not look at:** CI typechecks, builds and tests only the packages in
 `pnpm-workspace.yaml`, so when the pull request changes TypeScript/JavaScript outside them (read from the repository's own workspace file) the
 message adds *CI does not typecheck or test … review them by hand* and names the files — a green tick on code CI never saw would mislead.
+A standalone npm package that CI tests in its own job (the `packages` job in `.github/workflows/gates.yml`, today `packages/transcript-rendering`) counts as
+covered; `SALES_CYCLE_CI_STANDALONE_PACKAGES` (comma-separated) lists them and must be kept in step with that workflow.
 
 It needs no token for a **public** repository (GitHub allows ~60 unauthenticated calls an hour, hence the slow polling); a repository that is not
 public is reported once as unreadable. Reading fails open: an unreachable GitHub or a rate limit just waits for the next sweep. Pull requests

@@ -106,6 +106,12 @@ def test_only_typescript_and_javascript_outside_the_workspace_are_reported():
     assert got == ["packages/transcript-rendering/src/index.ts", "packages/transcript-rendering/src/manager.ts", "scripts/x.mjs"]
 
 
+def test_a_standalone_package_with_its_own_ci_job_is_covered():
+    files = ["packages/transcript-rendering/src/manager.ts", "packages/other/src/a.ts"]
+    assert uncovered_by_ci(files, ["core/*"], ["packages/transcript-rendering"]) == ["packages/other/src/a.ts"]
+    assert uncovered_by_ci(files, [], ["packages/transcript-rendering"]) == []        # no workspace to compare with: no claim
+
+
 def test_a_glob_star_is_one_directory_level_and_double_star_any_depth():
     assert uncovered_by_ci(["a/b/c/x.ts"], ["a/*"]) == []              # inside package a/b
     assert uncovered_by_ci(["a/x.ts"], ["a/*"]) == ["a/x.ts"]          # directly in a/, not in a package under it

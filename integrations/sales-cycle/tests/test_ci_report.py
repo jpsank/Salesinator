@@ -167,13 +167,23 @@ def test_pull_requests_open_before_this_existed_are_never_given_a_verdict(tmp_pa
 def test_a_pass_says_what_ci_did_not_cover():
     """The real case: CI passed on a pull request whose changed package is outside the pnpm workspace — CI never typechecked it."""
     store, a = _opened()
-    _github([_run("node"), _run("static")], files=["packages/transcript-rendering/src/manager.ts", "packages/transcript-rendering/src/index.ts", "README.md"], workspace=WORKSPACE)
+    _github([_run("node"), _run("static")], files=["packages/legacy-widget/src/manager.ts", "packages/legacy-widget/src/index.ts", "README.md"], workspace=WORKSPACE)
     slack = _slack()
     _sweep()
     [text] = _texts(slack)
     assert "automatic checks passed" in text and "don't test the part of the product" in text and "by hand" in text
-    assert "`packages/transcript-rendering`" in text and "manager.ts" not in text and "README" not in text
+    assert "`packages/legacy-widget`" in text and "manager.ts" not in text and "README" not in text
     assert store.get_approval(a.id).ci_state == "passed"
+
+
+@respx.mock
+def test_a_pass_over_a_package_ci_tests_on_its_own_is_plain():
+    """packages/transcript-rendering is outside the pnpm workspace but has its own CI job, so a green CI does cover it."""
+    _opened()
+    _github([_run("node"), _run("packages")], files=["packages/transcript-rendering/src/manager.ts"], workspace=WORKSPACE)
+    slack = _slack()
+    _sweep()
+    assert "don't test the part" not in _texts(slack)[0] and "automatic checks passed" in _texts(slack)[0]
 
 
 @respx.mock

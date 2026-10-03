@@ -73,12 +73,12 @@ def _glob_regex(glob: str) -> re.Pattern:
     return re.compile(rf"^{body}/")
 
 
-def uncovered_by_ci(changed_files: list[str], globs: list[str]) -> list[str]:
-    """Changed TypeScript/JavaScript files that lie in no pnpm workspace package. CI's typecheck, build and test run over the workspace
-    packages only, so a green CI says nothing about these — the gap a pull request's thread should admit to."""
+def uncovered_by_ci(changed_files: list[str], globs: list[str], standalone: list[str] | None = None) -> list[str]:
+    """Changed TypeScript/JavaScript files that lie in no pnpm workspace package and in no standalone package CI tests on its own. CI's
+    typecheck, build and test run over those packages only, so a green CI says nothing about the rest — the gap a pull request's thread should admit to."""
     if not globs:
         return []
-    covered = [_glob_regex(g) for g in globs]
+    covered = [_glob_regex(g) for g in [*globs, *(standalone or [])]]
     return sorted(f for f in changed_files
                   if f.endswith(_CODE_SUFFIXES) and "node_modules/" not in f and not any(rx.match(f) for rx in covered))
 
