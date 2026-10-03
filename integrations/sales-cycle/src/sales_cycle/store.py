@@ -73,6 +73,8 @@ class PendingApproval:
     ci_state: str | None = None         # CI's verdict on the pull request: passed, failed, none, timeout, unreadable, untracked; None while waiting
     ci_checked_at: float | None = None
     pr_head_sha: str | None = None
+    preview_state: str | None = None    # the live preview of the pull request: ready, skipped, failed; None while it is still wanted
+    preview_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +179,12 @@ class Store:
                 for column, ddl in (("ci_state", "TEXT"), ("ci_checked_at", "REAL"), ("pr_head_sha", "TEXT")):
                     conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
                 conn.execute("UPDATE pending_approvals SET ci_state = 'untracked' WHERE status = 'done'")
+            # Migration: the live preview of the agent's pull request (preview_state NULL = wanted). Pull requests opened before previews
+            # existed are marked skipped — an old thread must not suddenly get a preview built and announced.
+            if "preview_state" not in existing_cols:
+                for column, ddl in (("preview_state", "TEXT"), ("preview_url", "TEXT")):
+                    conn.execute(f"ALTER TABLE pending_approvals ADD COLUMN {column} {ddl}")
+                conn.execute("UPDATE pending_approvals SET preview_state = 'skipped' WHERE status = 'done'")
             # Each time the copilot raises a request that is a repeat of a card already posted, instead of a second card: what was said
             # and when, so the repeat counts as demand for the original and nothing is lost.
             conn.execute("""
@@ -374,6 +382,18 @@ class Store:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'done' AND pr_url IS NOT NULL AND ci_state IS NULL").fetchall()
         return [PendingApproval(**dict(r)) for r in rows]
+
+    def list_wanting_preview(self) -> list[PendingApproval]:
+        """Opened pull requests that have no live preview yet."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM pending_approvals WHERE status = 'done' AND pr_url IS NOT NULL AND preview_state IS NULL").fetchall()
+        return [PendingApproval(**dict(r)) for r in rows]
+
+    def finish_preview(self, approval_id: int, state: str, url: str | None = None) -> bool:
+        """Records how the live preview ended up. True exactly once per pull request — the caller that gets it says so in the thread."""
+        with self._conn() as conn:
+            return conn.execute("UPDATE pending_approvals SET preview_state = ?, preview_url = ? WHERE id = ? AND preview_state IS NULL",
+                                (state, url, approval_id)).rowcount == 1
 
     def record_ci_poll(self, approval_id: int, *, head_sha: str | None = None) -> None:
         with self._conn() as conn:

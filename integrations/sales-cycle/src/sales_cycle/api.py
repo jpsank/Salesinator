@@ -50,6 +50,8 @@ import time
 from collections import deque
 
 import httpx
+from typing import Literal
+
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -719,6 +721,48 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks) -> d
                 # not before (process-approved's cron sweep still catches it if this never runs).
                 background_tasks.add_task(_dispatch_one, store, settings, approved)
     return {"ok": True}
+
+
+class PreviewReport(BaseModel):
+    state: Literal["ready", "skipped", "failed"]
+    url: str | None = None
+
+
+_PREVIEW_NOTES = {
+    "skipped": ":information_source: *No live preview for this draft* — it changes things behind the scenes, and previews can only show changes "
+               "to what you see in the terminal for now.",
+    "failed": ":warning: *Couldn't build a live preview of this draft.* A developer can look into why.",
+}
+
+
+@app.get("/internal/previews/wanted")
+def previews_wanted() -> list[dict]:
+    """The agent's opened pull requests that still need a live preview — what the machine that builds previews asks for."""
+    out = []
+    for a in get_store().list_wanting_preview():
+        ref = parse_pr_url(a.pr_url or "")
+        if ref is not None:
+            out.append({"id": a.id, "pr": ref.number, "title": a.title})
+    return out
+
+
+@app.post("/internal/previews/{approval_id}")
+def preview_report(approval_id: int, report: PreviewReport) -> dict:
+    """The machine that builds previews says how it went; the first report for a pull request is said once in the card's thread. A link is
+    only worth posting when someone on Slack can open it, so a preview served on this machine alone is recorded and not announced."""
+    store = get_store()
+    approval = store.get_approval(approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="no such request")
+    if not store.finish_preview(approval_id, report.state, report.url):
+        return {"ok": True, "said": False}
+    text = _PREVIEW_NOTES.get(report.state)
+    if report.state == "ready" and (report.url or "").startswith("https://"):
+        text = (f":eyes: *You can try this draft live:* <{report.url}|Open the preview>. It shows the real thing with your own data, "
+                "but it can't change anything.")
+    if text:
+        _reply(_slack(), approval.slack_channel, approval.slack_ts, text)
+    return {"ok": True, "said": text is not None}
 
 
 @app.post("/internal/process-approved")

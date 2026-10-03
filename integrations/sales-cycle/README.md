@@ -52,6 +52,14 @@ channel settings, `/internal/*` (the sweeps) and `/zoom/*` — which only Vexa's
 (`SALES_CYCLE_INTERNAL_SECRET`, the same value as `INTERNAL_API_SECRET`). A route added later is private until it is listed as public, and
 with no secret configured the private routes answer 503 rather than open.
 
+## Live previews of the agent's draft
+
+When the agent's pull request opens, it is *wanted* by the preview runner (`deploy/preview/`): `GET /internal/previews/wanted`
+lists them, and the runner reports each outcome with `POST /internal/previews/<id>` (`ready` + URL, `skipped`, or `failed`).
+The first report is said once in the card's thread — a link when the URL is a public `https://` address, an honest note when
+there was nothing to show or the build failed; a preview open only on the build machine is recorded, not announced. Both
+routes are private (the shared secret). Pull requests opened before this existed are marked `skipped`, never retrofitted.
+
 ## The pieces (file map)
 
 | File | What it does |
