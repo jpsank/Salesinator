@@ -37,6 +37,8 @@ export function createGate(config, deps = {}) {
   const viewerKey = deps.viewerKey || createViewerKeys({ adminUrl: config.adminUrl, adminKey: config.adminKey });
   const hostPattern = new RegExp(`^preview-pr-(\\d+)\\.${domain.replace(/\./g, "\\.")}(:\\d+)?$`);
   const gateway = new URL(gatewayUpstream);
+  // Even if Access is ever widened, only these people get in — keeps the number of Access users (a paid-beyond-free-tier quantity) fixed by us.
+  const allowed = config.allowedEmails ? new Set(config.allowedEmails.map((e) => e.trim().toLowerCase()).filter(Boolean)) : null;
 
   // ── front ───────────────────────────────────────────────────────────────────────────────────────
   async function identify(req) {
@@ -54,6 +56,7 @@ export function createGate(config, deps = {}) {
 
     const email = await identify(req);
     if (!email) return sendJson(res, 401, { detail: "Sign in required." });
+    if (allowed && !allowed.has(email)) return sendJson(res, 403, { detail: "Previews are limited to a small invited group." });
 
     const viewer = await viewerKey(email);
     if (viewer.status === "no_account") {
@@ -158,7 +161,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     accessTeam: env.PREVIEW_ACCESS_TEAM || "",
     accessAudience: env.PREVIEW_ACCESS_AUD || "",
     devEmail: env.PREVIEW_DEV_EMAIL || "",
+    allowedEmails: env.PREVIEW_ALLOWED_EMAILS ? env.PREVIEW_ALLOWED_EMAILS.split(",") : null,
   });
+  if (env.PREVIEW_ACCESS_TEAM && !env.PREVIEW_ALLOWED_EMAILS) throw new Error("PREVIEW_ALLOWED_EMAILS is required with PREVIEW_ACCESS_TEAM (the invited group, comma-separated)");
   if (!env.PREVIEW_ACCESS_TEAM && !(env.PREVIEW_DEV_EMAIL && env.PREVIEW_DOMAIN === "localhost")) {
     throw new Error("set PREVIEW_ACCESS_TEAM + PREVIEW_ACCESS_AUD (public), or PREVIEW_DEV_EMAIL with PREVIEW_DOMAIN=localhost (local only)");
   }

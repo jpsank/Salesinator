@@ -47,6 +47,8 @@ start for a public domain without a Cloudflare Access team, and nothing should r
 
 1. **Enable Zero Trust** (Cloudflare dashboard → Zero Trust). Pick a team name (`<team>.cloudflareaccess.com`) and the **Free** plan (up to 50 users;
    Cloudflare may ask for a card at signup). Until this is done every Access API call answers "Access is not enabled".
+   Then add **One-time PIN** as a login method: **Zero Trust → Integrations → Identity providers → Add new identity provider → One-time PIN**
+   (older guides say Settings → Authentication, which no longer exists). Without it nobody can sign in with an emailed code.
 2. **An API token** (dash.cloudflare.com/profile/api-tokens → Create Token → Custom): account permissions *Access: Apps and Policies → Edit* and
    *Access: Organizations, Identity Providers, and Groups → Read*, limited to your account. Keep it out of chat and shell history: copy it, then
    `pbpaste > ~/.cloudflared/access-token && chmod 600 ~/.cloudflared/access-token`. Rotate it after setup — it is only needed to change Access.
@@ -69,6 +71,18 @@ start for a public domain without a Cloudflare Access team, and nothing should r
 If a viewer sees "no Vexa account yet", they have not signed in to Vexa with that email. If a preview shows "The preview is not running", its container is gone
 (`./preview.sh list`; `gc` removes previews older than 72 hours).
 
+## Keeping it free
+
+Tunnels, DNS and Universal SSL cost nothing; the one quantity that can cost money is **Cloudflare Access users**. Third-party summaries put the Zero Trust Free
+plan at 50 users, beyond which an upgrade to a per-user paid plan is needed (Cloudflare's own docs pages I could reach did not state the limit or what happens
+past it — check Zero Trust → Billing before relying on a number). Previews never need to get near it, and two rules keep the count fixed by us:
+
+- **The Access policy names people, never "Everyone" or a whole email domain.** Today it allows exactly the two addresses it was created with.
+- **The gate holds its own copy of the list** (`PREVIEW_ALLOWED_EMAILS` in `gate.env`, required once an Access team is set) and turns anyone else away before
+  looking them up — so widening the Cloudflare policy by mistake still lets nobody new in. Adding a viewer means editing both, on purpose.
+
+An upgrade is a deliberate purchase in the dashboard; nothing here triggers one. If you ever add a payment method to the account, set a spending cap in Billing.
+
 ## What a preview cannot do (by design)
 
 Every write is refused with a plain message and logged by the gate (`docker logs preview-gate` — look for `refused`). Sales-cycle, the agent API
@@ -85,5 +99,5 @@ a change to a backend service is reported "no live preview" in the card's thread
 
 ## Tests
 
-`node --test deploy/preview/gate/` — session forgery, Access verification, read/write policy, the credential swap, and
+`cd deploy/preview/gate && node --test` and `node --test deploy/preview/runner.test.mjs` — session forgery, Access verification, read/write policy, the credential swap, and
 that a preview never sees a real key.

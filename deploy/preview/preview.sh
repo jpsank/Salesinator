@@ -16,6 +16,7 @@
 #   PREVIEW_DOMAIN       previews are served at preview-pr-<n>.<domain>   (default: localhost, for local use)
 #   PREVIEW_ACCESS_TEAM  Cloudflare Access team name (the part before .cloudflareaccess.com)
 #   PREVIEW_ACCESS_AUD   the Access application's Audience tag
+#   PREVIEW_ALLOWED_EMAILS  the invited people, comma-separated; required with PREVIEW_ACCESS_TEAM (see README: keeping it free)
 #   PREVIEW_DEV_EMAIL    local use only: act as this viewer when no Access team is set
 set -eu
 
@@ -55,6 +56,7 @@ gate_up() {
     -e VEXA_ADMIN_API_URL=http://admin-api:8001 -e GATEWAY_UPSTREAM=http://gateway:8000 \
     -e "PREVIEW_DOMAIN=$(setting PREVIEW_DOMAIN)" -e "PREVIEW_ACCESS_TEAM=$(setting PREVIEW_ACCESS_TEAM)" \
     -e "PREVIEW_ACCESS_AUD=$(setting PREVIEW_ACCESS_AUD)" -e "PREVIEW_DEV_EMAIL=$(setting PREVIEW_DEV_EMAIL)" \
+    -e "PREVIEW_ALLOWED_EMAILS=$(setting PREVIEW_ALLOWED_EMAILS)" \
     vexa-preview/gate >/dev/null
   docker network connect --alias "$GATE" "$NET" "$GATE"
   echo "preview: gate up on 127.0.0.1:$PORT (previews at preview-pr-<n>.$(setting PREVIEW_DOMAIN))"

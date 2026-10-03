@@ -141,6 +141,22 @@ describe("gate", () => {
 
   const host = { host: "preview-pr-7.example.test" };
 
+  it("turns away a signed-in person who is not on the invited list, before any account lookup", async () => {
+    let looked = false;
+    const gate = createGate(
+      { domain: "example.test", sessionSecret: SECRET, gatewayUpstream: "http://127.0.0.1:9", allowedEmails: ["Rep@Co.com", " "] },
+      { verifyAccess: async (t) => (t === "rep" ? "rep@co.com" : "other@co.com"), viewerKey: async () => ((looked = true), { status: "ok", key: "k", userId: 1 }) },
+    );
+    const server = http.createServer(gate.front.request);
+    const port = await listen(server);
+    try {
+      assert.equal((await call(port, { headers: { ...host, "cf-access-jwt-assertion": "stranger" } })).status, 403);
+      assert.equal(looked, false);
+    } finally {
+      server.close();
+    }
+  });
+
   it("never treats anyone as the dev viewer on a public domain", async () => {
     const open = createGate(
       { domain: "example.test", sessionSecret: SECRET, gatewayUpstream: "http://127.0.0.1:9", devEmail: "rep@co.com" },
