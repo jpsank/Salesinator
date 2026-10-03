@@ -322,6 +322,12 @@ keeps the server's own reason (`call_detailed` in `_http.py`) with anything toke
 
 ### What CI says about the agent's pull request
 
+The messages the bot posts in the card's thread about the agent's work are written for **someone who does not read code** — a salesperson should
+understand them: what happened, what it means, what to do, and a plain link to GitHub. The agent's pull request is called "a first draft"; CI is
+"the automatic checks"; a failure says the draft "isn't ready to use", names the checks that failed in a small italic line for the developer, and
+says a developer needs to look. A pass that did not cover what changed says so in terms of the part of the product (`packages/transcript-rendering`),
+not file paths. (Technical detail below.)
+
 The agent's code is only as good as its model, so it is checked by the repository's own CI (typecheck, tests, gates) on the pull request. After
 the pull request opens, the sweep reads its check runs from GitHub every couple of minutes and says the verdict **once** in the card's thread:
 *CI passed (n checks)*, *CI failed: `typecheck`, `gates`* (the failed checks named, with a link), or — when no check run appears within eight

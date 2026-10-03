@@ -1,3 +1,6 @@
+- **The agent's progress is reported in the card's thread in plain language, with GitHub links.** "The agent has finished a first draft of …",
+  then whether "the automatic checks passed", "did not pass" (the failed checks named in a small line for the developer) or "didn't run" — each
+  saying what it means and that a developer must review the draft before anything is used — written for a salesperson, not a developer.
 - **The agent's pull request now gets CI's verdict in the card's Slack thread.** The agent's output is only as good as its model (one pull
   request replaced a whole interface and could not compile), so the repository's own CI is the check: after the pull request opens, the
   sweep reads its checks from GitHub and says once "CI passed", "CI failed: `typecheck`, `gates`" (named, with a link), or "No CI has run"

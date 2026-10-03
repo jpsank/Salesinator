@@ -92,32 +92,39 @@ def ignored_checks(setting: str) -> frozenset[str]:
     return frozenset(n.strip() for n in setting.split(",") if n.strip())
 
 
+def _areas(files: list[str], limit: int = 3) -> str:
+    """The parts of the product some files belong to, in the repository's own terms: `packages/transcript-rendering`, `core/runtime`."""
+    areas = sorted({"/".join(f.split("/")[:2]) for f in files})
+    shown = ", ".join(f"`{a}`" for a in areas[:limit])
+    return shown + (f" and {len(areas) - limit} more" if len(areas) > limit else "")
+
+
 def verdict(runs: list[dict], *, age_s: float, none_after_s: float = NONE_AFTER_S, give_up_after_s: float = GIVE_UP_AFTER_S, checks_url: str = "",
             uncovered: list[str] | None = None, ignore: frozenset[str] = frozenset()) -> tuple[str, str] | None:
-    """The final word on a pull request's checks, or None to keep waiting. ``runs`` are GitHub check runs (name, status, conclusion);
-    ``age_s`` is how long ago the pull request opened. Returns (state, text) with state one of passed, failed, none, timeout."""
-    link = f" {checks_url}" if checks_url else ""
+    """The final word on a draft's automatic checks, or None to keep waiting — worded for someone who does not read code: what happened, what it
+    means, what to do, and a link to GitHub. ``runs`` are GitHub check runs (name, status, conclusion); ``age_s`` is how long ago the draft
+    opened. Returns (state, text) with state one of passed, failed, none, timeout."""
+    def link(label: str) -> str:
+        return f" <{checks_url}|{label}>" if checks_url else ""
     runs = [r for r in runs if r.get("name") not in ignore]
     if not runs:
         if age_s >= none_after_s:
-            return "none", (":information_source: No CI check has run for this pull request, so nothing has checked the agent's code yet. If you expect "
-                            "CI here, check that GitHub Actions is enabled for the repository." + link)
+            return "none", (":grey_question: *No automatic checks ran on this draft*, so nobody has confirmed it works. A developer needs to review it before "
+                            f"anything is used.{link('Open the draft on GitHub')}\n_For an admin: automatic checks only run if GitHub Actions is turned on for the repository._")
         return None
     if any(r.get("status") != "completed" for r in runs):
         if age_s >= give_up_after_s:
-            return "timeout", f":hourglass: CI was still running an hour after the pull request opened — not waiting any longer.{link}"
+            return "timeout", (f":hourglass: *The automatic checks are taking unusually long* (over an hour), so there is no result yet.{link('Check on GitHub')}")
         return None
     failed = sorted({r.get("name") or "a check" for r in runs if r.get("conclusion") in _FAILED})
     if failed:
-        shown = ", ".join(f"`{n}`" for n in failed[:6]) + (f" and {len(failed) - 6} more" if len(failed) > 6 else "")
-        return "failed", f":x: CI failed on the agent's pull request: {shown}. Review the diff with care.{link}"
-    ok = sum(1 for r in runs if r.get("conclusion") == "success")
-    text = f":white_check_mark: CI passed on the agent's pull request ({ok} check{'s' if ok != 1 else ''})."
+        shown = ", ".join(failed[:6]) + (f" and {len(failed) - 6} more" if len(failed) > 6 else "")
+        return "failed", (":x: *This draft did not pass the automatic checks*, so it isn't ready to use. A developer needs to look at what failed."
+                          f"{link('See what failed on GitHub')}\n_Checks that failed: {shown}_")
     if uncovered:
-        shown = ", ".join(f"`{f}`" for f in uncovered[:5]) + (f" and {len(uncovered) - 5} more" if len(uncovered) > 5 else "")
-        text += (f" :warning: But CI does not typecheck or test the TypeScript/JavaScript this pull request changes outside the workspace packages: "
-                 f"{shown}. A green CI says nothing about them — review them by hand.")
-    return "passed", text + link
+        return "passed", (":white_check_mark: The automatic checks passed — *but they don't test the part of the product this change touches* "
+                          f"({_areas(uncovered)}), so passing tells us little. A developer needs to read that code by hand before it's used.{link('Open the draft on GitHub')}")
+    return "passed", f":white_check_mark: *The automatic checks passed on this draft.* A developer should still read it over before it's used.{link('Open the draft on GitHub')}"
 
 
 def fetch_changed_files(ref: PullRef, *, timeout: float = 10.0, base: str = "https://api.github.com", limit: int = 300) -> list[str]:

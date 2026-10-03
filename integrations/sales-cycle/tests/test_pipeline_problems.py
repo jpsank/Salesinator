@@ -51,7 +51,7 @@ def test_an_expired_github_token_is_said_once_with_how_to_fix_it():
     client.post("/internal/process-approved"); client.post("/internal/process-approved"); client.post("/internal/process-approved")
     [reply] = _replies(slack)
     assert reply["thread_ts"] == "1.1" and reply["channel"] == "C1"
-    assert "GitHub rejected the token" in reply["text"] and "Settings → Integrations → GitHub" in reply["text"] and "Use this repo" in reply["text"]
+    assert "connection to GitHub has expired" in reply["text"] and "Settings → Integrations → GitHub" in reply["text"] and "Use this repo" in reply["text"]
     assert store.list_dispatched_unpushed()[0].last_error                      # still retrying, the reason is remembered
 
 
@@ -61,7 +61,7 @@ def test_another_reason_is_said_plainly_without_the_token_advice():
     _, slack = _mocks(push=httpx.Response(502, json={"detail": "git push failed: remote: Repository not found."}))
     client.post("/internal/process-approved")
     [reply] = _replies(slack)
-    assert "Repository not found" in reply["text"] and "Use this repo" not in reply["text"] and "pushing its branch" in reply["text"]
+    assert "Repository not found" in reply["text"] and "Use this repo" not in reply["text"] and "couldn't save it to GitHub" in reply["text"]
 
 
 @respx.mock
@@ -87,7 +87,7 @@ def test_once_it_pushes_the_problem_is_cleared_and_the_pull_request_link_is_post
     done = store.get_approval(a.id)
     assert done.status == "done" and done.pr_url == "https://github.com/o/r/pull/7" and done.last_error is None
     texts = [r["text"] for r in _replies(slack)]
-    assert len(texts) == 2 and "GitHub rejected the token" in texts[0] and "https://github.com/o/r/pull/7" in texts[1]
+    assert len(texts) == 2 and "connection to GitHub has expired" in texts[0] and "first draft" in texts[1] and "<https://github.com/o/r/pull/7|Open the draft on GitHub>" in texts[1]
 
 
 @respx.mock
@@ -96,7 +96,7 @@ def test_a_pull_request_that_cannot_be_opened_is_said_once():
     _, slack = _mocks(push=httpx.Response(200, json={"pushed": True}), pr=httpx.Response(502, json={"detail": "pull request failed: Resource not accessible by personal access token"}))
     client.post("/internal/process-approved"); client.post("/internal/process-approved")
     [reply] = _replies(slack)
-    assert "opening the pull request failed" in reply["text"] and "Resource not accessible" in reply["text"]
+    assert "couldn't open it for review on GitHub" in reply["text"] and "Resource not accessible" in reply["text"]
     assert store.get_approval(a.id).status == "pushed"            # branch is up; the sweep keeps trying the pull request
 
 

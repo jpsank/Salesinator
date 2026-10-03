@@ -583,10 +583,10 @@ def _reply(slack: SlackClient, channel: str, ts: str, text: str) -> None:
 def _problem_note(what: str, message: str) -> str:
     """A person-readable account of why the pipeline could not push the agent's branch / open its pull request, said once in the card's thread."""
     if is_auth_failure(message):
-        return (f":warning: The agent finished, but {what} failed: GitHub rejected the token the product repo uses. Refresh it in Vexa — "
-                "Settings → Integrations → GitHub → *Product repo* → Change → Use this repo. It retries on its own every few seconds.")
+        return (f":warning: *The agent finished its draft, but couldn't {what}:* the saved connection to GitHub has expired. An admin can fix it in Vexa — "
+                "Settings → Integrations → GitHub → Product repo → Change → Use this repo. It retries on its own, so nothing else is needed.")
     reason = message.split("failed:", 1)[-1].strip()[:240]
-    return f":warning: The agent finished, but {what} failed: {reason}. It retries on its own every few seconds."
+    return f":warning: *The agent finished its draft, but couldn't {what}.* It keeps retrying on its own.\n_Reason: {reason}_"
 
 
 _CI_POLL_EVERY_S = 120.0     # GitHub allows ~60 unauthenticated calls an hour: a pull request's CI takes minutes, so ask every couple
@@ -611,7 +611,8 @@ def _check_ci(store: Store, approval) -> None:
     except GitHubError as exc:
         if exc.status == 404 and store.finish_ci(approval.id, "unreadable"):
             _reply(_slack(), approval.slack_channel, approval.slack_ts,
-                   ":information_source: Couldn't read this pull request's CI status — the repository isn't public, and sales-cycle has no GitHub token to read it with.")
+                   f":grey_question: *Couldn't tell whether the automatic checks passed* — the repository is private and Vexa has no GitHub access to read the result. "
+                   f"<{ref.checks_url}|Open the draft on GitHub>")
         else:
             logger.warning("could not read CI for %s (%s) — will try again", approval.pr_url, exc)
         return
@@ -777,7 +778,7 @@ def process_approved() -> dict:
         except (DispatchError, PushError) as exc:
             logger.exception("push check failed for approval id=%s branch=%s", approval.id, approval.branch)
             if isinstance(exc, PushError):
-                _report_pipeline_problem(store, approval, "pushing its branch to GitHub", exc)
+                _report_pipeline_problem(store, approval, "save it to GitHub", exc)
             continue
         if pushed is not None:
             store.mark_pushed(approval.id)
@@ -794,14 +795,16 @@ def process_approved() -> dict:
         except PullRequestError as exc:
             logger.exception("pull-request open failed for approval id=%s branch=%s — retrying next sweep",
                               approval.id, approval.branch)
-            _report_pipeline_problem(store, approval, "opening the pull request", exc)
+            _report_pipeline_problem(store, approval, "open it for review on GitHub", exc)
             continue
         pr_url = (pr or {}).get("url")
         store.mark_done(approval.id, pr_url=pr_url)
         store.clear_error(approval.id)
         opened_now.append(approval.id)
         if pr_url:
-            _reply(_slack(), approval.slack_channel, approval.slack_ts, f":white_check_mark: The agent's pull request is open for review: {pr_url}")
+            _reply(_slack(), approval.slack_channel, approval.slack_ts,
+                   f":hammer_and_wrench: *The agent has finished a first draft of \"{approval.title}\".* It still needs a developer to review it before anything "
+                   f"is used. <{pr_url}|Open the draft on GitHub>")
 
     for approval in store.list_awaiting_ci():
         _check_ci(store, approval)

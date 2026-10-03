@@ -23,19 +23,19 @@ def test_pull_request_urls_are_parsed_and_others_refused():
 
 def test_all_checks_green_passes():
     state, text = verdict([_run("static"), _run("python"), _run("node")], age_s=300, checks_url="https://x/checks")
-    assert state == "passed" and "3 checks" in text and "https://x/checks" in text
+    assert state == "passed" and "automatic checks passed" in text and "<https://x/checks|Open the draft on GitHub>" in text
 
 
 def test_a_failed_check_fails_the_pull_request_and_names_it():
-    state, text = verdict([_run("static"), _run("node", conclusion="failure"), _run("gates", conclusion="failure")], age_s=300)
-    assert state == "failed" and "`node`" in text and "`gates`" in text and "`static`" not in text
+    state, text = verdict([_run("static"), _run("node", conclusion="failure"), _run("gates", conclusion="failure")], age_s=300, checks_url="https://x/checks")
+    assert state == "failed" and "Checks that failed: gates, node" in text and "static" not in text and "<https://x/checks|See what failed on GitHub>" in text
 
 
 def test_timed_out_and_action_required_count_as_failures_but_cancelled_skipped_neutral_do_not():
     assert verdict([_run("a", conclusion="timed_out")], age_s=1)[0] == "failed"
     assert verdict([_run("a", conclusion="action_required")], age_s=1)[0] == "failed"
     state, text = verdict([_run("a"), _run("b", conclusion="cancelled"), _run("c", conclusion="skipped"), _run("d", conclusion="neutral")], age_s=1)
-    assert state == "passed" and "1 check)" in text
+    assert state == "passed" and "automatic checks passed" in text
 
 
 def test_it_keeps_waiting_while_any_check_is_still_running():
@@ -46,7 +46,7 @@ def test_it_keeps_waiting_while_any_check_is_still_running():
 def test_with_no_checks_it_waits_then_says_nothing_is_running_ci():
     assert verdict([], age_s=60) is None
     state, text = verdict([], age_s=8 * 60, checks_url="https://x/checks")
-    assert state == "none" and "No CI check has run" in text and "Actions" in text
+    assert state == "none" and "No automatic checks ran" in text and "GitHub Actions" in text
 
 
 def test_it_gives_up_on_checks_that_never_finish():
@@ -56,7 +56,7 @@ def test_it_gives_up_on_checks_that_never_finish():
 
 def test_many_failures_are_summarised():
     runs = [_run(f"job{i}", conclusion="failure") for i in range(9)]
-    assert "and 3 more" in verdict(runs, age_s=1)[1]
+    assert "and 3 more" in verdict(runs, age_s=1)[1] and "job0, job1" in verdict(runs, age_s=1)[1]
 
 
 @respx.mock
@@ -119,10 +119,10 @@ def test_with_no_workspace_nothing_is_claimed():
 def test_the_verdict_names_what_was_not_covered_and_truncates():
     runs = [_run("node")]
     text = verdict(runs, age_s=1, uncovered=["p/a.ts"])[1]
-    assert "CI passed" in text and "`p/a.ts`" in text and "review them by hand" in text
-    assert "and 3 more" in verdict(runs, age_s=1, uncovered=[f"p/{i}.ts" for i in range(8)])[1]
-    assert "warning" not in verdict(runs, age_s=1, uncovered=[])[1]
-    assert "warning" not in verdict(runs, age_s=1)[1]
+    assert "don't test the part of the product" in text and "`p/a.ts`" in text and "by hand" in text
+    assert "and 5 more" in verdict(runs, age_s=1, uncovered=[f"p/{i}.ts" for i in range(8)])[1]
+    assert "don't test the part" not in verdict(runs, age_s=1, uncovered=[])[1]
+    assert "don't test the part" not in verdict(runs, age_s=1)[1]
 
 
 @respx.mock
@@ -152,19 +152,19 @@ IGNORE = ignored_checks(DEFAULT_IGNORED_CHECKS)
 def test_upstream_process_checks_do_not_fail_the_verdict():
     runs = [_run("gates"), _run("node"), _run("merge-card", conclusion="failure"), _run("contribution-rights", conclusion="failure")]
     state, text = verdict(runs, age_s=1, ignore=IGNORE)
-    assert state == "passed" and "2 checks" in text                      # only gates and node count
+    assert state == "passed" and "merge-card" not in text                # the paperwork checks are left out
     assert verdict(runs, age_s=1)[0] == "failed"                         # without the ignore list the paperwork fails it
 
 
 def test_a_real_failure_is_still_reported_alongside_ignored_ones():
     state, text = verdict([_run("node", conclusion="failure"), _run("merge-card", conclusion="failure")], age_s=1, ignore=IGNORE)
-    assert state == "failed" and "`node`" in text and "merge-card" not in text
+    assert state == "failed" and "Checks that failed: node" in text and "merge-card" not in text
 
 
 def test_only_ignored_checks_means_no_code_check_ran():
     assert verdict([_run("merge-card")], age_s=60, ignore=IGNORE) is None
     state, text = verdict([_run("merge-card", conclusion="failure")], age_s=9 * 60, ignore=IGNORE)
-    assert state == "none" and "No CI check has run" in text
+    assert state == "none" and "No automatic checks ran" in text
 
 
 def test_the_ignore_setting_is_a_comma_separated_list():

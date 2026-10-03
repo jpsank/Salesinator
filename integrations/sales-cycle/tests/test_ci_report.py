@@ -69,7 +69,7 @@ def test_passing_checks_are_said_once_in_the_cards_thread():
     store, a = _opened(); _github([_run("static"), _run("node")]); slack = _slack()
     _sweep(); _sweep(); _sweep()
     [text] = _texts(slack)
-    assert "CI passed" in text and "2 checks" in text and PR + "/checks" in text
+    assert "automatic checks passed" in text and "<" + PR + "/checks|Open the draft on GitHub>" in text
     assert json.loads(slack.calls[0].request.content)["thread_ts"] == "1.1"
     assert store.get_approval(a.id).ci_state == "passed"
 
@@ -79,7 +79,7 @@ def test_failing_checks_are_named():
     store, a = _opened(); _github([_run("static"), _run("node", "failure")]); slack = _slack()
     _sweep()
     [text] = _texts(slack)
-    assert "CI failed" in text and "`node`" in text and "`static`" not in text
+    assert "did not pass the automatic checks" in text and "Checks that failed: node" in text and "static" not in text
     assert store.get_approval(a.id).ci_state == "failed"
 
 
@@ -91,7 +91,7 @@ def test_it_waits_while_checks_are_running_and_says_the_verdict_when_they_finish
     assert _texts(slack) == [] and store.get_approval(a.id).ci_state is None
     route.mock(return_value=httpx.Response(200, json={"check_runs": [_run("static"), _run("node")]}))
     _sweep()
-    assert "CI passed" in _texts(slack)[0]
+    assert "automatic checks passed" in _texts(slack)[0]
 
 
 @respx.mock
@@ -112,7 +112,7 @@ def test_with_no_checks_at_all_it_waits_then_says_nothing_ran_ci():
         c.execute("UPDATE pending_approvals SET done_at = ? WHERE id = ?", (time.time() - 9 * 60, a.id))
     _sweep(); _sweep()
     [text] = _texts(slack)
-    assert "No CI check has run" in text and "Actions" in text and store.get_approval(a.id).ci_state == "none"
+    assert "No automatic checks ran" in text and "GitHub Actions" in text and store.get_approval(a.id).ci_state == "none"
 
 
 @respx.mock
@@ -121,7 +121,7 @@ def test_a_repository_that_is_not_public_is_said_once_and_not_retried():
     respx.get(f"{GH}/pulls/2").mock(return_value=httpx.Response(404, json={"message": "Not Found"})); slack = _slack()
     _sweep(); _sweep()
     [text] = _texts(slack)
-    assert "isn't public" in text and store.get_approval(a.id).ci_state == "unreadable"
+    assert "repository is private" in text and PR + "/checks" in text and store.get_approval(a.id).ci_state == "unreadable"
 
 
 @respx.mock
@@ -171,8 +171,8 @@ def test_a_pass_says_what_ci_did_not_cover():
     slack = _slack()
     _sweep()
     [text] = _texts(slack)
-    assert "CI passed" in text and "does not typecheck or test" in text and "review them by hand" in text
-    assert "`packages/transcript-rendering/src/manager.ts`" in text and "`packages/transcript-rendering/src/index.ts`" in text and "README.md" not in text
+    assert "automatic checks passed" in text and "don't test the part of the product" in text and "by hand" in text
+    assert "`packages/transcript-rendering`" in text and "manager.ts" not in text and "README" not in text
     assert store.get_approval(a.id).ci_state == "passed"
 
 
@@ -182,7 +182,7 @@ def test_a_pass_over_covered_files_is_plain():
     _github([_run("node")], files=["core/services/x/src/a.ts", "clients/terminal/src/b.tsx"], workspace=WORKSPACE)
     slack = _slack()
     _sweep()
-    assert "does not typecheck" not in _texts(slack)[0] and "CI passed" in _texts(slack)[0]
+    assert "don't test the part" not in _texts(slack)[0] and "automatic checks passed" in _texts(slack)[0]
 
 
 @respx.mock
@@ -191,7 +191,7 @@ def test_a_repository_without_a_pnpm_workspace_gets_no_coverage_claim():
     _github([_run("node")], files=["packages/x/src/a.ts"], workspace=None)
     slack = _slack()
     _sweep()
-    assert "does not typecheck" not in _texts(slack)[0]
+    assert "don't test the part" not in _texts(slack)[0]
 
 
 @respx.mock
@@ -201,7 +201,7 @@ def test_if_the_changed_files_cannot_be_read_the_plain_verdict_still_stands():
     respx.get(f"{GH}/pulls/2/files").mock(return_value=httpx.Response(500))
     slack = _slack()
     _sweep()
-    assert "CI passed" in _texts(slack)[0] and "does not typecheck" not in _texts(slack)[0]
+    assert "automatic checks passed" in _texts(slack)[0] and "don't test the part" not in _texts(slack)[0]
 
 
 @respx.mock
@@ -210,7 +210,7 @@ def test_a_failure_does_not_make_a_coverage_claim():
     _github([_run("node", "failure")], files=["packages/x/src/a.ts"], workspace=WORKSPACE)
     slack = _slack()
     _sweep()
-    assert "CI failed" in _texts(slack)[0] and "does not typecheck" not in _texts(slack)[0]
+    assert "did not pass" in _texts(slack)[0] and "don't test the part" not in _texts(slack)[0]
 
 
 @respx.mock
@@ -221,4 +221,4 @@ def test_upstream_process_checks_failing_do_not_make_the_verdict_a_failure():
     slack = _slack()
     _sweep()
     [text] = _texts(slack)
-    assert "CI passed" in text and "2 checks" in text and "merge-card" not in text
+    assert "automatic checks passed" in text and "merge-card" not in text
