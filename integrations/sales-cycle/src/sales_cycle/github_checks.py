@@ -110,17 +110,15 @@ def verdict(runs: list[dict], *, age_s: float, none_after_s: float = NONE_AFTER_
     if not runs:
         if age_s >= none_after_s:
             return "none", (":grey_question: *No automatic checks ran on this draft*, so nobody has confirmed it works. A developer needs to review it before "
-                            f"anything is used.{link('Open the draft on GitHub')}\n_For an admin: automatic checks only run if GitHub Actions is turned on for the repository._")
+                            f"anything is used.{link('Open the draft on GitHub')}")
         return None
     if any(r.get("status") != "completed" for r in runs):
         if age_s >= give_up_after_s:
             return "timeout", (f":hourglass: *The automatic checks are taking unusually long* (over an hour), so there is no result yet.{link('Check on GitHub')}")
         return None
-    failed = sorted({r.get("name") or "a check" for r in runs if r.get("conclusion") in _FAILED})
-    if failed:
-        shown = ", ".join(failed[:6]) + (f" and {len(failed) - 6} more" if len(failed) > 6 else "")
+    if any(r.get("conclusion") in _FAILED for r in runs):
         return "failed", (":x: *This draft did not pass the automatic checks*, so it isn't ready to use. A developer needs to look at what failed."
-                          f"{link('See what failed on GitHub')}\n_Checks that failed: {shown}_")
+                          f"{link('See what failed on GitHub')}")
     if uncovered:
         return "passed", (":white_check_mark: The automatic checks passed — *but they don't test the part of the product this change touches* "
                           f"({_areas(uncovered)}), so passing tells us little. A developer needs to read that code by hand before it's used.{link('Open the draft on GitHub')}")
