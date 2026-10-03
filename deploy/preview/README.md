@@ -63,7 +63,7 @@ start for a public domain without a Cloudflare Access team, and nothing should r
    - hostname: "*.jsanker.com"
      service: http://localhost:13100
    ```
-   Restart `cloudflared` (the terminal's public address drops for a few seconds). Free Universal SSL covers one subdomain level, which is why the
+   Restart the tunnel service with `sudo launchctl kickstart -k system/com.cloudflare.cloudflared` (it reads its config only at start; the terminal's public address drops for a few seconds). Free Universal SSL covers one subdomain level, which is why the
    address is `preview-pr-<n>.jsanker.com` and not `pr-<n>.preview.jsanker.com`.
 6. **Check it**: an unauthenticated `curl -sI https://preview-pr-1.jsanker.com` must answer Cloudflare's login redirect, never the gate's own JSON.
    Then open a preview as an allowed person.
