@@ -141,6 +141,20 @@ describe("gate", () => {
 
   const host = { host: "preview-pr-7.example.test" };
 
+  it("never treats anyone as the dev viewer on a public domain", async () => {
+    const open = createGate(
+      { domain: "example.test", sessionSecret: SECRET, gatewayUpstream: "http://127.0.0.1:9", devEmail: "rep@co.com" },
+      { viewerKey: async () => ({ status: "ok", key: "REAL-KEY", userId: 5 }) },
+    );
+    const server = http.createServer(open.front.request);
+    const port = await listen(server);
+    try {
+      assert.equal((await call(port, { headers: host })).status, 401);
+    } finally {
+      server.close();
+    }
+  });
+
   it("turns the viewer away without a valid Access identity", async () => {
     const r = await call(ports.front, { headers: host });
     assert.equal(r.status, 401);

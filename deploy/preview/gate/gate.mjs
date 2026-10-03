@@ -44,7 +44,7 @@ export function createGate(config, deps = {}) {
       const cookies = parseCookies(req.headers.cookie);
       return verifyAccess(req.headers["cf-access-jwt-assertion"] || cookies.CF_Authorization);
     }
-    return config.devEmail || null; // local use only: no Access team configured
+    return domain === "localhost" ? config.devEmail || null : null; // local use only: never honoured on a public domain
   }
 
   async function front(req, res, upgrade) {
@@ -159,7 +159,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     accessAudience: env.PREVIEW_ACCESS_AUD || "",
     devEmail: env.PREVIEW_DEV_EMAIL || "",
   });
-  if (!env.PREVIEW_ACCESS_TEAM && !env.PREVIEW_DEV_EMAIL) throw new Error("set PREVIEW_ACCESS_TEAM + PREVIEW_ACCESS_AUD (public) or PREVIEW_DEV_EMAIL (local only)");
+  if (!env.PREVIEW_ACCESS_TEAM && !(env.PREVIEW_DEV_EMAIL && env.PREVIEW_DOMAIN === "localhost")) {
+    throw new Error("set PREVIEW_ACCESS_TEAM + PREVIEW_ACCESS_AUD (public), or PREVIEW_DEV_EMAIL with PREVIEW_DOMAIN=localhost (local only)");
+  }
   if (env.PREVIEW_ACCESS_TEAM && !env.PREVIEW_ACCESS_AUD) throw new Error("PREVIEW_ACCESS_AUD is required with PREVIEW_ACCESS_TEAM");
   listen(8080, gate.front);
   listen(8081, gate.guardGateway);
