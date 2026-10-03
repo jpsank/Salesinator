@@ -18,6 +18,13 @@ const INFO_COOKIE = "vexa-user-info";
 const SESSION_TTL_SECONDS = 6 * 60 * 60;
 const CREDENTIAL_HEADERS = ["authorization", "x-api-key", "x-admin-api-key", "x-internal-secret", "x-user-id", "cf-access-jwt-assertion"];
 
+/** A pill on every page so nobody mistakes a preview for the real thing. Appended after the page's own markup; no script, no external assets. */
+function banner(preview) {
+  return `<div style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none;background:#d97757;color:#fff;`
+    + `font:600 12px/1 system-ui,sans-serif;padding:6px 12px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.35)">`
+    + `Preview of proposed change #${preview} — read-only</div>`;
+}
+
 function parseCookies(header) {
   const out = {};
   for (const part of String(header || "").split(";")) {
@@ -72,12 +79,13 @@ export function createGate(config, deps = {}) {
     delete cookies.CF_Authorization;
     const headers = headersFor(req, {
       drop: CREDENTIAL_HEADERS,
-      set: { cookie: Object.entries(cookies).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("; ") },
+      set: { "accept-encoding": "identity", cookie: Object.entries(cookies).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("; ") },
     });
     const target = { host: previewHost(preview), port: previewPort, headers };
     if (upgrade) return tunnel(req, upgrade.socket, upgrade.head, target);
     return forward(req, res, {
       ...target,
+      appendToHtml: banner(preview),
       onResponseHeaders: (h) => ({
         ...h,
         "x-robots-tag": "noindex",

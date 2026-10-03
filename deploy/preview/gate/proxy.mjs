@@ -24,9 +24,16 @@ export function sendJson(res, status, body, extra = {}) {
   res.end(JSON.stringify(body));
 }
 
-export function forward(req, res, { host, port, headers, onResponseHeaders }) {
+export function forward(req, res, { host, port, headers, onResponseHeaders, appendToHtml }) {
   const upstream = http.request({ host, port, method: req.method, path: req.url, headers }, (up) => {
-    const out = onResponseHeaders ? onResponseHeaders(up.headers) : up.headers;
+    const out = { ...(onResponseHeaders ? onResponseHeaders(up.headers) : up.headers) };
+    if (appendToHtml && /^text\/html/i.test(up.headers["content-type"] || "") && !up.headers["content-encoding"]) {
+      delete out["content-length"];
+      res.writeHead(up.statusCode, out);
+      up.on("data", (chunk) => res.write(chunk));
+      up.on("end", () => res.end(appendToHtml));
+      return;
+    }
     res.writeHead(up.statusCode, out);
     up.pipe(res);
   });

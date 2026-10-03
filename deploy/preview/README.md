@@ -85,6 +85,12 @@ An upgrade is a deliberate purchase in the dashboard; nothing here triggers one.
 
 ## What a preview cannot do (by design)
 
+Every page carries an orange "Preview of proposed change #N — read-only" pill (the gate appends it to each HTML response).
+
+Checked in a browser against real data (as a viewer with an account): Meetings, Knowledge, Routines and Settings all load; typing in the chat and pressing
+Enter shows the gate's plain refusal text in the conversation; the terminal's own workspace set-up call on load (`POST /agent/workspace/init`) is refused and
+nothing visibly breaks; the Zoom panel in Settings reads "can't reach a backend service" because sales-cycle is unreachable from a preview.
+
 Every write is refused with a plain message and logged by the gate (`docker logs preview-gate` — look for `refused`). Sales-cycle, the agent API
 and Vexa Capture are unreachable from a preview, so those screens show empty or error states there. Only changes under `clients/terminal/` can be previewed;
 a change to a backend service is reported "no live preview" in the card's thread until previews run on their own demo backend.

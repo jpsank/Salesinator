@@ -114,6 +114,10 @@ describe("gate", () => {
     });
     previewServer = http.createServer((req, res) => {
       seen.preview.push({ headers: req.headers });
+      if (req.url === "/page") {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": 28 });
+        return res.end("<html><body>hi</body></html>");
+      }
       res.end("preview-ok");
     });
     const gatewayPort = await listen(gatewayServer);
@@ -194,6 +198,14 @@ describe("gate", () => {
     assert.equal(sent.authorization, undefined);
     assert.equal(sent["cf-access-jwt-assertion"], undefined);
     assert.ok(r.headers["set-cookie"].some((c) => c.startsWith("vexa-token=") && c.includes("HttpOnly")));
+  });
+  it("marks every page as a read-only preview, and leaves other responses alone", async () => {
+    const h = { ...host, "cf-access-jwt-assertion": "good-jwt" };
+    const page = await call(ports.front, { path: "/page", headers: h });
+    assert.match(page.text, /^<html><body>hi<\/body><\/html><div[^>]*>Preview of proposed change #7 — read-only<\/div>$/);
+    assert.equal(page.headers["content-length"], undefined);
+    assert.equal((await call(ports.front, { path: "/data", headers: h })).text, "preview-ok");
+    assert.equal(seen.preview.at(-1).headers["accept-encoding"], "identity");
   });
   it("tells a viewer with no Vexa account what to do", async () => {
     const r = await call(ports.front, { headers: { ...host, "cf-access-jwt-assertion": "new-jwt" } });
