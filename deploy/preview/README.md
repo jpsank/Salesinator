@@ -40,6 +40,41 @@ viewer ──► gate :8080 (front) ──► preview container ──► gate :
 - **Known limit:** a preview is built from the change's own source, including its `package.json`. Previews are only for
   changes a human has approved for the agent to work on.
 
+## Going public (once)
+
+Previews are open only on this Mac until the gate knows who may look. Order matters — **protect first, expose second**: the gate refuses to
+start for a public domain without a Cloudflare Access team, and nothing should resolve to it before Access is in front.
+
+1. **Enable Zero Trust** (Cloudflare dashboard → Zero Trust). Pick a team name (`<team>.cloudflareaccess.com`) and the **Free** plan (up to 50 users;
+   Cloudflare may ask for a card at signup). Until this is done every Access API call answers "Access is not enabled".
+2. **An API token** (dash.cloudflare.com/profile/api-tokens → Create Token → Custom): account permissions *Access: Apps and Policies → Edit* and
+   *Access: Organizations, Identity Providers, and Groups → Read*, limited to your account. Keep it out of chat and shell history: copy it, then
+   `pbpaste > ~/.cloudflared/access-token && chmod 600 ~/.cloudflared/access-token`. Rotate it after setup — it is only needed to change Access.
+3. **The Access application** for `preview-*.jsanker.com` (self-hosted; Access allows one wildcard per hostname label), with an *Allow* policy
+   for the people who may open previews and the One-time PIN login method on. Each person also needs a **Vexa account under the same email** —
+   the gate looks them up and never creates one, so a viewer without one is told to sign in to Vexa once first.
+4. **Tell the gate**: put the application's *Audience tag* and your team name in `~/vexa-data/preview/gate.env` (`PREVIEW_ACCESS_AUD`, `PREVIEW_ACCESS_TEAM`),
+   set `PREVIEW_DOMAIN=jsanker.com`, clear `PREVIEW_DEV_EMAIL`, then `./preview.sh gate-up`. (The dev viewer is honoured only when the domain is `localhost`.)
+5. **Expose it**: one wildcard DNS record, `cloudflared tunnel route dns <tunnel> "*.jsanker.com"` (a proxied CNAME to `<tunnel id>.cfargotunnel.com`; your named
+   records keep winning over it), and one ingress rule in `~/.cloudflared/config.yml` **after** the named hostnames and before the catch-all:
+   ```yaml
+   - hostname: "*.jsanker.com"
+     service: http://localhost:13100
+   ```
+   Restart `cloudflared` (the terminal's public address drops for a few seconds). Free Universal SSL covers one subdomain level, which is why the
+   address is `preview-pr-<n>.jsanker.com` and not `pr-<n>.preview.jsanker.com`.
+6. **Check it**: an unauthenticated `curl -sI https://preview-pr-1.jsanker.com` must answer Cloudflare's login redirect, never the gate's own JSON.
+   Then open a preview as an allowed person.
+
+If a viewer sees "no Vexa account yet", they have not signed in to Vexa with that email. If a preview shows "The preview is not running", its container is gone
+(`./preview.sh list`; `gc` removes previews older than 72 hours).
+
+## What a preview cannot do (by design)
+
+Every write is refused with a plain message and logged by the gate (`docker logs preview-gate` — look for `refused`). Sales-cycle, the agent API
+and Vexa Capture are unreachable from a preview, so those screens show empty or error states there. Only changes under `clients/terminal/` can be previewed;
+a change to a backend service is reported "no live preview" in the card's thread until previews run on their own demo backend.
+
 ## Settings (`~/vexa-data/preview/gate.env`)
 
 | Key | Meaning |

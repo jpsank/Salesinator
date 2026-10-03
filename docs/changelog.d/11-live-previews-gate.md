@@ -4,3 +4,5 @@
   person's short-lived read key, and refuses every write. See `deploy/preview/README.md`.
   The agent's pull request now gets one automatically: `preview.sh runner` builds a preview of every pull request that changes the terminal,
   and the card's Slack thread gets a plain "You can try this draft live" link (or a note that there is nothing to preview yet).
+  Setup docs moved with it: `deploy/compose/README.md` now lists everything that runs on this machine and how to set each piece up again,
+  and the Mac app's README says which permission prompts persist across rebuilds and which still ask.

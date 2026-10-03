@@ -139,6 +139,30 @@ LaunchDaemon plist missing the `tunnel run` subcommand entirely — check
 if connections drop often, try `protocol: http2` in `config.yml` before assuming the tunnel itself
 is unstable (a laptop's lid-close deep-idle state can look identical — check `pmset -g log`).
 
+## What runs on this machine, and how to set it up again
+
+One page for "I got a new Mac / something died — what was set up?". Each row says how the piece runs, the command that
+(re)creates it, and where its own setup is written down.
+
+| Piece | How it runs | (Re)create it | Setup written down in |
+|---|---|---|---|
+| The Docker stack | `docker compose` in this folder | `./redeploy.sh` rebuilds what changed and restarts only that; `./restart-service.sh <svc>` for one service | this file; secrets live in `.env` (gitignored, from `.env.example`) |
+| agent-api + Ollama | **native** processes, never in Docker | `./dev-up.sh` (see "Local hybrid dev" above) | this file |
+| Docker disk guard | runs inside `redeploy.sh` / `restart-service.sh` | automatic; `docker-hygiene.sh` refuses to build under ~3 GB free | "Keeping the Docker disk from filling" above |
+| Meeting-bot image | rebuilt by `redeploy.sh` when its sources change | `./bot-image.sh` | "The bot image" above |
+| Public tunnel | `cloudflared --config ~/.cloudflared/config.yml tunnel run` — started **by hand**, it is not a launchd service, so it is down after a reboot until you start it | `cloudflared tunnel login` once, then edit the `ingress` list in `config.yml` and restart `cloudflared` | "Reaching a local stack from outside" above |
+| Slack app (cards, votes, leader approval) | Slack calls `/slack/events` through the tunnel | follow the Slack steps; **Socket Mode must be OFF** | `integrations/sales-cycle/README.md` → Slack, "Approving by vote" |
+| Zoom app (Connect Zoom) | Zoom calls the webhook through the tunnel | create it from `integrations/sales-cycle/zoom-app.manifest.json` (Develop → Build App → from an app manifest) | `integrations/sales-cycle/README.md` → Zoom |
+| Product repo + GitHub token | stored by sales-cycle; the repo is this fork | Settings → Integrations → GitHub → Product repo → Change → **Use this repo** (this makes a *copy* of your GitHub token for the agent — redo it if pushes start failing with "expired") | `integrations/sales-cycle/README.md` → GitHub, "When the agent finishes but the branch cannot be pushed" |
+| Vexa Capture (Mac app) | installed in `~/Applications`, opens at login | `clients/capture-mac/make-local-signing-cert.sh` once, then `./install.sh` | `clients/capture-mac/README.md` |
+| Live previews | `preview-gate` container + the runner (`deploy/preview/preview.sh runner`, started by hand) | `deploy/preview/preview.sh gate-up` | `deploy/preview/README.md` |
+
+The tunnel's hostnames today: `terminal.jsanker.com` → `localhost:13000`, `sales-cycle.jsanker.com` → `localhost:18300` (only its
+intended public routes answer; the rest want the shared secret), `agent-api.jsanker.com` → `localhost:18100`; previews add
+`*.jsanker.com` → `localhost:13100` (the preview gate, which turns away every host that is not a preview). `ingress` rules are matched
+top to bottom, so the wildcard goes **after** the named hostnames and the `http_status:404` catch-all stays last. A quick tunnel
+(`cloudflared tunnel --url …`) is for a one-off test only — its address changes on every restart and silently breaks Slack's Request URL.
+
 ## Smoke probe — "is this install actually working?"
 
 ```bash

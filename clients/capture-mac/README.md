@@ -53,9 +53,25 @@ reappears only if something still needs attention.
 site you already expose is the only address needed. A deployment that publishes the gateway and capture service itself sets
 `CAPTURE_API_URL` and `CAPTURE_INGEST_URL` in `.env` instead.
 
-**Open at login** is a checkbox in the setup window and *Preferences* (macOS accepts it for an app in an Applications folder). Run `./make-local-signing-cert.sh` once: it makes a local certificate in a keychain of its own (not your login keychain, so no password dialog) and builds are then signed with it, one identity across rebuilds, so the Keychain,
-Automation, Microphone, Screen Recording and Notifications approvals are asked once. Unsigned (ad-hoc) builds are a new app to macOS every
-time and ask for all of them again; a distributed build needs a Developer ID signature and notarization.
+**Open at login** is a checkbox in the setup window and *Preferences* (macOS accepts it for an app in an Applications folder).
+
+### Signing, and which prompts you will still see
+
+Run `./make-local-signing-cert.sh` once. It makes a local certificate in a keychain of its own (`~/Library/Keychains/vexa-capture-signing.keychain-db`,
+empty password — not your login keychain, so no password dialog) and builds are signed with it. The app's identity is then the same across rebuilds, so
+**Microphone, Screen Recording, Notifications and Automation approvals persist**. Unsigned (ad-hoc) builds are a new app to macOS every time and ask for
+all of them again.
+
+What still asks, and why:
+
+- **The Keychain item ("wants to use your confidential information") asks once after every build whose code changed.** For an app without an Apple Team ID
+  the item is tied to that build's code hash. A rebuild of identical source does not ask. Only a Developer ID signature removes it — deliberately deferred
+  (it costs money); see `release.sh`.
+- **If Screen Recording keeps asking** (a stale entry from an older signature): `tccutil reset ScreenCapture ai.vexa.capture`, open the app, allow it, then quit and reopen it.
+- **If `codesign` hangs or a "codesign wants to access key" dialog loops**, the certificate is in the wrong keychain. Delete it, rerun `./make-local-signing-cert.sh`, and
+  expect the permissions to be asked once more (a new certificate is a new identity). An orphaned dialog stays on screen after its process is killed; quitting SecurityAgent clears it.
+- Never launch `.build/Vexa Capture.app` from a shell — it is a different binary from the installed one and raises its own prompts, and permission checks run from a shell report the terminal's state, not the app's.
+  Install with `./install.sh` and open the app from `~/Applications`.
 
 ## Checks without a call
 
