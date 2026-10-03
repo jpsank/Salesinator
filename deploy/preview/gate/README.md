@@ -17,4 +17,4 @@ two faces (see [`../README.md`](../README.md) for the picture):
 | `policy.mjs` | what a preview may ask: reads on the gateway, one "who am I" answer from the admin API |
 | `proxy.mjs` | HTTP and WebSocket-upgrade forwarding with exact, caller-chosen headers |
 
-Tests: `node --test deploy/preview/gate/`.
+Tests: `cd deploy/preview/gate && node --test`.
