@@ -60,7 +60,8 @@ export interface TranscriptManager<T extends TranscriptSegment = TranscriptSegme
   handleMessage(message: TranscriptWireMessage): T[] | null;
   /** Get current deduplicated, sorted segments without processing a new message. */
   getSegments(): T[];
-  /** Access the underlying state (for advanced use cases). */
+    /** Export the current segments to a CSV string. */
+    exportToCsv(): string;
   getState(): TranscriptState<T>;
   /** Reset all state. */
   clear(): void;
@@ -103,8 +104,37 @@ export function createTranscriptManager<
       return result ? finalize(result) : null;
     },
 
-    getSegments(): T[] {
-      return finalize(recomputeTranscripts(state));
+
+     /** Export the current segments to a CSV string. */
+    exportToCsv(): string {
+      const segments = this.getSegments();
+      if (segments.length === 0) return "";
+
+      // CSV Header: segment_id, speaker, start_time, end_time, text
+      let csv = "segment_id,speaker,start_time,end_time,text\r\n";
+
+      const csvRow = (segment: TranscriptSegment): string => {
+        // Escape double quotes within the text field
+        const escapedText = segment.text?.replace(/"/g, '""') ?? '';
+        // Using ISO format for times for robustness
+        const startTime = segment.absolute_start_time?.toISOString() ?? '';
+        const endTime = segment.absolute_end_time?.toISOString() ?? '';
+        
+        // Format: segment_id, speaker, start_time, end_time, text
+        return [
+          segment.segment_id || '',
+          segment.speaker || '',
+          startTime,
+          endTime,
+          `"${escapedText}"` // Surround text with quotes, and escape internal quotes
+        ].join(',');
+      };
+
+      segments.forEach(segment => {
+        csv += csvRow(segment) + "\r\n";
+      });
+
+      return csv;
     },
 
     getState(): TranscriptState<T> {
