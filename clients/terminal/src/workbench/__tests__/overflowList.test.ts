@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { dropFromOverflowList } from "../overflowList";
+import { dropFromOverflowList, recountOverflow } from "../overflowList";
 
 /** The "more tabs" list dockview shows when tabs overflow: a snapshot built when it opens, one `.dv-tab` row per hidden tab. */
 function list(...titles: string[]) {
@@ -52,5 +52,20 @@ describe("dropFromOverflowList", () => {
     dropFromOverflowList(strip.querySelector("span"));
     expect(document.querySelector(".dv-tab")).not.toBeNull();
     dropFromOverflowList(null);
+  });
+});
+
+describe("recountOverflow", () => {
+  it("nudges every tab strip to recount, after two frames", () => {
+    document.body.innerHTML = `<div class="dv-tabs-container"></div><div class="dv-tabs-container"></div>`;
+    const seen: number[] = [];
+    document.querySelectorAll(".dv-tabs-container").forEach((el, i) => el.addEventListener("scroll", () => seen.push(i)));
+    const frames: (() => void)[] = [];
+    recountOverflow(document, (cb) => frames.push(cb));
+    expect(seen).toEqual([]);                       // nothing yet: the closed tab may still be laying out
+    frames.shift()!();                              // frame 1 schedules frame 2
+    expect(seen).toEqual([]);
+    frames.shift()!();
+    expect(seen).toEqual([0, 1]);
   });
 });

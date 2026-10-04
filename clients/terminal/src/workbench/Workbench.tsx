@@ -9,7 +9,7 @@ import { Allotment } from "allotment";
 import "allotment/dist/style.css";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent, type IDockviewPanelProps, type IDockviewPanelHeaderProps, themeAbyss } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
-import { dropFromOverflowList } from "./overflowList";
+import { dropFromOverflowList, recountOverflow } from "./overflowList";
 
 const PANES_KEY = "vexa.terminal.panes.v2";
 const savedSizes = (): number[] | undefined => { try { const s = localStorage.getItem(PANES_KEY); const a = s ? JSON.parse(s) : null; return Array.isArray(a) && a.length === 3 ? a : undefined; } catch { return undefined; } };
@@ -431,6 +431,7 @@ export function Workbench() {
   const onReady = (e: DockviewReadyEvent) => {
     apiRef.current = e.api;
     layout.attach(e.api);
+    e.api.onDidRemovePanel(() => recountOverflow());   // however a tab closed, the "more tabs" count must follow
     if (firstViewDone.current) return;             // once per app load (guards remounts / HMR)
     firstViewDone.current = true;
     void resolveFirstView(e.api.panels.length === 0);
