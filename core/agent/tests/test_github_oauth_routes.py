@@ -227,6 +227,10 @@ def test_swap_for_the_shared_subject_uses_the_callers_own_token_and_mounts_under
     # running AS "product-repo" (the eventual push) can authenticate without a separate connection
     assert git_creds.read_github_token(workspaces, "product-repo") == "ghu_janes_own_token"
 
+    # reconnecting GitHub (here: pasting a fresh token) reaches the copy — no second "Use this repo"
+    assert c.post("/api/workspace/git-token", headers=H, json={"token": "ghu_janes_new_token"}).status_code == 200
+    assert git_creds.read_github_token(workspaces, "product-repo") == "ghu_janes_new_token"
+
 
 def test_swap_for_the_shared_subject_never_stores_a_one_time_body_token(tmp_path, monkeypatch):
     """A `token` passed in the body is one-time (P15: never stored) — it may authenticate THIS clone

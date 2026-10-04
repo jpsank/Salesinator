@@ -1686,7 +1686,9 @@ def create_app(
         token authenticates the clone in that case too (there's no separate "product repo" OAuth
         connection to maintain) — and is then copied under the target subject's own credential
         store, so a later server-to-server op that runs AS that subject (e.g. the eventual push,
-        which runs as "product-repo" itself, not as whoever set it up) can still authenticate."""
+        which runs as "product-repo" itself, not as whoever set it up) can still authenticate. The
+        copy remembers whose it is: when that person saves a new token (reconnect or paste) the copy
+        is refreshed with it."""
         caller = subject_of(request)
         subject = target_subject_of(request, body.for_subject)
         # The repository is a caller-supplied instruction to THIS SERVER to go and fetch something, so
@@ -1709,7 +1711,7 @@ def create_app(
             # message is already token-redacted (P15); private repo without/with a bad token lands here.
             raise HTTPException(status_code=502, detail=f"git clone failed: {exc}")
         if subject != caller and _saved and not _one_time:   # a one-time body token is never stored (P15)
-            git_creds.set_github_token(wsr.root, subject, _saved)
+            git_creds.copy_github_token(wsr.root, caller, subject, _saved)
         return {
             "subject": result.subject,
             "active": result.active_slug,
@@ -1877,7 +1879,7 @@ def create_app(
         masked state, never the clear value."""
         subject = subject_of(request)
         try:
-            stored = git_creds.set_github_token(wsr.root, subject, body.token)
+            stored = git_creds.save_github_token(wsr.root, subject, body.token)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"set": stored, "masked": git_creds.masked_github_token(wsr.root, subject)}
@@ -1915,7 +1917,7 @@ def create_app(
                 client_id=settings.github_oauth_client_id, client_secret=settings.github_oauth_client_secret.get_secret_value(),
                 redirect_uri=settings.github_oauth_redirect_uri, code=code,
             )
-            git_creds.set_github_token(wsr.root, subject, token)
+            git_creds.save_github_token(wsr.root, subject, token)
         except github_oauth.GitHubOAuthError as e:
             logger.error("GitHub OAuth code exchange failed for subject=%s: %s", subject, e)
             return RedirectResponse(f"{settings_url}&github_error=exchange_failed")

@@ -40,3 +40,42 @@ def test_invalid_subject_rejected(tmp_path):
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_a_copy_follows_the_token_it_was_copied_from(tmp_path):
+    gc.set_github_token(tmp_path, "u_jane", "old")
+    gc.copy_github_token(tmp_path, "u_jane", "product-repo", "old")
+    assert gc.read_github_token(tmp_path, "product-repo") == "old"
+
+    # reconnecting (or pasting) refreshes the copy
+    gc.save_github_token(tmp_path, "u_jane", "new")
+    assert gc.read_github_token(tmp_path, "u_jane") == "new"
+    assert gc.read_github_token(tmp_path, "product-repo") == "new"
+
+
+def test_a_save_by_someone_else_leaves_the_copy_alone(tmp_path):
+    gc.copy_github_token(tmp_path, "u_jane", "product-repo", "janes")
+    gc.save_github_token(tmp_path, "u_bob", "bobs")
+    assert gc.read_github_token(tmp_path, "product-repo") == "janes"
+
+
+def test_clearing_the_source_token_does_not_touch_the_copy(tmp_path):
+    gc.copy_github_token(tmp_path, "u_jane", "product-repo", "janes")
+    assert gc.save_github_token(tmp_path, "u_jane", "") is False
+    assert gc.read_github_token(tmp_path, "product-repo") == "janes"
+
+
+def test_a_copy_saved_directly_stops_following_its_source(tmp_path):
+    gc.copy_github_token(tmp_path, "u_jane", "product-repo", "janes")
+    gc.save_github_token(tmp_path, "product-repo", "its-own")
+    gc.save_github_token(tmp_path, "u_jane", "janes-new")
+    assert gc.read_github_token(tmp_path, "product-repo") == "its-own"
+
+
+def test_the_source_record_is_not_a_token_and_follows_a_new_source(tmp_path):
+    gc.copy_github_token(tmp_path, "u_jane", "product-repo", "janes")
+    gc.copy_github_token(tmp_path, "u_bob", "product-repo", "bobs")
+    gc.save_github_token(tmp_path, "u_jane", "janes-new")
+    assert gc.read_github_token(tmp_path, "product-repo") == "bobs"
+    gc.save_github_token(tmp_path, "u_bob", "bobs-new")
+    assert gc.read_github_token(tmp_path, "product-repo") == "bobs-new"

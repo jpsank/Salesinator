@@ -23,6 +23,7 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 _SECRETS_DIRNAME = ".secrets"          # dot-prefixed ⇒ skipped by every workspace scan; not a git tree
+_SOURCE_SUFFIX = ".ghsource"           # "this subject's token is a copy of <source subject>'s"
 _SUBJECT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")   # the file name is subject-derived — keep it path-safe
 
 
@@ -77,3 +78,40 @@ def masked_github_token(root: str | Path, subject: str) -> Optional[str]:
     if not tok:
         return None
     return "••••" + (tok[-4:] if len(tok) >= 8 else "")
+
+
+def _source_path(root: str | Path, subject: str) -> Optional[Path]:
+    """``<root>/.secrets/<subject>.ghsource`` — which subject's token this subject's token was copied from."""
+    if not subject or not _SUBJECT_RE.match(subject):
+        return None
+    return Path(root) / _SECRETS_DIRNAME / f"{subject}{_SOURCE_SUFFIX}"
+
+
+def copy_github_token(root: str | Path, source: str, target: str, token: str) -> None:
+    """Store ``token`` (``source``'s) as ``target``'s own AND remember where it came from, so a later save
+    by ``source`` reaches ``target`` too (``save_github_token``). Without the record a copy is a snapshot
+    nothing refreshes."""
+    set_github_token(root, target, token)
+    p = _source_path(root, target)
+    if p is not None and _token_path(root, source) is not None:
+        p.write_text(source, encoding="utf-8")
+
+
+def save_github_token(root: str | Path, subject: str, token: Optional[str]) -> bool:
+    """``set_github_token`` for a token the subject themselves just saved (reconnect or paste): also refreshes
+    every copy of it made for another subject, and — because the subject now holds their own token — stops
+    this subject's own token following anyone else's. Returns what ``set_github_token`` does."""
+    stored = set_github_token(root, subject, token)
+    own = _source_path(root, subject)
+    if own is not None:
+        own.unlink(missing_ok=True)
+    if stored:
+        secrets = Path(root) / _SECRETS_DIRNAME
+        for f in secrets.glob(f"*{_SOURCE_SUFFIX}") if secrets.is_dir() else []:
+            try:
+                follows = f.read_text(encoding="utf-8").strip() == subject
+            except OSError:
+                continue
+            if follows:
+                set_github_token(root, f.name[: -len(_SOURCE_SUFFIX)], token)
+    return stored
