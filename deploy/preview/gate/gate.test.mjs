@@ -207,6 +207,22 @@ describe("gate", () => {
     assert.equal((await call(ports.front, { path: "/data", headers: h })).text, "preview-ok");
     assert.equal(seen.preview.at(-1).headers["accept-encoding"], "identity");
   });
+  it("lets an invited person whose Access email differs view as the Vexa account they use", async () => {
+    const asked = [];
+    const gate = createGate(
+      { domain: "example.test", sessionSecret: SECRET, gatewayUpstream: "http://127.0.0.1:9", previewHost: () => "127.0.0.1", previewPort: 9,
+        viewerAliases: ["Boss@Work.com = test@co.com", "junk"] },
+      { verifyAccess: async () => "boss@work.com", viewerKey: async (e) => (asked.push(e), { status: "ok", key: "k", userId: 1 }) },
+    );
+    const server = http.createServer(gate.front.request);
+    const port = await listen(server);
+    try {
+      await call(port, { headers: host });
+      assert.deepEqual(asked, ["test@co.com"]);
+    } finally {
+      server.close();
+    }
+  });
   it("tells a viewer with no Vexa account what to do", async () => {
     const r = await call(ports.front, { headers: { ...host, "cf-access-jwt-assertion": "new-jwt" } });
     assert.equal(r.status, 403);

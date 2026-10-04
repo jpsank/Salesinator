@@ -44,6 +44,8 @@ export function createGate(config, deps = {}) {
   const viewerKey = deps.viewerKey || createViewerKeys({ adminUrl: config.adminUrl, adminKey: config.adminKey });
   const hostPattern = new RegExp(`^preview-pr-(\\d+)\\.${domain.replace(/\./g, "\\.")}(:\\d+)?$`);
   const gateway = new URL(gatewayUpstream);
+  // "access email = vexa email" pairs: an invited person whose Cloudflare Access email differs from the Vexa account they use views as that account.
+  const viewsAs = new Map((config.viewerAliases || []).map((p) => p.split("=").map((s) => s.trim().toLowerCase())).filter((p) => p.length === 2 && p[0] && p[1]));
   // Even if Access is ever widened, only these people get in — keeps the number of Access users (a paid-beyond-free-tier quantity) fixed by us.
   const allowed = config.allowedEmails ? new Set(config.allowedEmails.map((e) => e.trim().toLowerCase()).filter(Boolean)) : null;
 
@@ -65,16 +67,17 @@ export function createGate(config, deps = {}) {
     if (!email) return sendJson(res, 401, { detail: "Sign in required." });
     if (allowed && !allowed.has(email)) return sendJson(res, 403, { detail: "Previews are limited to a small invited group." });
 
-    const viewer = await viewerKey(email);
+    const as = viewsAs.get(email) || email;
+    const viewer = await viewerKey(as);
     if (viewer.status === "no_account") {
-      return sendJson(res, 403, { detail: `${email} has no Vexa account yet. Sign in to Vexa once first, then open this link again.` });
+      return sendJson(res, 403, { detail: `${as} has no Vexa account yet. Sign in to Vexa once first, then open this link again.` });
     }
     if (viewer.status !== "ok") return sendJson(res, 503, { detail: "Previews are temporarily unavailable." });
 
-    const session = issueSession(sessionSecret, { email, preview, ttlSeconds: SESSION_TTL_SECONDS });
+    const session = issueSession(sessionSecret, { email: as, preview, ttlSeconds: SESSION_TTL_SECONDS });
     const secure = req.headers["x-forwarded-proto"] === "https";
     const attrs = `Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}${secure ? "; Secure" : ""}`;
-    const info = JSON.stringify({ email, name: email.split("@")[0] });
+    const info = JSON.stringify({ email: as, name: as.split("@")[0] });
     const cookies = { ...parseCookies(req.headers.cookie), [AUTH_COOKIE]: session, [INFO_COOKIE]: info };
     delete cookies.CF_Authorization;
     const headers = headersFor(req, {
@@ -170,6 +173,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     accessAudience: env.PREVIEW_ACCESS_AUD || "",
     devEmail: env.PREVIEW_DEV_EMAIL || "",
     allowedEmails: env.PREVIEW_ALLOWED_EMAILS ? env.PREVIEW_ALLOWED_EMAILS.split(",") : null,
+    viewerAliases: env.PREVIEW_VIEWER_ALIASES ? env.PREVIEW_VIEWER_ALIASES.split(",") : [],
   });
   if (env.PREVIEW_ACCESS_TEAM && !env.PREVIEW_ALLOWED_EMAILS) throw new Error("PREVIEW_ALLOWED_EMAILS is required with PREVIEW_ACCESS_TEAM (the invited group, comma-separated)");
   if (!env.PREVIEW_ACCESS_TEAM && !(env.PREVIEW_DEV_EMAIL && env.PREVIEW_DOMAIN === "localhost")) {

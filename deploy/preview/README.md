@@ -101,6 +101,7 @@ a change to a backend service is reported "no live preview" in the card's thread
 |---|---|
 | `PREVIEW_DOMAIN` | previews live at `preview-pr-<n>.<domain>`; `localhost` for local use (Chrome resolves `*.localhost`) |
 | `PREVIEW_ACCESS_TEAM`, `PREVIEW_ACCESS_AUD` | Cloudflare Access team name and the Access application's Audience tag — set these to go public |
+| `PREVIEW_VIEWER_ALIASES` | optional `access-email=vexa-email` pairs, comma-separated: an invited person whose Access email differs from the Vexa account they use views as that account (only for emails already on the invited list) |
 | `PREVIEW_DEV_EMAIL` | local use only: act as this viewer when no Access team is set |
 
 ## Tests
