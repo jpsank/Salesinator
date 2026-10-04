@@ -3,7 +3,7 @@ import "./globals.css";
 import { Analytics } from "./AnalyticsScript";
 
 export const metadata: Metadata = {
-  title: "Vexa Terminal",
+  title: "Vexa Terminal (preview rehearsal)",
   description:
     "AI-first knowledge-worker terminal — Claude Code × Outlook on Vexa's meeting-bot + agentic-runtime backend.",
 };
