@@ -27,6 +27,7 @@ stop_native() {
 echo "== native processes =="
 stop_native agent-api
 stop_native ollama
+stop_native preview-runner
 
 if [ "${1:-}" = "--docker" ]; then
   echo "== docker services =="

@@ -55,6 +55,11 @@ SERVICES="$(docker compose -f "$CD/docker-compose.yml" config --services | grep 
 docker compose -f "$CD/docker-compose.yml" up -d $SERVICES
 docker compose -f "$CD/docker-compose.yml" stop agent-api ollama 2>/dev/null || true
 
+if [ -f "$HOME/vexa-data/preview/gate.env" ]; then
+  echo "== live-preview runner (previews are set up on this machine) =="
+  start_native preview-runner run-preview-runner.sh ""
+fi
+
 echo "== native ollama (GPU) + native agent-api =="
 # Independent processes — agent-api doesn't need ollama already answering to start itself (only to
 # serve its first completion request, later, on its own retry path). Kick both off, THEN wait for
@@ -70,5 +75,5 @@ agent_api_ok=0; wait "$w2" || agent_api_ok=$?
 [ "$ollama_ok" -eq 0 ] && [ "$agent_api_ok" -eq 0 ]
 
 echo
-echo "Stack up. Logs: $LOGDIR/{ollama,agent-api}.log — PIDs: $PIDDIR/"
+echo "Stack up. Logs: $LOGDIR/{ollama,agent-api,preview-runner}.log — PIDs: $PIDDIR/"
 echo "Stop everything with ./dev-down.sh"

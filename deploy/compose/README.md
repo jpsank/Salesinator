@@ -155,7 +155,7 @@ One page for "I got a new Mac / something died — what was set up?". Each row s
 | Zoom app (Connect Zoom) | Zoom calls the webhook through the tunnel | create it from `integrations/sales-cycle/zoom-app.manifest.json` (Develop → Build App → from an app manifest) | `integrations/sales-cycle/README.md` → Zoom |
 | Product repo + GitHub token | stored by sales-cycle; the repo is this fork | Settings → Integrations → GitHub → Product repo → Change → **Use this repo** (this makes a *copy* of your GitHub token for the agent — redo it if pushes start failing with "expired") | `integrations/sales-cycle/README.md` → GitHub, "When the agent finishes but the branch cannot be pushed" |
 | Vexa Capture (Mac app) | installed in `~/Applications`, opens at login | `clients/capture-mac/make-local-signing-cert.sh` once, then `./install.sh` | `clients/capture-mac/README.md` |
-| Live previews | `preview-gate` container + the runner (`deploy/preview/preview.sh runner`, started by hand) | `deploy/preview/preview.sh gate-up` | `deploy/preview/README.md` |
+| Live previews | `preview-gate` container (restarts with Docker) + the runner, a native process that `dev-up.sh` and `redeploy.sh` start whenever `~/vexa-data/preview/gate.env` exists | `deploy/preview/preview.sh gate-up` once, then `./dev-up.sh` | `deploy/preview/README.md` |
 
 The tunnel's hostnames today: `terminal.jsanker.com` → `localhost:13000`, `sales-cycle.jsanker.com` → `localhost:18300` (only its
 intended public routes answer; the rest want the shared secret), `agent-api.jsanker.com` → `localhost:18100`; previews add

@@ -141,6 +141,16 @@ done
 curl -s -o /dev/null -w "  health http=%{http_code}\n" http://localhost:18100/health
 docker compose -f "$COMPOSE_FILE" stop agent-api ollama 2>/dev/null || true
 
+if [ -f "$HOME/vexa-data/preview/gate.env" ]; then
+  echo
+  echo "== restarting the live-preview runner =="
+  if [ -f "$PIDDIR/preview-runner.pid" ]; then
+    kill "$(cat "$PIDDIR/preview-runner.pid")" 2>/dev/null || true
+  fi
+  nohup "$CD/run-preview-runner.sh" >>"$LOGDIR/preview-runner.log" 2>&1 &
+  echo $! >"$PIDDIR/preview-runner.pid"
+fi
+
 echo
 echo "== meeting bot image (the runtime spawns bots from BROWSER_IMAGE) =="
 ensure_bot_image "$(echo "$RESOLVED_CONFIG" | awk '/BROWSER_IMAGE:/ { print $2; exit }')" \

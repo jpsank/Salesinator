@@ -8,7 +8,7 @@ It shows the viewer's own real data and cannot change any of it.
 ./preview.sh gate-up            # once, and after editing gate.env
 ./preview.sh up <pr> [<ref>]    # build the terminal from <ref> (default HEAD) and run it as preview <pr>
 ./preview.sh list | down <pr> | gc [hours]
-./preview.sh runner             # leave running: previews every pull request the agent opens
+./preview.sh runner             # previews every pull request the agent opens (dev-up.sh / redeploy.sh start it for you)
 ```
 
 ## From pull request to Slack link
