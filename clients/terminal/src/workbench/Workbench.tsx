@@ -9,6 +9,7 @@ import { Allotment } from "allotment";
 import "allotment/dist/style.css";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent, type IDockviewPanelProps, type IDockviewPanelHeaderProps, themeAbyss } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
+import { dropFromOverflowList } from "./overflowList";
 
 const PANES_KEY = "vexa.terminal.panes.v2";
 const savedSizes = (): number[] | undefined => { try { const s = localStorage.getItem(PANES_KEY); const a = s ? JSON.parse(s) : null; return Array.isArray(a) && a.length === 3 ? a : undefined; } catch { return undefined; } };
@@ -84,6 +85,11 @@ function TabHeader(props: IDockviewPanelHeaderProps) {
     const d = props.api.onDidTitleChange((e: { title: string }) => setTitle(e.title));
     return () => d.dispose();
   }, [props.api]);
+  // A tab closed from dockview's "more tabs" list stays listed there (the list is a snapshot) unless its row is taken out by hand.
+  const closeTab = (from: Element | null) => {
+    props.api.close();
+    if (props.tabLocation === "headerOverflow") dropFromOverflowList(from);
+  };
   const path = typeof params.p?.path === "string" ? params.p.path : null;
   const meetingId = typeof params.p?.meetingId === "string" ? params.p.meetingId : null;
   const pinItem = pinned
@@ -104,7 +110,7 @@ function TabHeader(props: IDockviewPanelHeaderProps) {
         if (e.button !== 1) return;
         e.preventDefault();
         e.stopPropagation();
-        if (!pinned) props.api.close();
+        if (!pinned) closeTab(e.currentTarget);
       }}
       onAuxClick={(e) => {
         if (e.button !== 1) return;
@@ -137,7 +143,7 @@ function TabHeader(props: IDockviewPanelHeaderProps) {
           role="button"
           aria-label="Close tab"
           onPointerDown={(e) => e.preventDefault()}
-          onClick={(e) => { e.stopPropagation(); props.api.close(); }}
+          onClick={(e) => { e.stopPropagation(); closeTab(e.currentTarget); }}
         >×</span>
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[pinItem, ...copyItems]} />}
