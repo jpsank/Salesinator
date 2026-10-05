@@ -72,8 +72,8 @@ script: it rebuilds the published tag `vexaai/vexa-bot:v012`, which this stack's
 under 8 GB free, they drop the build cache, and refuse to build if less than 3 GB is still free (a full disk takes
 Postgres down — it also shows up as `apt` "invalid signature" in builds). After building, they trim build cache
 older than 72 h. Tune with `HYGIENE_MIN_FREE_GB`, `HYGIENE_ABORT_FREE_GB` and `HYGIENE_KEEP_HOURS`.
-`make dev` builds a second, `:dev`-tagged copy of every image next to the `:v012` set; remove those with
-`docker rmi` when you stop using that path. The compose gate removes its own containers, volumes and images.
+`make dev` builds a second, `:dev`-tagged copy of every image next to the `:v012` set; the next `redeploy.sh` or
+`restart-service.sh` removes that copy when no container uses it. The compose gate removes its own containers, volumes and images.
 
 ## Usage
 
